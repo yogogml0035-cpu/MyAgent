@@ -1,6 +1,6 @@
 "use client";
 
-import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ChangeEvent, FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type Artifact,
   type ChatMessage,
@@ -18,11 +18,18 @@ import {
   normalizeTaskState,
   readString,
 } from "./task-state";
+import {
+  buildConversationHistoryItems,
+  buildLogClipboardText,
+  calculateLogProgress,
+  formatFileSize,
+  formatTime,
+} from "./workspace-view";
 
 const API_BASE_URL =
   process.env.NEXT_PUBLIC_MYAGENT_API_BASE_URL ||
   process.env.NEXT_PUBLIC_API_BASE_URL ||
-  "http://localhost:8000";
+  "http://localhost:8001";
 const API_ACCESS_TOKEN =
   process.env.NEXT_PUBLIC_MYAGENT_TOKEN || process.env.NEXT_PUBLIC_AGENT_CHAT_TOKEN || "";
 const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
@@ -31,6 +38,7 @@ const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
     label: "DeepSeek Reasoner",
   },
 ];
+const FILE_INPUT_ID = "markdown-files";
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -67,9 +75,21 @@ export default function Home() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string>("");
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const canSend = input.trim().length > 0 || selectedFiles.length > 0;
   const activeTask = isTaskActive(status);
+  const logProgress = calculateLogProgress(logs.length);
+  const logStatusText = activeTask ? "日志收集中..." : logs.length > 0 ? "日志已同步" : "等待日志";
+  const selectedFileNames = selectedFiles.map((file) => file.name).join("、");
+  const selectedFileSize = selectedFiles.reduce((total, file) => total + file.size, 0);
+  const messageCount = messages.length;
+  const hasConversation =
+    messages.length > 0 || logs.length > 0 || artifacts.length > 0 || Boolean(backendError || needsInput);
+  const historyItems = useMemo(
+    () => buildConversationHistoryItems(messages, taskId, status),
+    [messages, status, taskId],
+  );
 
   const reportArtifacts = useMemo(
     () =>
@@ -282,6 +302,40 @@ export default function Home() {
     setSelectedFiles(files);
   }
 
+  function handleClearFiles() {
+    setSelectedFiles([]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  function handleNewConversation() {
+    setTaskId("");
+    setStatus("idle");
+    setStatusLabel("idle");
+    setMessages([]);
+    setLogs([]);
+    setArtifacts([]);
+    setUploadCount(0);
+    setTaskModel("");
+    setBackendError("");
+    setNeedsInput(null);
+    setInput("");
+    setSelectedFiles([]);
+    setError("");
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleCopyLogs() {
+    try {
+      await navigator.clipboard.writeText(buildLogClipboardText(logs));
+    } catch {
+      setError("复制日志失败，请检查浏览器权限。");
+    }
+  }
+
   async function fetchArtifactBlob(artifact: Artifact) {
     const request = buildArtifactRequest(artifact, taskId, API_BASE_URL, API_ACCESS_TOKEN);
     const response = await fetch(request.url, { headers: request.headers });
@@ -312,121 +366,200 @@ export default function Home() {
   }
 
   return (
-    <main className="workspace">
-      <header className="topbar">
-        <div>
-          <h1>MyAgent</h1>
-          <p>Local task workspace with visible execution trace</p>
-        </div>
-        <div className="taskMeta">
-          <span className={`status status-${status}`}>{statusLabel}</span>
-          <span className="taskStat">Uploads {uploadCount}</span>
-          {taskModel ? <span className="taskStat">{taskModel}</span> : null}
-          <span className="taskId">{taskId ? `Task ${taskId}` : "No task yet"}</span>
-        </div>
-      </header>
+    <main className="agentShell">
+      <aside className="chatSidebar" aria-label="历史会话">
+        <button className="newChatButton" onClick={handleNewConversation} type="button">
+          <span aria-hidden="true" />
+          新建会话
+        </button>
 
-      {backendError ? <div className="stateBanner stateBanner-error">{backendError}</div> : null}
-      {needsInput ? (
-        <div className="stateBanner stateBanner-warning">{formatNeedsInput(needsInput)}</div>
-      ) : null}
-
-      <section className="workArea">
-        <section className="chatPanel" aria-label="Chat messages">
-          <div className="panelHeader">
-            <h2>Messages</h2>
-          </div>
-          <div className="messageList">
-            {messages.length === 0 ? (
-              <div className="emptyState">
-                Upload Markdown files and describe the task. The backend will create a task, plan execution,
-                and stream updates into the log panel.
-              </div>
-            ) : (
-              messages.map((message) => (
-                <article className={`message message-${message.role}`} key={message.id}>
-                  <div className="messageRole">{message.role}</div>
-                  <p>{message.content}</p>
-                </article>
-              ))
-            )}
-          </div>
-
-          {reportArtifacts.length > 0 ? (
-            <div className="artifactStrip" aria-label="Report artifacts">
-              {reportArtifacts.map((artifact) => (
-                <button key={artifact.id} onClick={() => void handleOpenArtifact(artifact)} type="button">
-                  Open {artifact.name}
-                </button>
-              ))}
-            </div>
-          ) : null}
-        </section>
-
-        <aside className="logPanel" aria-label="Execution log">
-          <div className="panelHeader">
-            <h2>Execution Log</h2>
-          </div>
-          <div className="logList">
-            {logs.length === 0 ? (
-              <div className="emptyState compact">Plans, sub-agent assignments, tool calls, and artifacts appear here.</div>
-            ) : (
-              logs.map((log) => (
-                <article className={`logItem log-${log.level ?? "info"}`} key={log.id}>
-                  <div className="logTitle">{log.title}</div>
-                  {log.detail ? <p>{log.detail}</p> : null}
-                </article>
-              ))
-            )}
-          </div>
-        </aside>
-      </section>
-
-      <form className="composer" onSubmit={handleSubmit}>
-        <div className="composerTools">
-          <label className="filePicker">
-            <span>Markdown files</span>
-            <input accept=".md,text/markdown" multiple onChange={handleFileChange} type="file" />
-          </label>
-
-          <label className="modelSelect">
-            <span>Model</span>
-            <select onChange={(event) => setModel(event.target.value)} value={model}>
-              {modelOptions.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <button disabled={!activeTask || isBusy} onClick={handleStop} type="button">
-            Stop
-          </button>
-        </div>
-
-        {selectedFiles.length > 0 ? (
-          <div className="selectedFiles">
-            {selectedFiles.map((file) => (
-              <span key={`${file.name}-${file.lastModified}`}>{file.name}</span>
+        <nav className="historyPanel" aria-label="聊天历史">
+          <p>聊天历史</p>
+          <div className="historyList">
+            {historyItems.map((item) => (
+              <button
+                aria-current={item.active ? "page" : undefined}
+                className={item.active ? "historyItem historyItem-active" : "historyItem"}
+                key={item.id}
+                type="button"
+              >
+                <strong>{item.title}</strong>
+                <span>{item.subtitle}</span>
+              </button>
             ))}
           </div>
-        ) : null}
+        </nav>
+      </aside>
 
-        <div className="inputRow">
+      <section className={hasConversation ? "chatWorkspace hasConversation" : "chatWorkspace isEmpty"}>
+        <div className="workspaceMetaBar" aria-label="任务状态">
+          <span className="messageCounter">{messageCount} 条消息</span>
+          <span className={`status status-${status}`}>{statusLabel}</span>
+          <span className="taskId">{taskId ? `Task ${taskId}` : "No task yet"}</span>
+        </div>
+
+        <section className="conversationCanvas" aria-label="任务对话">
+        <div className="conversationStream">
+          {backendError ? <div className="stateBanner stateBanner-error">{backendError}</div> : null}
+          {needsInput ? (
+            <div className="stateBanner stateBanner-warning">{formatNeedsInput(needsInput)}</div>
+          ) : null}
+
+          {!hasConversation ? (
+            <h1 className="heroMark">MYAGENT</h1>
+          ) : (
+            <>
+              {messages.map((message) => (
+                <article className={`chatMessage chatMessage-${message.role}`} key={message.id}>
+                  <p>{message.content}</p>
+                  <time>{formatTime(message.createdAt, "short")}</time>
+                </article>
+              ))}
+
+              <section className="traceRow" aria-label="进度日志">
+                <div className="agentMarker" aria-hidden="true">
+                  <span />
+                </div>
+                <article className="traceCard">
+                  <header className="traceHeader">
+                    <div className="traceTitle">
+                      <span className="documentIcon" aria-hidden="true" />
+                      <strong>进度日志</strong>
+                      <span className={activeTask ? "spinner" : "syncDot"} aria-hidden="true" />
+                      <span>{logStatusText}</span>
+                    </div>
+                    <button
+                      aria-label="复制日志"
+                      className="copyButton"
+                      disabled={logs.length === 0}
+                      onClick={() => void handleCopyLogs()}
+                      type="button"
+                    >
+                      <span aria-hidden="true" />
+                    </button>
+                  </header>
+
+                  <div className="progressSummary">
+                    {`${logProgress.count}/${logProgress.total} (${logProgress.percent}%)`}
+                  </div>
+
+                  <div className="logList">
+                    {logs.length === 0 ? (
+                      <p className="emptyLog">计划、子任务分派、工具调用和产物会显示在这里。</p>
+                    ) : (
+                      logs.map((log) => (
+                        <article className={`logItem log-${log.level ?? "info"}`} key={log.id}>
+                          <time>{formatTime(log.createdAt)}</time>
+                          <span className="logLevel">{(log.level ?? "info").toUpperCase()}</span>
+                          <div>
+                            <strong>{log.title}</strong>
+                            {log.detail ? <p>{log.detail}</p> : null}
+                          </div>
+                        </article>
+                      ))
+                    )}
+                  </div>
+
+                  {reportArtifacts.length > 0 ? (
+                    <div className="artifactDock" aria-label="报告产物">
+                      {reportArtifacts.map((artifact) => (
+                        <button key={artifact.id} onClick={() => void handleOpenArtifact(artifact)} type="button">
+                          打开 {artifact.name}
+                        </button>
+                      ))}
+                    </div>
+                  ) : null}
+                </article>
+              </section>
+            </>
+          )}
+        </div>
+      </section>
+
+      <form className="composerShell" onSubmit={handleSubmit}>
+        <input
+          accept=".md,text/markdown"
+          className="fileInput"
+          id={FILE_INPUT_ID}
+          multiple
+          onChange={handleFileChange}
+          ref={fileInputRef}
+          type="file"
+        />
+
+        <div className="composerPanel">
+          {selectedFiles.length > 0 ? (
+            <div className="fileCard">
+              <span className="fileIcon" aria-hidden="true" />
+              <div className="fileInfo">
+                <span>Markdown</span>
+                <strong>{selectedFileNames}</strong>
+                <small>{formatFileSize(selectedFileSize)}</small>
+              </div>
+              <label className="replaceFileButton" htmlFor={FILE_INPUT_ID}>
+                更换
+              </label>
+              <button aria-label="移除文件" className="removeFileButton" onClick={handleClearFiles} type="button">
+                ×
+              </button>
+            </div>
+          ) : null}
+
           <textarea
+            className="promptTextarea"
             onChange={(event) => setInput(event.target.value)}
-            placeholder="Describe the task for the agent..."
-            rows={3}
+            placeholder={activeTask ? "回复生成中，请稍候..." : "尽管问..."}
+            rows={2}
             value={input}
           />
-          <button disabled={!canSend || isBusy} type="submit">
-            {isBusy ? "Sending" : "Send"}
-          </button>
+
+          <div className="composerControls">
+            <label aria-label="上传 Markdown 文件" className="roundButton addFileButton" htmlFor={FILE_INPUT_ID}>
+              <span aria-hidden="true" />
+            </label>
+
+            <span className="agentModePill">
+              <span aria-hidden="true" />
+              Agent
+            </span>
+
+            <label className="modelSelect">
+              <span className="srOnly">模型</span>
+              <select onChange={(event) => setModel(event.target.value)} value={model}>
+                {modelOptions.map((option) => (
+                  <option key={option.id} value={option.id}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            {uploadCount > 0 ? <span className="uploadMeta">Uploads {uploadCount}</span> : null}
+            {taskModel ? <span className="uploadMeta">{taskModel}</span> : null}
+
+            <div className="composerSpacer" />
+
+            {activeTask ? (
+              <button
+                aria-label="停止任务"
+                className="roundButton primaryAction stopAction"
+                disabled={isBusy}
+                onClick={handleStop}
+                type="button"
+              >
+                <span aria-hidden="true" />
+              </button>
+            ) : (
+              <button aria-label={isBusy ? "发送中" : "发送"} className="sendButton" disabled={!canSend || isBusy} type="submit">
+                <span aria-hidden="true" />
+              </button>
+            )}
+          </div>
         </div>
 
         {error ? <div className="errorBanner">{error}</div> : null}
       </form>
+      </section>
     </main>
   );
 }

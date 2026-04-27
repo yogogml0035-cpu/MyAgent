@@ -84,10 +84,10 @@ test("buildArtifactRequest carries the access token for protected artifact fetch
   const request = buildArtifactRequest(
     { id: "report", name: "report.html", url: "/api/tasks/task-1/artifacts/report.html" },
     "task-1",
-    "http://localhost:8000",
+    "http://localhost:8001",
     "secret-token",
   );
 
-  assert.equal(request.url, "http://localhost:8000/api/tasks/task-1/artifacts/report.html");
+  assert.equal(request.url, "http://localhost:8001/api/tasks/task-1/artifacts/report.html");
   assert.deepEqual(request.headers, { "X-MyAgent-Token": "secret-token" });
 });

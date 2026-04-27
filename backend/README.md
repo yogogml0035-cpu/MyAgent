@@ -14,7 +14,7 @@ Local FastAPI backend for the v1 MyAgent workspace.
 ## Run
 
 ```bash
-uv run uvicorn app.main:app --reload --port 8000
+uv run uvicorn app.main:app --reload --port 8001
 ```
 
 ## Test
@@ -39,7 +39,7 @@ The backend loads `backend/.env` on startup before reading process environment v
 Task APIs accept local loopback clients by default. If `MYAGENT_ACCESS_TOKEN` is set,
 all task APIs require either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
 Browser callers must use an origin listed in `MYAGENT_CORS_ORIGINS`, which defaults to
-`http://localhost:3000,http://127.0.0.1:3000`. Add LAN frontend origins such as
-`http://10.11.148.97:3000` when running the frontend by IP.
+`http://localhost:3001,http://127.0.0.1:3001`. Add LAN frontend origins such as
+`http://10.11.148.97:3001` when running the frontend by IP.
 The legacy `AGENT_CHAT_*` environment names and `X-Agent-Chat-Token` header are still
 accepted for migrated local setups.

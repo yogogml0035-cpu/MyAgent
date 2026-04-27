@@ -13,7 +13,7 @@ class Settings:
     tavily_api_key: str | None
     workspace_root: Path
     access_token: str | None = None
-    cors_origins: tuple[str, ...] = ("http://localhost:3000", "http://127.0.0.1:3000")
+    cors_origins: tuple[str, ...] = ("http://localhost:3001", "http://127.0.0.1:3001")
     max_upload_files: int = 10
     max_upload_file_bytes: int = 10 * 1024 * 1024
     max_upload_request_bytes: int = 101 * 1024 * 1024
@@ -55,7 +55,7 @@ def load_settings() -> Settings:
         access_token=env_value("MYAGENT_ACCESS_TOKEN", "AGENT_CHAT_ACCESS_TOKEN") or None,
         cors_origins=read_list_env(
             "MYAGENT_CORS_ORIGINS",
-            ("http://localhost:3000", "http://127.0.0.1:3000"),
+            ("http://localhost:3001", "http://127.0.0.1:3001"),
             "AGENT_CHAT_CORS_ORIGINS",
         ),
         max_upload_files=max_upload_files,

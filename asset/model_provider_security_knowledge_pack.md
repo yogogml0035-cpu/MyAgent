@@ -21,8 +21,8 @@ It applies when editing:
 - `MYAGENT_ACCESS_TOKEN` is optional for local loopback use, but required when task APIs are exposed beyond loopback.
 - If `MYAGENT_ACCESS_TOKEN` is set, task APIs accept either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
 - The frontend sends `NEXT_PUBLIC_MYAGENT_TOKEN` as `X-MyAgent-Token` for local protected task access.
-- Backend CORS is controlled by comma-separated `MYAGENT_CORS_ORIGINS`, defaulting to `http://localhost:3000,http://127.0.0.1:3000`.
-- LAN frontend access requires an exact backend CORS origin such as `http://10.11.148.97:3000`, plus a matching frontend API base URL such as `http://10.11.148.97:8000`.
+- Backend CORS is controlled by comma-separated `MYAGENT_CORS_ORIGINS`, defaulting to `http://localhost:3001,http://127.0.0.1:3001`.
+- LAN frontend access requires an exact backend CORS origin such as `http://10.11.148.97:3001`, plus a matching frontend API base URL such as `http://10.11.148.97:8001`.
 - New configuration should use `MYAGENT_*`; legacy `AGENT_CHAT_*` names remain compatibility fallbacks.
 - The backend is single-process oriented because task runners and JSON task storage are in-process/local.
 
@@ -35,7 +35,7 @@ DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 TAVILY_API_KEY=
 MYAGENT_ACCESS_TOKEN=
-MYAGENT_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+MYAGENT_CORS_ORIGINS=http://localhost:3001,http://127.0.0.1:3001
 MYAGENT_TASK_ROOT=
 MYAGENT_MAX_UPLOAD_FILES=10
 MYAGENT_MAX_UPLOAD_FILE_BYTES=10485760
@@ -47,14 +47,14 @@ DEEPSEEK_TIMEOUT_SECONDS=15
 Frontend `.env.local` example:
 
 ```env
-NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://localhost:8001
 NEXT_PUBLIC_MYAGENT_TOKEN=
 ```
 
 LAN frontend `.env.local` example for host `10.11.148.97`:
 
 ```env
-NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://10.11.148.97:8000
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://10.11.148.97:8001
 NEXT_PUBLIC_MYAGENT_TOKEN=<same value as MYAGENT_ACCESS_TOKEN>
 ```
 

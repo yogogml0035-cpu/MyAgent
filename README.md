@@ -31,20 +31,38 @@ asset/                   面向后续智能体协作的长期知识包索引
 - 用于真实模型调用的 DeepSeek API Key
 - 可选：用于联网搜索分析工具的 Tavily API Key
 
+## WSL 路径约定
+
+推荐在 WSL shell 中使用 Linux 路径运行本仓库，当前仓库路径为：
+
+```bash
+cd /mnt/d/AgentProject/MyAgent
+```
+
+前端依赖、`.next` 缓存和开发服务应在同一个环境内生成和运行。不要在 Windows 的 `D:\AgentProject\MyAgent\frontend` 下安装依赖后，再从 WSL 的 `/mnt/d/AgentProject/MyAgent/frontend` 启动 `npm run dev`；反向混用也一样会让 Next.js 的 React Client Manifest 同时出现 Windows 路径和 WSL 路径。
+
+如果已经混用过 Windows 和 WSL，请在 WSL 中清理前端产物并重新安装依赖：
+
+```bash
+cd /mnt/d/AgentProject/MyAgent/frontend
+rm -rf .next node_modules
+npm ci
+```
+
 ## 安装
 
 安装后端依赖：
 
 ```bash
-cd backend
+cd /mnt/d/AgentProject/MyAgent/backend
 uv sync --dev
 ```
 
 安装前端依赖：
 
 ```bash
-cd frontend
-npm install
+cd /mnt/d/AgentProject/MyAgent/frontend
+npm ci
 ```
 
 ## 配置
@@ -52,7 +70,7 @@ npm install
 从示例文件创建后端配置：
 
 ```bash
-cd backend
+cd /mnt/d/AgentProject/MyAgent/backend
 cp .env.example .env
 ```
 
@@ -63,7 +81,7 @@ DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 TAVILY_API_KEY=
 MYAGENT_ACCESS_TOKEN=
-MYAGENT_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
+MYAGENT_CORS_ORIGINS=http://localhost:3001,http://127.0.0.1:3001
 MYAGENT_TASK_ROOT=
 MYAGENT_MAX_UPLOAD_FILES=10
 MYAGENT_MAX_UPLOAD_FILE_BYTES=10485760
@@ -75,14 +93,14 @@ DEEPSEEK_TIMEOUT_SECONDS=15
 当前端默认值不够用时，从示例文件创建前端配置：
 
 ```bash
-cd frontend
+cd /mnt/d/AgentProject/MyAgent/frontend
 cp .env.example .env.local
 ```
 
 前端公开配置：
 
 ```env
-NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://localhost:8000
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://localhost:8001
 NEXT_PUBLIC_MYAGENT_TOKEN=
 ```
 
@@ -93,27 +111,27 @@ NEXT_PUBLIC_MYAGENT_TOKEN=
 启动后端：
 
 ```bash
-cd backend
-uv run uvicorn app.main:app --reload --port 8000
+cd /mnt/d/AgentProject/MyAgent/backend
+uv run uvicorn app.main:app --reload --port 8001
 ```
 
 在另一个终端启动前端：
 
 ```bash
-cd frontend
+cd /mnt/d/AgentProject/MyAgent/frontend
 npm run dev
 ```
 
 打开：
 
 ```text
-http://localhost:3000
+http://localhost:3001
 ```
 
 健康检查：
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8001/health
 ```
 
 ## 本地部署说明
@@ -123,7 +141,7 @@ curl http://localhost:8000/health
 本地生产风格运行前端：
 
 ```bash
-cd frontend
+cd /mnt/d/AgentProject/MyAgent/frontend
 npm run build
 npm run start
 ```
@@ -131,8 +149,8 @@ npm run start
 单独运行后端：
 
 ```bash
-cd backend
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+cd /mnt/d/AgentProject/MyAgent/backend
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
 如果任务 API 会被非 loopback 客户端访问，请在后端设置 `MYAGENT_ACCESS_TOKEN`，并在前端将相同值设置为 `NEXT_PUBLIC_MYAGENT_TOKEN`。如果任务产物需要在清理或重新部署后保留，也请将 `MYAGENT_TASK_ROOT` 设置为持久化本地目录。
@@ -143,29 +161,29 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ```env
 MYAGENT_ACCESS_TOKEN=choose-a-local-token
-MYAGENT_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://10.11.148.97:3000
+MYAGENT_CORS_ORIGINS=http://localhost:3001,http://127.0.0.1:3001,http://10.11.148.97:3001
 ```
 
 前端 `frontend/.env.local`：
 
 ```env
-NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://10.11.148.97:8000
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://10.11.148.97:8001
 NEXT_PUBLIC_MYAGENT_TOKEN=choose-a-local-token
 ```
 
 在可被外部访问的接口上启动服务：
 
 ```bash
-cd backend
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+cd /mnt/d/AgentProject/MyAgent/backend
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8001
 ```
 
 ```bash
-cd frontend
+cd /mnt/d/AgentProject/MyAgent/frontend
 npm run dev -- -H 0.0.0.0
 ```
 
-然后打开 `http://10.11.148.97:3000`。不要把 provider key 写入任何 `NEXT_PUBLIC_*` 值；`NEXT_PUBLIC_MYAGENT_TOKEN` 只保护这个本地任务 API，并且对能够加载前端的浏览器可见。
+然后打开 `http://10.11.148.97:3001`。不要把 provider key 写入任何 `NEXT_PUBLIC_*` 值；`NEXT_PUBLIC_MYAGENT_TOKEN` 只保护这个本地任务 API，并且对能够加载前端的浏览器可见。
 
 本仓库目前不包含 Docker、进程管理器、反向代理、TLS 或多主机部署文件。将它作为生产服务前，需要显式补齐这些能力。
 
@@ -192,14 +210,14 @@ npm run dev -- -H 0.0.0.0
 - `GET /api/tasks/{task_id}/artifacts/{artifact_name}` 下载产物。
 
 任务 API 默认只允许 loopback 客户端访问。配置了 `MYAGENT_ACCESS_TOKEN` 后，请求必须提供 `Authorization: Bearer <token>` 或 `X-MyAgent-Token`。
-浏览器调用方还必须使用 `MYAGENT_CORS_ORIGINS` 中列出的 origin；默认只允许 `http://localhost:3000` 和 `http://127.0.0.1:3000`。
+浏览器调用方还必须使用 `MYAGENT_CORS_ORIGINS` 中列出的 origin；默认只允许 `http://localhost:3001` 和 `http://127.0.0.1:3001`。
 
 ## 验证
 
 运行后端测试和检查：
 
 ```bash
-cd backend
+cd /mnt/d/AgentProject/MyAgent/backend
 uv run pytest
 uv run ruff check .
 uv run mypy app tests
@@ -208,7 +226,7 @@ uv run mypy app tests
 运行前端检查：
 
 ```bash
-cd frontend
+cd /mnt/d/AgentProject/MyAgent/frontend
 npm run typecheck
 npm test
 npm run lint
@@ -228,7 +246,7 @@ git diff --check
 - 上传文件、任务计划、证据、摘要、日志和 HTML 报告会存储在本地任务目录中。
 - 文件访问和命令执行辅助能力默认限定在任务工作区内。
 - 上传和 JSON 请求大小限制由后端环境变量控制。
-- 浏览器 CORS origin 由 `MYAGENT_CORS_ORIGINS` 控制；请使用精确的协议、主机和端口，例如 `http://10.11.148.97:3000`。
+- 浏览器 CORS origin 由 `MYAGENT_CORS_ORIGINS` 控制；请使用精确的协议、主机和端口，例如 `http://10.11.148.97:3001`。
 - 迁移后的本地配置仍兼容旧的 `AGENT_CHAT_*` 和 `NEXT_PUBLIC_AGENT_CHAT_*` 名称，但新配置应使用 `MYAGENT_*`。
 
 ## 常见问题
