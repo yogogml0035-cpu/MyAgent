@@ -27,7 +27,7 @@ from app.model_provider import DeepSeekProvider, ProviderRouter
 from app.permissions import PermissionPolicy
 from app.runtime import CancellationController, run_cancellable_command
 from app.schemas import MAX_MESSAGE_CHARS
-from app.settings import Settings, load_env_file
+from app.settings import Settings, load_env_file, read_list_env
 from app.storage import MAX_FILENAME_BYTES, TaskStorage
 from app.tools import WorkspaceTools
 
@@ -40,6 +40,7 @@ def make_client(
     max_upload_file_bytes: int = 10 * 1024 * 1024,
     max_upload_request_bytes: int = 101 * 1024 * 1024,
     max_json_request_bytes: int = 64 * 1024,
+    cors_origins: tuple[str, ...] = ("http://localhost:3000", "http://127.0.0.1:3000"),
     client_host: str | None = None,
 ) -> TestClient:
     settings = Settings(
@@ -49,6 +50,7 @@ def make_client(
         tavily_api_key=None,
         workspace_root=tmp_path / "tasks",
         access_token=access_token,
+        cors_origins=cors_origins,
         max_upload_files=max_upload_files,
         max_upload_file_bytes=max_upload_file_bytes,
         max_upload_request_bytes=max_upload_request_bytes,
@@ -337,6 +339,66 @@ def test_task_api_accepts_valid_access_token_and_rejects_wrong_token(tmp_path: P
     assert wrong.status_code == 401
     assert right.status_code == 200
     assert right.json()["task_id"] == task_id
+
+
+def test_cors_allows_default_local_frontend_origin(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    response = client.options(
+        "/api/tasks",
+        headers={
+            "Origin": "http://localhost:3000",
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type, X-MyAgent-Token",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://localhost:3000"
+    assert "x-myagent-token" in response.headers["access-control-allow-headers"].lower()
+
+
+def test_cors_allows_configured_lan_frontend_origin(tmp_path: Path) -> None:
+    origin = "http://10.11.148.97:3000"
+    client = make_client(tmp_path, access_token="test-token", cors_origins=(origin,))
+
+    response = client.options(
+        "/api/tasks",
+        headers={
+            "Origin": origin,
+            "Access-Control-Request-Method": "POST",
+            "Access-Control-Request-Headers": "Content-Type, X-MyAgent-Token",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == origin
+
+
+def test_cors_rejects_unconfigured_lan_frontend_origin(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    response = client.options(
+        "/api/tasks",
+        headers={
+            "Origin": "http://10.11.148.97:3000",
+            "Access-Control-Request-Method": "POST",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "access-control-allow-origin" not in response.headers
+
+
+def test_cors_origin_env_parser_trims_empty_items_and_trailing_slashes(monkeypatch) -> None:
+    monkeypatch.setenv(
+        "MYAGENT_CORS_ORIGINS",
+        " http://localhost:3000/, , http://10.11.148.97:3000/ ",
+    )
+
+    origins = read_list_env("MYAGENT_CORS_ORIGINS", ("http://127.0.0.1:3000",))
+
+    assert origins == ("http://localhost:3000", "http://10.11.148.97:3000")
 
 
 def test_artifact_download_requires_and_accepts_access_token(tmp_path: Path) -> None:

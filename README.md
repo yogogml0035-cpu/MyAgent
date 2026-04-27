@@ -63,6 +63,7 @@ DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 TAVILY_API_KEY=
 MYAGENT_ACCESS_TOKEN=
+MYAGENT_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 MYAGENT_TASK_ROOT=
 MYAGENT_MAX_UPLOAD_FILES=10
 MYAGENT_MAX_UPLOAD_FILE_BYTES=10485760
@@ -136,6 +137,36 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 If the task APIs are reachable from anything other than loopback, set `MYAGENT_ACCESS_TOKEN` on the backend and set the same value as `NEXT_PUBLIC_MYAGENT_TOKEN` for the frontend. Also set `MYAGENT_TASK_ROOT` to a persistent local directory if task artifacts must survive cleanups or redeploys.
 
+For LAN access from the current machine address `10.11.148.97`, configure both services explicitly:
+
+Backend `backend/.env`:
+
+```env
+MYAGENT_ACCESS_TOKEN=choose-a-local-token
+MYAGENT_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://10.11.148.97:3000
+```
+
+Frontend `frontend/.env.local`:
+
+```env
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://10.11.148.97:8000
+NEXT_PUBLIC_MYAGENT_TOKEN=choose-a-local-token
+```
+
+Start the services on externally reachable interfaces:
+
+```bash
+cd backend
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+```bash
+cd frontend
+npm run dev -- -H 0.0.0.0
+```
+
+Then open `http://10.11.148.97:3000`. Keep provider keys out of `NEXT_PUBLIC_*` values; `NEXT_PUBLIC_MYAGENT_TOKEN` protects only this local task API and is visible to browsers that can load the frontend.
+
 This repository does not currently include Docker, process-manager, reverse-proxy, TLS, or multi-host deployment files. Add those explicitly before treating it as a production service.
 
 ## Usage Flow
@@ -161,6 +192,7 @@ The backend supports simple chat if no files are uploaded and the message does n
 - `GET /api/tasks/{task_id}/artifacts/{artifact_name}` downloads an artifact.
 
 Task APIs are restricted to loopback clients by default. If `MYAGENT_ACCESS_TOKEN` is configured, requests must provide either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
+Browser callers must also use an origin listed in `MYAGENT_CORS_ORIGINS`; the default only allows `http://localhost:3000` and `http://127.0.0.1:3000`.
 
 ## Verification
 
@@ -196,6 +228,7 @@ git diff --check
 - Uploaded files, task plans, evidence, summaries, logs, and HTML reports are stored in local task directories.
 - File access and command execution helpers are scoped to the task workspace by default.
 - Upload and JSON request limits are controlled by backend environment variables.
+- Browser CORS origins are controlled by `MYAGENT_CORS_ORIGINS`; use exact scheme, host, and port values such as `http://10.11.148.97:3000`.
 - Legacy `AGENT_CHAT_*` and `NEXT_PUBLIC_AGENT_CHAT_*` names are still accepted for migrated local setups, but new configuration should use `MYAGENT_*`.
 
 ## Troubleshooting
@@ -205,4 +238,4 @@ git diff --check
 - `409 Cannot upload files while the task is running`: stop or wait for the current task before uploading more files.
 - `Upload Markdown files before starting a document-analysis task`: the task message requires document analysis but no Markdown files were uploaded.
 - `At least two Markdown bidder documents are required for comparison`: upload at least two bidder Markdown files.
-- Frontend cannot reach backend: confirm `NEXT_PUBLIC_MYAGENT_API_BASE_URL`, backend port `8000`, and browser CORS origin.
+- Frontend cannot reach backend: confirm `NEXT_PUBLIC_MYAGENT_API_BASE_URL`, backend port `8000`, and that the browser origin is listed in `MYAGENT_CORS_ORIGINS`.

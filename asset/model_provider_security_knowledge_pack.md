@@ -21,6 +21,8 @@ It applies when editing:
 - `MYAGENT_ACCESS_TOKEN` is optional for local loopback use, but required when task APIs are exposed beyond loopback.
 - If `MYAGENT_ACCESS_TOKEN` is set, task APIs accept either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
 - The frontend sends `NEXT_PUBLIC_MYAGENT_TOKEN` as `X-MyAgent-Token` for local protected task access.
+- Backend CORS is controlled by comma-separated `MYAGENT_CORS_ORIGINS`, defaulting to `http://localhost:3000,http://127.0.0.1:3000`.
+- LAN frontend access requires an exact backend CORS origin such as `http://10.11.148.97:3000`, plus a matching frontend API base URL such as `http://10.11.148.97:8000`.
 - New configuration should use `MYAGENT_*`; legacy `AGENT_CHAT_*` names remain compatibility fallbacks.
 - The backend is single-process oriented because task runners and JSON task storage are in-process/local.
 
@@ -33,6 +35,7 @@ DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 TAVILY_API_KEY=
 MYAGENT_ACCESS_TOKEN=
+MYAGENT_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000
 MYAGENT_TASK_ROOT=
 MYAGENT_MAX_UPLOAD_FILES=10
 MYAGENT_MAX_UPLOAD_FILE_BYTES=10485760
@@ -46,6 +49,13 @@ Frontend `.env.local` example:
 ```env
 NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://localhost:8000
 NEXT_PUBLIC_MYAGENT_TOKEN=
+```
+
+LAN frontend `.env.local` example for host `10.11.148.97`:
+
+```env
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://10.11.148.97:8000
+NEXT_PUBLIC_MYAGENT_TOKEN=<same value as MYAGENT_ACCESS_TOKEN>
 ```
 
 Protected task request example:
@@ -65,6 +75,8 @@ X-MyAgent-Token: <token>
 - Task APIs are loopback-only when no access token is configured.
 - Non-loopback task access without a configured token returns `403`.
 - Missing or wrong token when a token is configured returns `401`.
+- Browser origins not listed in `MYAGENT_CORS_ORIGINS` fail CORS preflight and are blocked by the browser.
+- `MYAGENT_CORS_ORIGINS` entries must match the browser origin by scheme, host, and port; path components are not origins.
 - Upload request limits and JSON body limits are enforced before task mutation.
 - Multi-worker deployment is blocked by `WEB_CONCURRENCY`, `UVICORN_WORKERS`, and `GUNICORN_WORKERS` checks.
 - Root `.env.example` is a reference file; the current runtime loads `backend/.env` for backend settings and frontend env values through the frontend toolchain.
@@ -74,6 +86,7 @@ X-MyAgent-Token: <token>
 - Never copy `DEEPSEEK_API_KEY` or `TAVILY_API_KEY` into `NEXT_PUBLIC_*`.
 - Do not assume root `.env` is automatically loaded by the backend.
 - Do not expose the backend on LAN or the internet without setting `MYAGENT_ACCESS_TOKEN`.
+- Do not use wildcard CORS with browser-visible task tokens; list the expected frontend origins explicitly.
 - Do not configure multiple backend workers without redesigning task ownership and storage.
 - Keep `.env.example` files empty of real secrets, customer data, and private local paths.
 

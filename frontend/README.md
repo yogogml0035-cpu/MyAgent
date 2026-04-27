@@ -12,6 +12,9 @@ npm run dev
 The frontend reads `NEXT_PUBLIC_MYAGENT_API_BASE_URL` and defaults to `http://localhost:8000`
 when it is not set. If the backend sets `MYAGENT_ACCESS_TOKEN`, set the same value as
 `NEXT_PUBLIC_MYAGENT_TOKEN` for local development.
+When opening the UI through a LAN address, set `NEXT_PUBLIC_MYAGENT_API_BASE_URL` to the
+matching backend IP, such as `http://10.11.148.97:8000`, and include the frontend origin
+such as `http://10.11.148.97:3000` in backend `MYAGENT_CORS_ORIGINS`.
 
 The legacy `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_AGENT_CHAT_TOKEN` names are still
 accepted for migrated local setups.
