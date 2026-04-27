@@ -1,62 +1,62 @@
 # MyAgent
 
-MyAgent is a local-first AI agent workspace for Markdown-based tender and bid analysis. It uses a FastAPI backend to manage tasks, run analysis workers, persist evidence, and generate reports, plus a Next.js frontend for uploads, task messages, execution logs, and artifact viewing.
+MyAgent 是一个本地优先的 AI 智能体工作区，用于基于 Markdown 的招投标文档分析。项目由 FastAPI 后端和 Next.js 前端组成：后端负责管理任务、运行分析 worker、持久化证据并生成报告；前端负责文件上传、任务消息、执行日志和产物查看。
 
-The current V1 workflow focuses on bid-collusion style document checks:
+当前 V1 工作流聚焦于围标、串标类文档检查：
 
-1. Start the backend and frontend locally.
-2. Upload Markdown tender/bid documents.
-3. Send a task such as `帮我检查是否有串标围标嫌疑`.
-4. The backend creates a task plan, runs category sub-agents, stores evidence and logs, and writes report artifacts.
-5. Open `report.html` from the frontend when the task completes.
+1. 在本地启动后端和前端。
+2. 上传 Markdown 格式的招标、投标文档。
+3. 发送类似 `帮我检查是否有串标围标嫌疑` 的任务消息。
+4. 后端创建任务计划，运行分类 sub-agent，保存证据和日志，并写入报告产物。
+5. 任务完成后，在前端打开 `report.html` 查看结果。
 
-## Repository Layout
+## 仓库结构
 
 ```text
-backend/                 FastAPI service, task runner, analysis pipeline, local storage
-backend/app/             Runtime code
-backend/tests/           Backend workflow and service tests
-backend/storage/tasks/   Default local task/artifact storage
-frontend/                Next.js app-router frontend
-frontend/app/            UI and task-state mapping code
-frontend/tests/          Frontend state/URL mapping tests
-asset/                   Long-term knowledge-pack index for future agent work
+backend/                 FastAPI 服务、任务 runner、分析流程、本地存储
+backend/app/             后端运行时代码
+backend/tests/           后端工作流和服务测试
+backend/storage/tasks/   默认本地任务和产物存储目录
+frontend/                Next.js app-router 前端
+frontend/app/            UI 和任务状态映射代码
+frontend/tests/          前端状态和 URL 映射测试
+asset/                   面向后续智能体协作的长期知识包索引
 ```
 
-## Prerequisites
+## 环境要求
 
-- Python 3.11 or newer
-- `uv` for backend dependency management
-- Node.js and npm compatible with the checked-in Next.js version
-- A DeepSeek API key for real model calls
-- Optional Tavily API key for search-enabled analysis tools
+- Python 3.11 或更新版本
+- 用于后端依赖管理的 `uv`
+- 与当前 Next.js 版本兼容的 Node.js 和 npm
+- 用于真实模型调用的 DeepSeek API Key
+- 可选：用于联网搜索分析工具的 Tavily API Key
 
-## Installation
+## 安装
 
-Install backend dependencies:
+安装后端依赖：
 
 ```bash
 cd backend
 uv sync --dev
 ```
 
-Install frontend dependencies:
+安装前端依赖：
 
 ```bash
 cd frontend
 npm install
 ```
 
-## Configuration
+## 配置
 
-Create backend configuration from the example:
+从示例文件创建后端配置：
 
 ```bash
 cd backend
 cp .env.example .env
 ```
 
-Backend-only values belong in `backend/.env`:
+后端专用配置应写入 `backend/.env`：
 
 ```env
 DEEPSEEK_API_KEY=
@@ -72,55 +72,55 @@ MYAGENT_MAX_JSON_REQUEST_BYTES=65536
 DEEPSEEK_TIMEOUT_SECONDS=15
 ```
 
-Create frontend configuration from the example when defaults are not enough:
+当前端默认值不够用时，从示例文件创建前端配置：
 
 ```bash
 cd frontend
 cp .env.example .env.local
 ```
 
-Frontend public values:
+前端公开配置：
 
 ```env
 NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://localhost:8000
 NEXT_PUBLIC_MYAGENT_TOKEN=
 ```
 
-Keep provider credentials in the backend only. Anything prefixed with `NEXT_PUBLIC_` is browser-visible.
+模型提供方凭据必须只放在后端。任何带有 `NEXT_PUBLIC_` 前缀的值都会暴露给浏览器。
 
-## Development Startup
+## 本地开发启动
 
-Start the backend:
+启动后端：
 
 ```bash
 cd backend
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-Start the frontend in another terminal:
+在另一个终端启动前端：
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-Open:
+打开：
 
 ```text
 http://localhost:3000
 ```
 
-Health check:
+健康检查：
 
 ```bash
 curl http://localhost:8000/health
 ```
 
-## Local Deployment Notes
+## 本地部署说明
 
-The backend is designed for a single local process. Do not run it with multiple Uvicorn, Gunicorn, or platform workers unless the task runner and JSON storage are redesigned first. The application rejects worker counts greater than one through `WEB_CONCURRENCY`, `UVICORN_WORKERS`, or `GUNICORN_WORKERS`.
+后端按单一本地进程设计。在任务 runner 和 JSON 存储重新设计之前，不要使用多个 Uvicorn、Gunicorn 或平台 worker 运行。应用会通过 `WEB_CONCURRENCY`、`UVICORN_WORKERS` 或 `GUNICORN_WORKERS` 拒绝大于 1 的 worker 数量。
 
-For a local production-style run:
+本地生产风格运行前端：
 
 ```bash
 cd frontend
@@ -128,32 +128,32 @@ npm run build
 npm run start
 ```
 
-Run the backend separately:
+单独运行后端：
 
 ```bash
 cd backend
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-If the task APIs are reachable from anything other than loopback, set `MYAGENT_ACCESS_TOKEN` on the backend and set the same value as `NEXT_PUBLIC_MYAGENT_TOKEN` for the frontend. Also set `MYAGENT_TASK_ROOT` to a persistent local directory if task artifacts must survive cleanups or redeploys.
+如果任务 API 会被非 loopback 客户端访问，请在后端设置 `MYAGENT_ACCESS_TOKEN`，并在前端将相同值设置为 `NEXT_PUBLIC_MYAGENT_TOKEN`。如果任务产物需要在清理或重新部署后保留，也请将 `MYAGENT_TASK_ROOT` 设置为持久化本地目录。
 
-For LAN access from the current machine address `10.11.148.97`, configure both services explicitly:
+如果要从当前机器地址 `10.11.148.97` 进行局域网访问，需要显式配置前后端服务。
 
-Backend `backend/.env`:
+后端 `backend/.env`：
 
 ```env
 MYAGENT_ACCESS_TOKEN=choose-a-local-token
 MYAGENT_CORS_ORIGINS=http://localhost:3000,http://127.0.0.1:3000,http://10.11.148.97:3000
 ```
 
-Frontend `frontend/.env.local`:
+前端 `frontend/.env.local`：
 
 ```env
 NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://10.11.148.97:8000
 NEXT_PUBLIC_MYAGENT_TOKEN=choose-a-local-token
 ```
 
-Start the services on externally reachable interfaces:
+在可被外部访问的接口上启动服务：
 
 ```bash
 cd backend
@@ -165,38 +165,38 @@ cd frontend
 npm run dev -- -H 0.0.0.0
 ```
 
-Then open `http://10.11.148.97:3000`. Keep provider keys out of `NEXT_PUBLIC_*` values; `NEXT_PUBLIC_MYAGENT_TOKEN` protects only this local task API and is visible to browsers that can load the frontend.
+然后打开 `http://10.11.148.97:3000`。不要把 provider key 写入任何 `NEXT_PUBLIC_*` 值；`NEXT_PUBLIC_MYAGENT_TOKEN` 只保护这个本地任务 API，并且对能够加载前端的浏览器可见。
 
-This repository does not currently include Docker, process-manager, reverse-proxy, TLS, or multi-host deployment files. Add those explicitly before treating it as a production service.
+本仓库目前不包含 Docker、进程管理器、反向代理、TLS 或多主机部署文件。将它作为生产服务前，需要显式补齐这些能力。
 
-## Usage Flow
+## 使用流程
 
-1. Create or reuse a task from the frontend.
-2. Upload Markdown files with `.md` names or `text/markdown` content type.
-3. Send a user message describing the requested analysis.
-4. Watch the execution log for planning, sub-agent assignment, tool calls, retries, and artifact creation.
-5. Open generated artifacts, especially `report.html`, after completion.
+1. 在前端创建或复用一个任务。
+2. 上传文件名为 `.md` 或内容类型为 `text/markdown` 的 Markdown 文件。
+3. 发送描述所需分析的用户消息。
+4. 查看执行日志中的规划、sub-agent 分派、工具调用、重试和产物创建过程。
+5. 任务完成后打开生成的产物，尤其是 `report.html`。
 
-The backend supports simple chat if no files are uploaded and the message does not look like a tender/document analysis request. Document-analysis requests require Markdown uploads.
+如果没有上传文件，且消息看起来不像招投标文档分析请求，后端支持简单聊天。文档分析请求必须上传 Markdown 文件。
 
-## API Summary
+## API 概览
 
-- `GET /health` returns service health.
-- `GET /api/models` lists safe model IDs exposed to the frontend.
-- `POST /api/tasks` creates a task.
-- `GET /api/tasks/{task_id}` reads task state, messages, logs, and artifacts.
-- `GET /api/tasks/{task_id}/events` reads incremental event records.
-- `POST /api/tasks/{task_id}/files` uploads Markdown files.
-- `POST /api/tasks/{task_id}/messages` starts or resumes work for a task.
-- `POST /api/tasks/{task_id}/cancel` requests cancellation.
-- `GET /api/tasks/{task_id}/artifacts/{artifact_name}` downloads an artifact.
+- `GET /health` 返回服务健康状态。
+- `GET /api/models` 列出暴露给前端的安全模型 ID。
+- `POST /api/tasks` 创建任务。
+- `GET /api/tasks/{task_id}` 读取任务状态、消息、日志和产物。
+- `GET /api/tasks/{task_id}/events` 读取增量事件记录。
+- `POST /api/tasks/{task_id}/files` 上传 Markdown 文件。
+- `POST /api/tasks/{task_id}/messages` 为任务启动或恢复工作。
+- `POST /api/tasks/{task_id}/cancel` 请求取消任务。
+- `GET /api/tasks/{task_id}/artifacts/{artifact_name}` 下载产物。
 
-Task APIs are restricted to loopback clients by default. If `MYAGENT_ACCESS_TOKEN` is configured, requests must provide either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
-Browser callers must also use an origin listed in `MYAGENT_CORS_ORIGINS`; the default only allows `http://localhost:3000` and `http://127.0.0.1:3000`.
+任务 API 默认只允许 loopback 客户端访问。配置了 `MYAGENT_ACCESS_TOKEN` 后，请求必须提供 `Authorization: Bearer <token>` 或 `X-MyAgent-Token`。
+浏览器调用方还必须使用 `MYAGENT_CORS_ORIGINS` 中列出的 origin；默认只允许 `http://localhost:3000` 和 `http://127.0.0.1:3000`。
 
-## Verification
+## 验证
 
-Run backend tests and checks:
+运行后端测试和检查：
 
 ```bash
 cd backend
@@ -205,7 +205,7 @@ uv run ruff check .
 uv run mypy app tests
 ```
 
-Run frontend checks:
+运行前端检查：
 
 ```bash
 cd frontend
@@ -215,27 +215,26 @@ npm run lint
 npm run build
 ```
 
-For documentation-only changes:
+仅修改文档时运行：
 
 ```bash
 git diff --check
 ```
 
-## Runtime Boundaries
+## 运行边界
 
-- Provider credentials are backend-only `.env` values.
-- The frontend only sends safe model IDs such as `deepseek-reasoner`.
-- Uploaded files, task plans, evidence, summaries, logs, and HTML reports are stored in local task directories.
-- File access and command execution helpers are scoped to the task workspace by default.
-- Upload and JSON request limits are controlled by backend environment variables.
-- Browser CORS origins are controlled by `MYAGENT_CORS_ORIGINS`; use exact scheme, host, and port values such as `http://10.11.148.97:3000`.
-- Legacy `AGENT_CHAT_*` and `NEXT_PUBLIC_AGENT_CHAT_*` names are still accepted for migrated local setups, but new configuration should use `MYAGENT_*`.
+- Provider 凭据只能作为后端 `.env` 值保存。
+- 前端只发送安全模型 ID，例如 `deepseek-reasoner`。
+- 上传文件、任务计划、证据、摘要、日志和 HTML 报告会存储在本地任务目录中。
+- 文件访问和命令执行辅助能力默认限定在任务工作区内。
+- 上传和 JSON 请求大小限制由后端环境变量控制。
+- 浏览器 CORS origin 由 `MYAGENT_CORS_ORIGINS` 控制；请使用精确的协议、主机和端口，例如 `http://10.11.148.97:3000`。
+- 迁移后的本地配置仍兼容旧的 `AGENT_CHAT_*` 和 `NEXT_PUBLIC_AGENT_CHAT_*` 名称，但新配置应使用 `MYAGENT_*`。
 
-## Troubleshooting
+## 常见问题
 
-- `401 Invalid or missing access token`: set matching `MYAGENT_ACCESS_TOKEN` and `NEXT_PUBLIC_MYAGENT_TOKEN`, then restart both services.
-- `403 Task APIs are restricted to localhost`: access came from a non-loopback client without an access token.
-- `409 Cannot upload files while the task is running`: stop or wait for the current task before uploading more files.
-- `Upload Markdown files before starting a document-analysis task`: the task message requires document analysis but no Markdown files were uploaded.
-- `At least two Markdown bidder documents are required for comparison`: upload at least two bidder Markdown files.
-- Frontend cannot reach backend: confirm `NEXT_PUBLIC_MYAGENT_API_BASE_URL`, backend port `8000`, and that the browser origin is listed in `MYAGENT_CORS_ORIGINS`.
+- `401 Invalid or missing access token`：设置匹配的 `MYAGENT_ACCESS_TOKEN` 和 `NEXT_PUBLIC_MYAGENT_TOKEN`，然后重启两个服务。
+- `403 Task APIs are restricted to localhost`：请求来自非 loopback 客户端，且没有提供访问令牌。
+- `409 Cannot upload files while the task is running`：停止当前任务或等待任务结束后再上传更多文件。
+- `Upload Markdown files before starting a document-analysis task`：任务消息需要文档分析，但尚未上传 Markdown 文件。
+- `At least two Markdown bidder documents are required for comparison`：至少上传两个投标方 Markdown 文件以便进行比较。
