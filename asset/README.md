@@ -4,9 +4,7 @@
 
 ## Current Knowledge Packs
 
-No topic knowledge packs exist yet.
-
-When the first stable topic boundary appears, update this index before adding the package file.
+- `asset/model_provider_security_knowledge_pack.md`: model-provider secrets, environment variables, access tokens, CORS/local-first security, upload limits, and JSON limits.
 
 ## Registration Rules
 
@@ -49,4 +47,3 @@ These filenames are suggested routes, not current packages:
 - `asset/backend_task_runtime_knowledge_pack.md` for backend task APIs, state transitions, runner behavior, cancellation/interruption, event logs, artifact download, and local storage.
 - `asset/bid_analysis_workflow_knowledge_pack.md` for Markdown document classification, bid-collusion analysis categories, sub-agent assignment, evidence normalization, and report generation.
 - `asset/frontend_task_workspace_knowledge_pack.md` for task creation, file upload, message submission, polling, log merging, artifact URLs, and artifact opening.
-- `asset/model_provider_security_knowledge_pack.md` for model providers, environment variables, access tokens, CORS, local-first security, upload limits, and JSON limits.
