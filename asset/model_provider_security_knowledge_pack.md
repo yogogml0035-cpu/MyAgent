@@ -22,7 +22,7 @@ It applies when editing:
 - If `MYAGENT_ACCESS_TOKEN` is set, task APIs accept either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
 - The frontend sends `NEXT_PUBLIC_MYAGENT_TOKEN` as `X-MyAgent-Token` for local protected task access.
 - Backend CORS is controlled by comma-separated `MYAGENT_CORS_ORIGINS`, defaulting to `http://localhost:3001,http://127.0.0.1:3001`.
-- LAN frontend access requires an exact backend CORS origin such as `http://10.11.148.97:3001`, plus a matching frontend API base URL such as `http://10.11.148.97:8001`.
+- LAN frontend access requires an exact backend CORS origin such as `http://10.11.148.97:3001`. The frontend API base URL should usually be `auto`, which derives `http://<current page hostname>:8001`; explicit URLs such as `http://10.11.148.97:8001` remain supported.
 - New configuration should use `MYAGENT_*`; legacy `AGENT_CHAT_*` names remain compatibility fallbacks.
 - The backend is single-process oriented because task runners and JSON task storage are in-process/local.
 
@@ -47,14 +47,14 @@ DEEPSEEK_TIMEOUT_SECONDS=15
 Frontend `.env.local` example:
 
 ```env
-NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://localhost:8001
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
 NEXT_PUBLIC_MYAGENT_TOKEN=
 ```
 
 LAN frontend `.env.local` example for host `10.11.148.97`:
 
 ```env
-NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://10.11.148.97:8001
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
 NEXT_PUBLIC_MYAGENT_TOKEN=<same value as MYAGENT_ACCESS_TOKEN>
 ```
 
@@ -77,6 +77,7 @@ X-MyAgent-Token: <token>
 - Missing or wrong token when a token is configured returns `401`.
 - Browser origins not listed in `MYAGENT_CORS_ORIGINS` fail CORS preflight and are blocked by the browser.
 - `MYAGENT_CORS_ORIGINS` entries must match the browser origin by scheme, host, and port; path components are not origins.
+- `NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto` follows the browser page hostname and assumes backend port `8001`; non-default backend ports require an explicit API base URL or a frontend resolver change.
 - Upload request limits and JSON body limits are enforced before task mutation.
 - Multi-worker deployment is blocked by `WEB_CONCURRENCY`, `UVICORN_WORKERS`, and `GUNICORN_WORKERS` checks.
 - Root `.env.example` is a reference file; the current runtime loads `backend/.env` for backend settings and frontend env values through the frontend toolchain.

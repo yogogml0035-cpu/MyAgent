@@ -143,7 +143,9 @@ def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> Non
     assert 'data-severity="high"' in report.text or 'data-severity="medium"' in report.text
 
 
-def test_terminal_task_rerun_does_not_overwrite_existing_artifacts(tmp_path: Path) -> None:
+def test_follow_up_task_run_preserves_existing_artifacts_and_reuses_uploads(
+    tmp_path: Path,
+) -> None:
     client = make_client(tmp_path)
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
     files = [
@@ -156,22 +158,37 @@ def test_terminal_task_rerun_does_not_overwrite_existing_artifacts(tmp_path: Pat
         f"/api/tasks/{task_id}/messages",
         json={"message": "帮我检查是否有串标围标嫌疑", "model": "deepseek-reasoner"},
     )
-    state = wait_for_terminal_status(client, task_id)
-    assert state["status"] == "complete"
-    report_path = tmp_path / "tasks" / task_id / "artifacts" / "report.html"
-    evidence_path = tmp_path / "tasks" / task_id / "artifacts" / "evidence.json"
-    report_before = report_path.read_bytes()
-    evidence_before = evidence_path.read_bytes()
+    first_state = wait_for_terminal_status(client, task_id)
+    assert first_state["status"] == "complete"
+    first_run_id = first_state["runs"][0]["id"]
+    first_run_dir = tmp_path / "tasks" / task_id / "artifacts" / "runs" / first_run_id
+    report_before = (first_run_dir / "report.html").read_bytes()
+    evidence_before = (first_run_dir / "evidence.json").read_bytes()
 
     response = client.post(
         f"/api/tasks/{task_id}/messages",
         json={"message": "请重新总结当前报告", "model": "deepseek-reasoner"},
     )
+    second_state = wait_for_terminal_status(client, task_id)
+    second_run_id = second_state["runs"][1]["id"]
+    second_manifest = json.loads(
+        (tmp_path / "tasks" / task_id / "artifacts" / "runs" / second_run_id / "run.json").read_text(
+            encoding="utf-8"
+        )
+    )
 
-    assert response.status_code == 409
-    assert report_path.read_bytes() == report_before
-    assert evidence_path.read_bytes() == evidence_before
-    assert client.get(f"/api/tasks/{task_id}").json()["status"] == "complete"
+    assert response.status_code == 200
+    assert second_state["status"] == "complete"
+    assert second_state["run_count"] == 2
+    assert second_run_id != first_run_id
+    assert (first_run_dir / "report.html").read_bytes() == report_before
+    assert (first_run_dir / "evidence.json").read_bytes() == evidence_before
+    assert [item["filename"] for item in second_manifest["inputs"]] == [
+        "bidder-a.md",
+        "bidder-b.md",
+        "tender.md",
+    ]
+    assert all(message["run_id"] for message in second_state["messages"])
 
 
 def test_bidder_only_documents_are_not_reclassified_as_tender() -> None:
@@ -269,6 +286,41 @@ def test_upload_while_task_is_running_returns_conflict_without_persisting(
         client.post(f"/api/tasks/{task_id}/cancel")
 
 
+def test_follow_up_message_is_rejected_while_run_is_active(tmp_path: Path) -> None:
+    settings = Settings(
+        task_root=tmp_path / "tasks",
+        deepseek_api_key="test-key",
+        deepseek_base_url="https://api.deepseek.com",
+        tavily_api_key=None,
+        workspace_root=tmp_path / "tasks",
+    )
+    client = TestClient(create_app(settings))
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    async def slow_chat(_message: str, _model: str) -> str:
+        await asyncio.sleep(10)
+        return "late"
+
+    with patch("app.model_provider.DeepSeekProvider._chat_http_async", side_effect=slow_chat):
+        started = client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={"message": "你好，请简单介绍你能做什么", "model": "deepseek-reasoner"},
+        )
+        time.sleep(0.2)
+        rejected = client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={"message": "第二条", "model": "deepseek-reasoner"},
+        )
+        state = client.get(f"/api/tasks/{task_id}").json()
+        client.post(f"/api/tasks/{task_id}/cancel")
+
+    assert started.status_code == 200
+    assert rejected.status_code == 409
+    assert state["status"] == "running"
+    assert state["run_count"] == 1
+    assert len([message for message in state["messages"] if message["role"] == "user"]) == 1
+
+
 def test_startup_marks_persisted_running_task_as_interrupted(tmp_path: Path) -> None:
     task_root = tmp_path / "tasks"
     storage = TaskStorage(task_root)
@@ -339,6 +391,74 @@ def test_task_api_accepts_valid_access_token_and_rejects_wrong_token(tmp_path: P
     assert wrong.status_code == 401
     assert right.status_code == 200
     assert right.json()["task_id"] == task_id
+
+
+def test_task_list_summaries_are_sorted_and_titled_from_first_user_message(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    first_id = client.post("/api/tasks", json={}).json()["task_id"]
+    second_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    first_response = client.post(
+        f"/api/tasks/{first_id}/messages",
+        json={"message": "abcdefg", "model": "deepseek-reasoner"},
+    )
+    first_state = wait_for_terminal_status(client, first_id)
+    time.sleep(1.05)
+    second_response = client.post(
+        f"/api/tasks/{second_id}/messages",
+        json={"message": "你好世界测试文本", "model": "deepseek-reasoner"},
+    )
+    second_state = wait_for_terminal_status(client, second_id)
+    empty_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    summaries = client.get("/api/tasks").json()
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert first_state["status"] == "complete"
+    assert second_state["status"] == "complete"
+    assert [summary["task_id"] for summary in summaries[:2]] == [second_id, first_id]
+    assert {summary["task_id"]: summary["title"] for summary in summaries} == {
+        second_id: "你好世界测",
+        first_id: "abcde",
+    }
+    assert empty_id not in {summary["task_id"] for summary in summaries}
+
+
+def test_task_summaries_respect_access_token_enforcement(tmp_path: Path) -> None:
+    token = "test-token"
+    settings = Settings(
+        task_root=tmp_path / "tasks",
+        deepseek_api_key=None,
+        deepseek_base_url="https://api.deepseek.com",
+        tavily_api_key=None,
+        workspace_root=tmp_path / "tasks",
+        access_token=token,
+    )
+    app = create_app(settings)
+    storage = app.state.storage
+    state = storage.create_task(None, "deepseek-reasoner")
+    started = storage.start_run(
+        state.task_id,
+        message="hello",
+        model="deepseek-reasoner",
+        expected_statuses={"idle"},
+    )
+    assert started is not None
+    _, run_id = started
+    storage.update_task_if_status(state.task_id, {"running"}, status="complete", run_id=run_id)
+    client = TestClient(app, client=("203.0.113.10", 50000))
+
+    missing = client.get("/api/tasks")
+    wrong = client.get("/api/tasks", headers={"X-MyAgent-Token": "wrong"})
+    right = client.get("/api/tasks", headers={"X-MyAgent-Token": token})
+
+    assert missing.status_code == 401
+    assert wrong.status_code == 401
+    assert right.status_code == 200
+    assert right.json()[0]["title"] == "hello"
 
 
 def test_cors_allows_default_local_frontend_origin(tmp_path: Path) -> None:
@@ -438,6 +558,79 @@ def test_artifact_download_requires_and_accepts_access_token(tmp_path: Path) -> 
     assert right_legacy.status_code == 200
 
 
+def test_run_scoped_artifact_endpoint_is_allowlisted_and_path_safe(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    files = [
+        ("files", ("tender.md", TENDER_DOC.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-a.md", BIDDER_A.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-b.md", BIDDER_B.encode("utf-8"), "text/markdown")),
+    ]
+    assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
+    client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": "帮我检查是否有串标围标嫌疑", "model": "deepseek-reasoner"},
+    )
+    state = wait_for_terminal_status(client, task_id)
+    run_id = state["runs"][0]["id"]
+
+    allowed = client.get(f"/api/tasks/{task_id}/runs/{run_id}/artifacts/report.html")
+    unlisted = client.get(f"/api/tasks/{task_id}/runs/{run_id}/artifacts/run.json")
+    traversal = client.get(
+        f"/api/tasks/{task_id}/runs/{run_id}/artifacts/%2e%2e%2freport.html"
+    )
+    latest = client.get(f"/api/tasks/{task_id}/artifacts/report.html")
+
+    assert allowed.status_code == 200
+    assert "Three-Bidder Comparison View" in allowed.text
+    assert unlisted.status_code == 404
+    assert traversal.status_code in {400, 404}
+    assert latest.status_code == 200
+    assert latest.text == allowed.text
+
+
+def test_run_history_and_artifacts_persist_across_app_restart(tmp_path: Path) -> None:
+    settings = Settings(
+        task_root=tmp_path / "tasks",
+        deepseek_api_key=None,
+        deepseek_base_url="https://api.deepseek.com",
+        tavily_api_key=None,
+        workspace_root=tmp_path / "tasks",
+    )
+    client = TestClient(create_app(settings))
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    files = [
+        ("files", ("tender.md", TENDER_DOC.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-a.md", BIDDER_A.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-b.md", BIDDER_B.encode("utf-8"), "text/markdown")),
+    ]
+    assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
+    client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": "帮我检查是否有串标围标嫌疑", "model": "deepseek-reasoner"},
+    )
+    before_restart = wait_for_terminal_status(client, task_id)
+    run_id = before_restart["runs"][0]["id"]
+    report_before = client.get(
+        f"/api/tasks/{task_id}/runs/{run_id}/artifacts/report.html"
+    ).text
+
+    restarted = TestClient(create_app(settings))
+    summaries = restarted.get("/api/tasks").json()
+    restored = restarted.get(f"/api/tasks/{task_id}").json()
+    report_after = restarted.get(
+        f"/api/tasks/{task_id}/runs/{run_id}/artifacts/report.html"
+    )
+
+    assert summaries[0]["task_id"] == task_id
+    assert summaries[0]["run_count"] == 1
+    assert restored["run_count"] == 1
+    assert restored["runs"][0]["id"] == run_id
+    assert restored["messages"][0]["run_id"] == run_id
+    assert report_after.status_code == 200
+    assert report_after.text == report_before
+
+
 def test_message_over_length_limit_is_rejected_without_starting_run(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
@@ -464,6 +657,20 @@ def test_create_task_rejects_initial_message_over_length_limit(tmp_path: Path) -
     )
 
     assert response.status_code == 422
+    assert list((tmp_path / "tasks").iterdir()) == []
+
+
+def test_create_task_rejects_initial_message_without_persisting(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+
+    response = client.post(
+        "/api/tasks",
+        json={"message": "hello", "model": "deepseek-reasoner"},
+    )
+
+    assert response.status_code == 400
+    assert "without an initial message" in response.json()["detail"]
+    assert client.get("/api/tasks").json() == []
     assert list((tmp_path / "tasks").iterdir()) == []
 
 
@@ -761,6 +968,9 @@ def test_message_without_uploads_requests_input(tmp_path: Path) -> None:
     state = wait_for_terminal_status(client, task_id)
     assert state["status"] == "needs_input"
     assert state["needs_input"]["required_file_type"] == "markdown"
+    assert state["runs"][0]["status"] == "needs_input"
+    assert state["runs"][0]["needs_input"]["required_file_type"] == "markdown"
+    assert state["messages"][0]["run_id"] == state["runs"][0]["id"]
 
 
 def test_simple_chat_uses_deepseek_extension_point(tmp_path: Path) -> None:
@@ -773,6 +983,29 @@ def test_simple_chat_uses_deepseek_extension_point(tmp_path: Path) -> None:
     state = wait_for_terminal_status(client, task_id)
     assert state["status"] == "complete"
     assert "DEEPSEEK_API_KEY" in state["messages"][-1]["content"]
+
+
+def test_messages_and_events_from_new_runs_carry_run_id(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": "你好，请简单介绍你能做什么", "model": "deepseek-reasoner"},
+    )
+    state = wait_for_terminal_status(client, task_id)
+    run_id = state["runs"][0]["id"]
+    run_events = [
+        event
+        for event in state["events"]
+        if event["type"] in {"user_message_received", "run_manifest_created", "chat_completed"}
+    ]
+
+    assert state["active_run_id"] is None
+    assert state["run_count"] == 1
+    assert {message["run_id"] for message in state["messages"]} == {run_id}
+    assert run_events
+    assert {event["run_id"] for event in run_events} == {run_id}
 
 
 def test_env_file_loader_reads_backend_secrets(tmp_path: Path, monkeypatch) -> None:
@@ -864,6 +1097,34 @@ def test_read_events_ignores_partial_jsonl_tail(tmp_path: Path) -> None:
     assert [event.type for event in events][-1] == "second"
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_legacy_task_without_runs_synthesizes_readable_legacy_run(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    app = cast(FastAPI, client.app)
+    storage = app.state.storage
+    state = storage.create_task(None, "deepseek-reasoner")
+    task_id = state.task_id
+    storage.write_text(task_id, "artifacts/report.html", "<html>legacy</html>")
+    state_path = tmp_path / "tasks" / task_id / "state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    data["status"] = "complete"
+    data["messages"] = [
+        {"role": "user", "content": "旧任务消息", "created_at": data["created_at"]}
+    ]
+    data.pop("runs", None)
+    data.pop("active_run_id", None)
+    data.pop("run_count", None)
+    state_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    restored = client.get(f"/api/tasks/{task_id}").json()
+    artifact = client.get(f"/api/tasks/{task_id}/runs/legacy/artifacts/report.html")
+
+    assert restored["runs"][0]["id"] == "legacy"
+    assert restored["runs"][0]["artifact_names"] == ["report.html"]
+    assert restored["messages"][0]["run_id"] == "legacy"
+    assert artifact.status_code == 200
+    assert "legacy" in artifact.text
 
 
 def test_task_storage_resolves_relative_task_root(tmp_path: Path, monkeypatch) -> None:
@@ -993,11 +1254,12 @@ def test_cancel_racing_with_completion_preserves_complete_state(tmp_path: Path) 
         event_type: str,
         message: str,
         payload: dict | None = None,
+        **kwargs,
     ):
         if event_task_id == task_id and event_type == "chat_completed":
             complete_event.set()
             release_event.wait(timeout=3)
-        return original_append_event(event_task_id, event_type, message, payload)
+        return original_append_event(event_task_id, event_type, message, payload, **kwargs)
 
     with patch.object(storage, "append_event", side_effect=delayed_append_event):
         response = client.post(

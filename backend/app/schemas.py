@@ -25,6 +25,7 @@ class ChatMessage(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
     created_at: str
+    run_id: str | None = None
 
 
 class EventRecord(BaseModel):
@@ -33,12 +34,28 @@ class EventRecord(BaseModel):
     message: str
     created_at: str
     payload: dict[str, Any] = Field(default_factory=dict)
+    run_id: str | None = None
 
 
 class ArtifactRecord(BaseModel):
+    id: str | None = None
     name: str
     type: Literal["html", "markdown", "json", "text"]
     url: str
+    run_id: str | None = None
+
+
+class TaskRunRecord(BaseModel):
+    id: str
+    status: TaskStatus
+    message: str
+    model: str
+    started_at: str
+    completed_at: str | None = None
+    error: str | None = None
+    needs_input: dict[str, Any] | None = None
+    artifact_base_path: str
+    artifact_names: list[str] = Field(default_factory=list)
 
 
 class TaskState(BaseModel):
@@ -50,9 +67,23 @@ class TaskState(BaseModel):
     messages: list[ChatMessage] = Field(default_factory=list)
     events: list[EventRecord] = Field(default_factory=list)
     artifacts: list[ArtifactRecord] = Field(default_factory=list)
+    runs: list[TaskRunRecord] = Field(default_factory=list)
+    active_run_id: str | None = None
+    run_count: int = 0
     upload_count: int = 0
     error: str | None = None
     needs_input: dict[str, Any] | None = None
+
+
+class TaskSummary(BaseModel):
+    task_id: str
+    title: str
+    status: TaskStatus
+    model: str
+    created_at: str
+    updated_at: str
+    run_count: int = 0
+    last_message_at: str | None = None
 
 
 class ModelOption(BaseModel):

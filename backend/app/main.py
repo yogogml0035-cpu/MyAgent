@@ -12,7 +12,14 @@ from starlette.responses import Response
 
 from .model_provider import ProviderRouter
 from .runner import TaskRunner
-from .schemas import EventRecord, MessageRequest, ModelOption, TaskCreateRequest, TaskState
+from .schemas import (
+    EventRecord,
+    MessageRequest,
+    ModelOption,
+    TaskCreateRequest,
+    TaskState,
+    TaskSummary,
+)
 from .settings import MODEL_REGISTRY, Settings, enforce_single_process_runtime, load_settings
 from .storage import TaskStorage, UploadConflictError, UploadLimitError
 
@@ -81,7 +88,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/api/tasks", response_model=TaskState)
     def create_task(request: TaskCreateRequest) -> TaskState:
         validate_model(request.model)
-        return storage.create_task(request.message, request.model)
+        if request.message is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Create a task without an initial message, then send it to /messages.",
+            )
+        return storage.create_task(None, request.model)
+
+    @app.get("/api/tasks", response_model=list[TaskSummary])
+    def list_tasks() -> list[TaskSummary]:
+        return storage.list_task_summaries()
 
     @app.get("/api/tasks/{task_id}", response_model=TaskState)
     def get_task(task_id: str, include_events: bool = Query(True)) -> TaskState:
@@ -137,6 +153,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         runner.cancel(task_id)
         return storage.get_task(task_id)
 
+    @app.get("/api/tasks/{task_id}/runs/{run_id}/artifacts/{artifact_name}")
+    def get_run_artifact(task_id: str, run_id: str, artifact_name: str) -> FileResponse:
+        require_task(storage, task_id)
+        try:
+            path = storage.resolve_run_artifact(task_id, run_id, artifact_name)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Artifact not found") from None
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="Artifact not found")
+        media_type = media_type_for(path)
+        return FileResponse(path, media_type=media_type, filename=path.name)
+
     @app.get("/api/tasks/{task_id}/artifacts/{artifact_name}")
     def get_artifact(task_id: str, artifact_name: str) -> FileResponse:
         require_task(storage, task_id)
@@ -144,6 +174,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             path = storage.resolve_artifact(task_id, artifact_name)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except FileNotFoundError:
+            raise HTTPException(status_code=404, detail="Artifact not found") from None
         if not path.exists():
             raise HTTPException(status_code=404, detail="Artifact not found")
         media_type = media_type_for(path)

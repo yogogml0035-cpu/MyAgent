@@ -14,8 +14,14 @@ from .settings import Settings
 from .storage import TaskStorage
 from .tools import WorkspaceTools
 
-RUN_MANIFEST_PATH = "run.json"
-STARTABLE_STATUSES: set[TaskStatus] = {"idle", "needs_input"}
+STARTABLE_STATUSES: set[TaskStatus] = {
+    "idle",
+    "needs_input",
+    "complete",
+    "failed",
+    "cancelled",
+    "interrupted",
+}
 RUNNING_STATUSES: set[TaskStatus] = {"running"}
 
 
@@ -43,25 +49,27 @@ class TaskRunner:
                 raise RuntimeError(f"Cannot start a task in {state.status} status")
             controller = CancellationController()
             self._controllers[task_id] = controller
-            updated = self.storage.update_task_if_status(
+            started = self.storage.start_run(
                 task_id,
-                STARTABLE_STATUSES,
-                status="running",
-                append_message=ChatMessage(role="user", content=message, created_at=utc_now()),
+                message=message,
+                model=model,
+                expected_statuses=STARTABLE_STATUSES,
             )
-            if updated is None:
+            if started is None:
                 self._controllers.pop(task_id, None)
                 raise RuntimeError("Task status changed before the run could start")
+            _, run_id = started
             self.storage.append_event(
                 task_id,
                 "user_message_received",
                 "User message accepted; workflow started",
                 {"model": model, "message": message},
+                run_id=run_id,
             )
             thread = Thread(
                 target=self._run,
                 name=f"agent-task-{task_id}",
-                args=(task_id, message, model, controller),
+                args=(task_id, run_id, message, model, controller),
                 daemon=True,
             )
             self._threads[task_id] = thread
@@ -84,8 +92,14 @@ class TaskRunner:
                 )
                 return
             controller.cancel()
-        self.storage.append_event(task_id, "cancel_requested", "Cancellation requested", {})
-        updated = self.storage.update_task_if_status(task_id, RUNNING_STATUSES, status="cancelled")
+        state = self.storage.get_task(task_id, include_events=False)
+        run_id = state.active_run_id
+        self.storage.append_event(
+            task_id, "cancel_requested", "Cancellation requested", {}, run_id=run_id
+        )
+        updated = self.storage.update_task_if_status(
+            task_id, RUNNING_STATUSES, status="cancelled", run_id=run_id
+        )
         if updated is None:
             self.storage.append_event(
                 task_id,
@@ -100,12 +114,12 @@ class TaskRunner:
             return bool(thread and thread.is_alive())
 
     def _run(
-        self, task_id: str, message: str, model: str, controller: CancellationController
+        self, task_id: str, run_id: str, message: str, model: str, controller: CancellationController
     ) -> None:
         def emit(
             event_type: str, event_message: str, payload: dict[str, Any] | None = None
         ) -> None:
-            self.storage.append_event(task_id, event_type, event_message, payload or {})
+            self.storage.append_event(task_id, event_type, event_message, payload or {}, run_id=run_id)
 
         try:
             uploads = self.storage.list_uploads(task_id)
@@ -116,7 +130,7 @@ class TaskRunner:
                 "message": message,
                 "inputs": input_manifest,
             }
-            self.storage.write_json(task_id, RUN_MANIFEST_PATH, run_manifest)
+            self.storage.write_run_manifest(task_id, run_id, run_manifest)
             emit(
                 "run_manifest_created",
                 "Run input manifest recorded",
@@ -137,8 +151,12 @@ class TaskRunner:
                         RUNNING_STATUSES,
                         status="complete",
                         append_message=ChatMessage(
-                            role="assistant", content=reply, created_at=utc_now()
+                            role="assistant",
+                            content=reply,
+                            created_at=utc_now(),
+                            run_id=run_id,
                         ),
+                        run_id=run_id,
                     )
                     if updated is None:
                         if controller.is_cancelled():
@@ -152,6 +170,7 @@ class TaskRunner:
                 )
             result = run_bid_analysis(
                 task_id=task_id,
+                run_id=run_id,
                 uploads=uploads,
                 task_message=message,
                 model=model,
@@ -169,16 +188,21 @@ class TaskRunner:
             if controller.is_cancelled():
                 raise CancelledError()
             assistant_text = (
-                "Analysis complete. Open `report.html` for the interactive comparison report. "
-                f"Evidence records: {result['evidence_count']}."
+                "分析完成。可以打开本轮 `report.html` 查看交互式对比报告。"
+                f"证据记录：{result['evidence_count']} 条。"
             )
             updated = self.storage.update_task_if_status(
                 task_id,
                 RUNNING_STATUSES,
                 status="complete",
                 append_message=ChatMessage(
-                    role="assistant", content=assistant_text, created_at=utc_now()
+                    role="assistant",
+                    content=assistant_text,
+                    created_at=utc_now(),
+                    run_id=run_id,
                 ),
+                run_id=run_id,
+                artifact_names=result.get("artifacts"),
             )
             if updated is None:
                 if controller.is_cancelled():
@@ -187,17 +211,23 @@ class TaskRunner:
             emit("task_completed", "Task completed", result)
         except CancelledError:
             emit("task_cancelled", "Task cancelled; intermediate artifacts were kept", {})
-            self.storage.update_task_if_status(task_id, RUNNING_STATUSES, status="cancelled")
+            self.storage.update_task_if_status(
+                task_id, RUNNING_STATUSES, status="cancelled", run_id=run_id
+            )
         except NeedsInputError as exc:
             payload = {"message": str(exc), **exc.payload}
             emit("needs_input", str(exc), payload)
             self.storage.update_task_if_status(
-                task_id, RUNNING_STATUSES, status="needs_input", needs_input=payload
+                task_id,
+                RUNNING_STATUSES,
+                status="needs_input",
+                needs_input=payload,
+                run_id=run_id,
             )
         except Exception as exc:
             emit("task_failed", "Task failed", {"error": str(exc)})
             self.storage.update_task_if_status(
-                task_id, RUNNING_STATUSES, status="failed", error=str(exc)
+                task_id, RUNNING_STATUSES, status="failed", error=str(exc), run_id=run_id
             )
         finally:
             with self._lock:

@@ -80,6 +80,7 @@ CATEGORY_LABELS = {
 def run_bid_analysis(
     *,
     task_id: str,
+    run_id: str,
     uploads: list[Path],
     task_message: str,
     model: str,
@@ -92,10 +93,11 @@ def run_bid_analysis(
     cancel_event = controller.event
     documents = load_markdown_documents(uploads)
     classified = classify_documents(documents)
-    storage.write_json(task_id, "artifacts/input-manifest.json", render_input_manifest(classified))
+    storage.write_run_json(task_id, run_id, "input-manifest.json", render_input_manifest(classified))
     plan = build_execution_plan(task_message, classified)
     storage.write_json(task_id, "plan.json", plan)
-    storage.write_text(task_id, "artifacts/task-plan.md", render_plan_markdown(plan))
+    storage.write_json(task_id, f"artifacts/runs/{run_id}/plan.json", plan)
+    storage.write_run_text(task_id, run_id, "task-plan.md", render_plan_markdown(plan))
     emit("plan_created", "Execution plan generated", {"plan": plan})
 
     if cancel_event.is_set():
@@ -118,6 +120,11 @@ def run_bid_analysis(
         pending: set[Future] = set()
         for spec in specs:
             storage.write_json(task_id, f"subagents/{spec.category}-task.json", asdict(spec))
+            storage.write_json(
+                task_id,
+                f"artifacts/runs/{run_id}/subagents/{spec.category}-task.json",
+                asdict(spec),
+            )
             worker = SubAgentWorker(
                 spec=spec,
                 tender_docs=tender_docs,
@@ -190,6 +197,11 @@ def run_bid_analysis(
                     continue
                 reports.append(report)
                 storage.write_json(task_id, f"subagents/{category}.json", report)
+                storage.write_json(
+                    task_id,
+                    f"artifacts/runs/{run_id}/subagents/{category}.json",
+                    report,
+                )
                 emit(
                     "subagent_completed",
                     f"{CATEGORY_LABELS[category]} completed",
@@ -197,11 +209,11 @@ def run_bid_analysis(
                 )
 
     evidence = normalize_evidence(reports)
-    storage.write_json(task_id, "artifacts/evidence.json", evidence)
+    storage.write_run_json(task_id, run_id, "evidence.json", evidence)
     summary = render_summary(classified, evidence)
-    storage.write_text(task_id, "artifacts/final-summary.md", summary)
+    storage.write_run_text(task_id, run_id, "final-summary.md", summary)
     html_report = render_html_report(classified, evidence, plan)
-    storage.write_text(task_id, "artifacts/report.html", html_report)
+    storage.write_run_text(task_id, run_id, "report.html", html_report)
     emit(
         "artifacts_written",
         "Final report artifacts were written",

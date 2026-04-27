@@ -100,13 +100,46 @@ cp .env.example .env.local
 前端公开配置：
 
 ```env
-NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://localhost:8001
+# auto 会按当前页面主机名连接 http://<hostname>:8001
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
 NEXT_PUBLIC_MYAGENT_TOKEN=
 ```
 
 模型提供方凭据必须只放在后端。任何带有 `NEXT_PUBLIC_` 前缀的值都会暴露给浏览器。
 
 ## 本地开发启动
+
+WSL 中可直接用仓库脚本清理端口，并打开两个新的 WSL 终端分别启动前后端：
+
+```bash
+cd /mnt/d/AgentProject/MyAgent
+./scripts/start-dev-wsl.sh
+```
+
+脚本会先停止 WSL 内监听后端端口 `8001` 和前端端口 `3001` 的进程，然后通过 Windows Terminal 分别打开两个 WSL 窗口：
+
+- 后端：`uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001`
+- 前端：`next dev -p 3001 -H 0.0.0.0`
+
+启动后可以在各自终端中用 `Ctrl+C` 停止单个服务，也可以回到仓库运行 `./scripts/stop-dev-ports.sh` 统一释放端口。该脚本依赖 WSL 可调用的 `wt.exe` 和 `wsl.exe`。
+
+如果只需要释放端口：
+
+```bash
+cd /mnt/d/AgentProject/MyAgent
+./scripts/stop-dev-ports.sh
+```
+
+可用环境变量或参数覆盖端口：
+
+```bash
+BACKEND_PORT=8002 FRONTEND_PORT=3002 ./scripts/start-dev-wsl.sh
+./scripts/stop-dev-ports.sh --backend-port 8002 --frontend-port 3002
+```
+
+如果修改后端端口，请将 `frontend/.env.local` 中的 `NEXT_PUBLIC_MYAGENT_API_BASE_URL` 改成显式后端 URL，或同步调整前端解析逻辑的默认端口。
+
+停止脚本面向 WSL 进程，使用 `lsof`、`fuser` 或 `ss` 查找监听进程；如果端口由 Windows 侧进程占用，需要在 Windows 侧关闭对应应用。
 
 启动后端：
 
@@ -167,7 +200,7 @@ MYAGENT_CORS_ORIGINS=http://localhost:3001,http://127.0.0.1:3001,http://10.11.14
 前端 `frontend/.env.local`：
 
 ```env
-NEXT_PUBLIC_MYAGENT_API_BASE_URL=http://10.11.148.97:8001
+NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
 NEXT_PUBLIC_MYAGENT_TOKEN=choose-a-local-token
 ```
 
@@ -184,6 +217,18 @@ npm run dev -- -H 0.0.0.0
 ```
 
 然后打开 `http://10.11.148.97:3001`。不要把 provider key 写入任何 `NEXT_PUBLIC_*` 值；`NEXT_PUBLIC_MYAGENT_TOKEN` 只保护这个本地任务 API，并且对能够加载前端的浏览器可见。
+
+如果服务已经在 WSL 内监听 `0.0.0.0`，但 Windows 侧的 `10.11.148.97:3001` 或 `10.11.148.97:8001` 仍无法连接，说明 WSL NAT 没有把 Windows LAN IP 转发到 WSL。用管理员 PowerShell 添加端口转发：
+
+```powershell
+$listenIp = "10.11.148.97"
+$wslIp = ((wsl hostname -I).Trim() -split "\s+")[0]
+foreach ($port in 3001, 8001) {
+  netsh interface portproxy delete v4tov4 listenaddress=$listenIp listenport=$port
+  netsh interface portproxy add v4tov4 listenaddress=$listenIp listenport=$port connectaddress=$wslIp connectport=$port
+  netsh advfirewall firewall add rule name="MyAgent WSL $port" dir=in action=allow protocol=TCP localport=$port
+}
+```
 
 本仓库目前不包含 Docker、进程管理器、反向代理、TLS 或多主机部署文件。将它作为生产服务前，需要显式补齐这些能力。
 

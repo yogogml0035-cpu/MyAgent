@@ -40,6 +40,8 @@ Task APIs accept local loopback clients by default. If `MYAGENT_ACCESS_TOKEN` is
 all task APIs require either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
 Browser callers must use an origin listed in `MYAGENT_CORS_ORIGINS`, which defaults to
 `http://localhost:3001,http://127.0.0.1:3001`. Add LAN frontend origins such as
-`http://10.11.148.97:3001` when running the frontend by IP.
+`http://10.11.148.97:3001` when running the frontend by IP. The frontend can use
+`NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto` to call the backend on the same hostname as the
+opened page.
 The legacy `AGENT_CHAT_*` environment names and `X-Agent-Chat-Token` header are still
 accepted for migrated local setups.
