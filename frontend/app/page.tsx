@@ -14,11 +14,14 @@ import {
   type Artifact,
   type ChatMessage,
   type ExecutionLog,
+  type MessageInputScope,
   type ModelOption,
   type TaskState,
   type TaskStatus,
   type TaskSummary,
+  MESSAGE_INPUT_SCOPE_OPTIONS,
   buildArtifactRequest,
+  buildMessageRequestPayload,
   formatHttpErrorMessage,
   formatNeedsInput,
   formatRequestFailure,
@@ -45,12 +48,15 @@ import {
   buildWorkspaceNoticeMessages,
   buildLogClipboardText,
   calculateLogProgress,
+  countReasoningLogs,
   formatFileSize,
   formatMessagePanelStatus,
   formatLogLevelLabel,
+  formatReasoningPhaseLabel,
   formatRunLogStatus,
   formatTime,
   getMessagePanelTone,
+  partitionVisibleLogs,
   shouldSubmitComposerKey,
 } from "./workspace-view";
 
@@ -105,6 +111,8 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
   const [model, setModel] = useState(DEFAULT_MODEL_OPTIONS[0].id);
+  const [inputScope, setInputScope] = useState<MessageInputScope>("auto");
+  const [expandedReasoningRuns, setExpandedReasoningRuns] = useState<Record<string, boolean>>({});
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isBusy, setIsBusy] = useState(false);
@@ -354,7 +362,9 @@ export default function Home() {
 
       await requestJson<unknown>(`/api/tasks/${id}/messages`, {
         method: "POST",
-        body: JSON.stringify({ content: taskContent, message: taskContent, model }),
+        body: JSON.stringify(
+          buildMessageRequestPayload(taskContent, model, { inputScope }),
+        ),
       });
 
       setInput("");
@@ -426,6 +436,7 @@ export default function Home() {
     setBackendError("");
     setNeedsInput(null);
     setInput("");
+    setInputScope("auto");
     setSelectedFiles([]);
     setError("");
     if (fileInputRef.current) {
@@ -686,6 +697,13 @@ export default function Home() {
                   const groupActive = isTaskActive(group.status);
                   const groupProgress = calculateLogProgress(group.logs.length);
                   const groupLogStatusText = formatRunLogStatus(group.status);
+                  const reasoningCount = countReasoningLogs(group.logs);
+                  const reasoningExpanded = Boolean(expandedReasoningRuns[group.runId]);
+                  const { visibleLogs, hiddenReasoningCount } = partitionVisibleLogs(group.logs, {
+                    expanded: reasoningExpanded,
+                  });
+                  const showReasoningToggle =
+                    hiddenReasoningCount > 0 || (reasoningExpanded && reasoningCount > 3);
 
                   return (
                     <section className="traceRow" aria-label={`${group.title}进度日志`} key={item.id}>
@@ -701,6 +719,9 @@ export default function Home() {
                               aria-hidden="true"
                             />
                             <span>{groupLogStatusText}</span>
+                            {reasoningCount > 0 ? (
+                              <span className="reasoningCount">含 {reasoningCount} 条思考摘要</span>
+                            ) : null}
                           </div>
                           <button
                             aria-label={`复制${group.title}日志`}
@@ -721,17 +742,55 @@ export default function Home() {
                           {group.logs.length === 0 ? (
                             <p className="emptyLog">计划、子任务分派、工具调用和产物会显示在这里。</p>
                           ) : (
-                            group.logs.map((log) => (
-                              <article className={`logItem log-${log.level ?? "info"}`} key={log.id}>
+                            visibleLogs.map((log) => (
+                              <article
+                                className={`logItem log-${log.level ?? "info"}${log.reasoning ? " logItem-reasoning" : ""}`}
+                                key={log.id}
+                              >
                                 <time>{formatTime(log.createdAt)}</time>
-                                <span className="logLevel">{formatLogLevelLabel(log.level)}</span>
+                                <span className="logLevel">
+                                  {log.reasoning ? "思考摘要" : formatLogLevelLabel(log.level)}
+                                </span>
                                 <div>
-                                  <strong>{log.title}</strong>
-                                  {log.detail ? <p>{log.detail}</p> : null}
+                                  {log.reasoning ? (
+                                    <>
+                                      <strong>
+                                        {formatReasoningPhaseLabel(log.reasoning.phase)}
+                                        ：{log.reasoning.agentId}
+                                      </strong>
+                                      <p>{log.reasoning.summary}</p>
+                                      {log.reasoning.evidenceRefs.length > 0 ? (
+                                        <p className="reasoningRefs">
+                                          关联：{log.reasoning.evidenceRefs.join("、")}
+                                        </p>
+                                      ) : null}
+                                    </>
+                                  ) : (
+                                    <>
+                                      <strong>{log.title}</strong>
+                                      {log.detail ? <p>{log.detail}</p> : null}
+                                    </>
+                                  )}
                                 </div>
                               </article>
                             ))
                           )}
+                          {showReasoningToggle ? (
+                            <button
+                              className="logToggleButton"
+                              onClick={() =>
+                                setExpandedReasoningRuns((current) => ({
+                                  ...current,
+                                  [group.runId]: !reasoningExpanded,
+                                }))
+                              }
+                              type="button"
+                            >
+                              {reasoningExpanded
+                                ? "收起思考摘要"
+                                : `展开 ${hiddenReasoningCount} 条思考摘要`}
+                            </button>
+                          ) : null}
                         </div>
 
                       </article>
@@ -792,6 +851,24 @@ export default function Home() {
               </label>
 
               {uploadCount > 0 ? <span className="uploadMeta">已上传 {uploadCount} 个文件</span> : null}
+
+              <div className="scopeSegment" role="group" aria-label="本轮是否使用已上传文件">
+                {MESSAGE_INPUT_SCOPE_OPTIONS.map((option) => (
+                  <button
+                    aria-pressed={inputScope === option.value}
+                    className={
+                      inputScope === option.value
+                        ? "scopeSegmentButton scopeSegmentButton-active"
+                        : "scopeSegmentButton"
+                    }
+                    key={option.value}
+                    onClick={() => setInputScope(option.value)}
+                    type="button"
+                  >
+                    {option.label}
+                  </button>
+                ))}
+              </div>
 
               <div className="composerSpacer" />
 

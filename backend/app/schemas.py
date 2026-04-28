@@ -4,6 +4,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from .intent import InputScope, TaskMode
+
 MAX_MESSAGE_CHARS = 8_000
 
 TaskStatus = Literal[
@@ -19,6 +21,8 @@ class TaskCreateRequest(BaseModel):
 class MessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_CHARS)
     model: str = "deepseek-reasoner"
+    mode: TaskMode = "auto"
+    input_scope: InputScope = "auto"
 
 
 class ChatMessage(BaseModel):

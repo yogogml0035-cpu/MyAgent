@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  MESSAGE_INPUT_SCOPE_OPTIONS,
   backendDownMessage,
   buildArtifactRequest,
+  buildMessageRequestPayload,
   deriveConversationTitle,
   formatHttpErrorMessage,
   formatNeedsInput,
@@ -115,6 +117,38 @@ test("buildArtifactRequest builds run-scoped artifact URLs with the access token
   assert.deepEqual(request.headers, { "X-MyAgent-Token": "secret-token" });
 });
 
+test("buildMessageRequestPayload sends mode and input scope defaults to message runs", () => {
+  assert.deepEqual(buildMessageRequestPayload("请分析这些文件", "deepseek-reasoner"), {
+    content: "请分析这些文件",
+    message: "请分析这些文件",
+    model: "deepseek-reasoner",
+    mode: "auto",
+    input_scope: "auto",
+  });
+});
+
+test("buildMessageRequestPayload allows explicit task upload scope", () => {
+  assert.deepEqual(
+    buildMessageRequestPayload("继续分析这些文件", "deepseek-reasoner", {
+      inputScope: "task_uploads",
+    }),
+    {
+      content: "继续分析这些文件",
+      message: "继续分析这些文件",
+      model: "deepseek-reasoner",
+      mode: "auto",
+      input_scope: "task_uploads",
+    },
+  );
+});
+
+test("message input scope options expose the composer context choices", () => {
+  assert.deepEqual(
+    MESSAGE_INPUT_SCOPE_OPTIONS.map((option) => option.value),
+    ["auto", "none", "task_uploads"],
+  );
+});
+
 test("normalizeTaskState preserves run ids on messages, logs, artifacts, and runs", () => {
   const state = normalizeTaskState(
     {
@@ -147,6 +181,76 @@ test("normalizeTaskState preserves run ids on messages, logs, artifacts, and run
   assert.equal(state.logs[0].level, "success");
   assert.equal(state.logs[0].title, "完成");
   assert.equal(state.artifacts[0].runId, "run-1");
+});
+
+test("normalizeTaskState preserves valid reasoning trace metadata", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "reasoning-1",
+          type: "reasoning_trace",
+          message: "subagent-a 已记录思考摘要。",
+          run_id: "run-1",
+          payload: {
+            agent_id: "subagent-a",
+            phase: "observe",
+            summary: "发现 2 条结构化证据。",
+            confidence: "medium",
+            evidence_refs: ["quotation_similarity", "bidder-a.md", { unsafe: true }],
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.logs[0].reasoning, {
+    agentId: "subagent-a",
+    phase: "observe",
+    summary: "发现 2 条结构化证据。",
+    confidence: "medium",
+    evidenceRefs: ["quotation_similarity", "bidder-a.md"],
+  });
+});
+
+test("normalizeTaskState falls back for malformed reasoning trace payloads", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "reasoning-invalid-phase",
+          type: "reasoning_trace",
+          message: "畸形思考摘要。",
+          payload: {
+            agent_id: "subagent-a",
+            phase: "raw_thought",
+            summary: "不能进入 reasoning 字段。",
+            arbitrary_secret: "SHOULD_NOT_RENDER",
+          },
+        },
+        {
+          id: "reasoning-missing-summary",
+          type: "reasoning_trace",
+          message: "缺少摘要。",
+          payload: {
+            agent_id: "subagent-a",
+            phase: "plan",
+            arbitrary_secret: "SHOULD_NOT_RENDER",
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].reasoning, undefined);
+  assert.equal(state.logs[1].reasoning, undefined);
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
 });
 
 test("normalizeTaskState localizes fixed legacy event messages without changing machine fields", () => {

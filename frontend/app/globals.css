@@ -824,6 +824,19 @@ p {
   font-variant-numeric: tabular-nums;
 }
 
+.reasoningCount {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 6px;
+  border: 1px solid #c7d2fe;
+  border-radius: 4px;
+  background: #eef2ff;
+  color: #4338ca;
+  font-size: 11px;
+  font-weight: 650;
+}
+
 .logList {
   display: grid;
   gap: 6px;
@@ -849,7 +862,7 @@ p {
 
 .logItem {
   display: grid;
-  grid-template-columns: 52px 34px minmax(0, 1fr);
+  grid-template-columns: 52px 64px minmax(0, 1fr);
   align-items: start;
   gap: 7px;
   padding: 0;
@@ -858,6 +871,13 @@ p {
   color: #475569;
   font-size: 12px;
   line-height: 1.45;
+}
+
+.logItem-reasoning {
+  padding: 7px 8px;
+  border-left: 3px solid #6366f1;
+  border-radius: 4px;
+  background: #f8fafc;
 }
 
 .logItem time {
@@ -895,6 +915,11 @@ p {
   color: #059669;
 }
 
+.logItem-reasoning .logLevel {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
 .logItem strong {
   color: #334155;
   font-weight: 640;
@@ -906,6 +931,30 @@ p {
   color: #64748b;
   font-size: 12px;
   overflow-wrap: anywhere;
+}
+
+.reasoningRefs {
+  color: #64748b;
+  font-size: 11px;
+}
+
+.logToggleButton {
+  justify-self: start;
+  min-height: 28px;
+  padding: 5px 9px;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #ffffff;
+  color: #475569;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.logToggleButton:hover {
+  border-color: #94a3b8;
+  color: #1e293b;
 }
 
 .artifactMessageRow {
@@ -1304,6 +1353,40 @@ p {
   white-space: nowrap;
 }
 
+.scopeSegment {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-soft);
+  gap: 2px;
+}
+
+.scopeSegmentButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 660;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.scopeSegmentButton-active {
+  border-color: rgba(37, 99, 235, 0.18);
+  background: #ffffff;
+  color: #1d4ed8;
+  box-shadow: 0 1px 4px rgba(15, 23, 42, 0.08);
+}
+
 .roundButton {
   width: 36px;
   height: 36px;
@@ -1524,6 +1607,7 @@ button:focus-visible,
 .roundButton:focus-visible,
 .replaceFileButton:focus-visible,
 .modelOption:focus-visible,
+.scopeSegmentButton:focus-visible,
 .modelPickerTrigger:focus-visible,
 .downloadPrimaryButton:focus-visible,
 .downloadSecondaryButton:focus-visible {
@@ -1634,6 +1718,16 @@ button:hover:not(:disabled),
 
   .composerControls {
     flex-wrap: wrap;
+  }
+
+  .scopeSegment {
+    order: 3;
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .scopeSegmentButton {
+    flex: 1 1 0;
   }
 
   .modelPickerTrigger {

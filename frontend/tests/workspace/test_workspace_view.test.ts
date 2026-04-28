@@ -12,11 +12,13 @@ import {
   formatFileSize,
   formatLogLevelLabel,
   formatMessagePanelStatus,
+  formatReasoningPhaseLabel,
   formatRunLogStatus,
   formatTaskStatus,
   formatTime,
   getMessagePanelTone,
   isWarningChatMessage,
+  partitionVisibleLogs,
   shouldSubmitComposerKey,
 } from "../../app/workspace-view";
 
@@ -51,6 +53,37 @@ test("buildLogClipboardText includes level, title, and detail", () => {
     ]),
     "--:--:-- 信息 准备编排副本 开始 (0/5)",
   );
+});
+
+test("buildLogClipboardText labels reasoning summaries without arbitrary payload data", () => {
+  assert.equal(formatReasoningPhaseLabel("decide"), "决策");
+  const text = buildLogClipboardText([
+    {
+      id: "reasoning-1",
+      type: "reasoning_trace",
+      title: "subagent-a 已记录思考摘要。",
+      level: "info",
+      reasoning: {
+        agentId: "subagent-a",
+        phase: "decide",
+        summary: "纳入 2 条结构化证据。",
+        confidence: "medium",
+        evidenceRefs: ["quotation_similarity", "bidder-a.md"],
+      },
+    },
+    {
+      id: "reasoning-bad",
+      type: "reasoning_trace",
+      title: "畸形思考摘要。",
+      level: "info",
+    },
+  ]);
+
+  assert.equal(
+    text,
+    "--:--:-- 思考摘要 决策 subagent-a：纳入 2 条结构化证据。 关联：quotation_similarity、bidder-a.md\n--:--:-- 信息 畸形思考摘要。",
+  );
+  assert.equal(text.includes("arbitrary_secret"), false);
 });
 
 test("formatLogLevelLabel keeps stored level values display-localized", () => {
@@ -191,7 +224,103 @@ test("buildRunActivityGroups groups logs and reports by run chronologically", ()
   assert.equal(groups[0].reportArtifacts[0].runId, "run-1");
 });
 
-test("buildRunActivityGroups suppresses upload-only orphan history after runs exist", () => {
+test("buildRunActivityGroups keeps reasoning traces chronologically with operation logs", () => {
+  const groups = buildRunActivityGroups(
+    [
+      {
+        id: "run-1",
+        status: "complete",
+        startedAt: "2026-04-27T08:00:00.000Z",
+        artifactNames: [],
+      },
+    ],
+    [
+      {
+        id: "operation-2",
+        title: "工具完成",
+        runId: "run-1",
+        createdAt: "2026-04-27T08:03:00.000Z",
+      },
+      {
+        id: "reasoning-1",
+        type: "reasoning_trace",
+        title: "思考",
+        runId: "run-1",
+        createdAt: "2026-04-27T08:02:00.000Z",
+        reasoning: {
+          agentId: "subagent-a",
+          phase: "observe",
+          summary: "发现证据。",
+          evidenceRefs: [],
+        },
+      },
+      {
+        id: "operation-1",
+        title: "工具开始",
+        runId: "run-1",
+        createdAt: "2026-04-27T08:01:00.000Z",
+      },
+    ],
+    [],
+  );
+
+  assert.deepEqual(groups[0].logs.map((log) => log.id), [
+    "operation-1",
+    "reasoning-1",
+    "operation-2",
+  ]);
+});
+
+test("partitionVisibleLogs collapses excess info reasoning but preserves warnings", () => {
+  const logs = [
+    {
+      id: "reasoning-1",
+      title: "r1",
+      reasoning: { agentId: "a", phase: "plan" as const, summary: "1", evidenceRefs: [] },
+    },
+    {
+      id: "operation-1",
+      title: "operation",
+    },
+    {
+      id: "reasoning-2",
+      title: "r2",
+      reasoning: { agentId: "a", phase: "observe" as const, summary: "2", evidenceRefs: [] },
+    },
+    {
+      id: "reasoning-3",
+      title: "r3",
+      reasoning: { agentId: "a", phase: "decide" as const, summary: "3", evidenceRefs: [] },
+    },
+    {
+      id: "reasoning-4",
+      title: "r4",
+      reasoning: { agentId: "a", phase: "final_summary" as const, summary: "4", evidenceRefs: [] },
+    },
+    {
+      id: "reasoning-warning",
+      title: "rw",
+      level: "warning" as const,
+      reasoning: { agentId: "a", phase: "risk" as const, summary: "warn", evidenceRefs: [] },
+    },
+  ];
+
+  const collapsed = partitionVisibleLogs(logs);
+  const expanded = partitionVisibleLogs(logs, { expanded: true });
+
+  assert.deepEqual(collapsed.visibleLogs.map((log) => log.id), [
+    "reasoning-1",
+    "operation-1",
+    "reasoning-2",
+    "reasoning-3",
+    "reasoning-warning",
+  ]);
+  assert.equal(collapsed.hiddenReasoningCount, 1);
+  assert.deepEqual(expanded.visibleLogs.map((log) => log.id), logs.map((log) => log.id));
+  assert.equal(expanded.hiddenReasoningCount, 0);
+});
+
+test("buildRunActivityGroups suppresses setup-only orphan history after runs exist", () => {
   const groups = buildRunActivityGroups(
     [
       {
@@ -208,6 +337,12 @@ test("buildRunActivityGroups suppresses upload-only orphan history after runs ex
       },
     ],
     [
+      {
+        id: "created-1",
+        type: "task_created",
+        title: "任务目录已创建。",
+        createdAt: "2026-04-27T07:58:00.000Z",
+      },
       {
         id: "upload-1",
         type: "file_uploaded",
@@ -227,6 +362,50 @@ test("buildRunActivityGroups suppresses upload-only orphan history after runs ex
 
   assert.deepEqual(groups.map((group) => group.runId), ["run-1"]);
   assert.deepEqual(groups[0].logs.map((log) => log.id), ["event-1"]);
+});
+
+test("buildRunActivityGroups keeps unmatched warnings while suppressing setup fallback logs", () => {
+  const groups = buildRunActivityGroups(
+    [
+      {
+        id: "run-1",
+        status: "complete",
+        startedAt: "2026-04-27T08:00:00.000Z",
+        artifactNames: [],
+      },
+      {
+        id: "run-2",
+        status: "complete",
+        startedAt: "2026-04-27T09:00:00.000Z",
+        artifactNames: [],
+      },
+    ],
+    [
+      {
+        id: "created-1",
+        type: "task_created",
+        title: "任务目录已创建。",
+        createdAt: "2026-04-27T07:58:00.000Z",
+      },
+      {
+        id: "upload-1",
+        type: "file_uploaded",
+        title: "已上传 input.json",
+        createdAt: "2026-04-27T07:59:00.000Z",
+      },
+      {
+        id: "orphan-warning",
+        type: "model_warning",
+        title: "模型提醒",
+        level: "warning",
+        createdAt: "2026-04-27T09:02:00.000Z",
+      },
+    ],
+    [],
+  );
+
+  assert.equal(groups.at(-1)?.runId, "legacy");
+  assert.deepEqual(groups.at(-1)?.logs.map((log) => log.id), ["orphan-warning"]);
 });
 
 test("buildRunActivityGroups keeps non-upload orphan logs as neutral history", () => {

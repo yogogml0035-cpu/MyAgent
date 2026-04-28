@@ -6,7 +6,10 @@ from threading import Lock, Thread
 from typing import Any, Literal
 
 from .analysis import CancelledError, NeedsInputError, run_bid_analysis
+from .deep_agent_runtime import DeepAgentUnavailableError
+from .intent import InputScope, TaskMode, route_intent
 from .model_provider import ModelProvider, is_model_configuration_warning
+from .orchestrator import DeepAgentOrchestrator
 from .permissions import PermissionPolicy
 from .runtime import CancellationController
 from .schemas import ChatMessage, TaskStatus
@@ -34,7 +37,17 @@ class TaskRunner:
         self._threads: dict[str, Thread] = {}
         self._controllers: dict[str, CancellationController] = {}
 
-    def start(self, task_id: str, message: str, model: str) -> None:
+    def start(
+        self,
+        task_id: str,
+        message: str,
+        model: str,
+        *,
+        mode: TaskMode = "auto",
+        input_scope: InputScope = "auto",
+    ) -> None:
+        resolved_mode = mode
+        resolved_input_scope = input_scope
         with self._lock:
             existing = self._threads.get(task_id)
             if existing and existing.is_alive():
@@ -63,13 +76,26 @@ class TaskRunner:
                 task_id,
                 "user_message_received",
                 "已接收用户消息，工作流开始执行。",
-                {"model": model, "message": message},
+                {
+                    "model": model,
+                    "message": message,
+                    "mode": resolved_mode,
+                    "input_scope": resolved_input_scope,
+                },
                 run_id=run_id,
             )
             thread = Thread(
                 target=self._run,
                 name=f"agent-task-{task_id}",
-                args=(task_id, run_id, message, model, controller),
+                args=(
+                    task_id,
+                    run_id,
+                    message,
+                    model,
+                    resolved_mode,
+                    resolved_input_scope,
+                    controller,
+                ),
                 daemon=True,
             )
             self._threads[task_id] = thread
@@ -114,7 +140,14 @@ class TaskRunner:
             return bool(thread and thread.is_alive())
 
     def _run(
-        self, task_id: str, run_id: str, message: str, model: str, controller: CancellationController
+        self,
+        task_id: str,
+        run_id: str,
+        message: str,
+        model: str,
+        mode: TaskMode,
+        input_scope: InputScope,
+        controller: CancellationController,
     ) -> None:
         def emit(
             event_type: str,
@@ -129,64 +162,132 @@ class TaskRunner:
 
         try:
             uploads = self.storage.list_uploads(task_id)
-            input_manifest = build_input_manifest(uploads)
+            available_input_manifest = build_input_manifest(uploads)
+            decision = route_intent(
+                message,
+                mode=mode,
+                input_scope=input_scope,
+                has_uploads=bool(uploads),
+            )
+            selected_uploads = uploads if decision.use_uploads else []
+            selected_upload_names = {path.name for path in selected_uploads}
+            input_manifest = [
+                item
+                for item in available_input_manifest
+                if item["filename"] in selected_upload_names
+            ]
             run_manifest = {
                 "started_at": utc_now(),
                 "model": model,
                 "message": message,
+                "mode": mode,
+                "intent": decision.as_manifest(),
+                "input_scope": decision.input_scope_manifest(),
                 "inputs": input_manifest,
+                "available_uploads": available_input_manifest,
+                "selected_uploads": [path.name for path in selected_uploads],
             }
             self.storage.write_run_manifest(task_id, run_id, run_manifest)
             emit(
                 "run_manifest_created",
                 "已记录本轮输入清单。",
-                {"files": [item["filename"] for item in input_manifest]},
+                {
+                    "files": [item["filename"] for item in input_manifest],
+                    "intent": decision.intent,
+                    "route": decision.route,
+                    "input_scope": decision.resolved_input_scope,
+                },
             )
-            if not uploads:
-                if not requires_document_uploads(message):
-                    try:
-                        reply = self.model_provider.chat(message, model, controller)
-                    except RuntimeError as exc:
-                        if controller.is_cancelled():
-                            raise CancelledError() from exc
-                        raise
-                    if controller.is_cancelled():
-                        raise CancelledError()
-                    warning_reply = is_model_configuration_warning(reply)
-                    if warning_reply:
-                        emit(
-                            "model_warning",
-                            "模型服务配置提醒。",
-                            {"model": model, "code": "missing_provider_key"},
-                            level="warning",
-                        )
-                    updated = self.storage.update_task_if_status(
-                        task_id,
-                        RUNNING_STATUSES,
-                        status="complete",
-                        append_message=ChatMessage(
-                            role="assistant",
-                            content=reply,
-                            created_at=utc_now(),
-                            run_id=run_id,
-                            level="warning" if warning_reply else None,
-                        ),
-                        run_id=run_id,
+            if decision.route == "chat" or decision.route == "search":
+                reply, warning_code = self._run_simple_message(
+                    task_id,
+                    message,
+                    model,
+                    decision.route,
+                    controller,
+                )
+                warning_reply = warning_code is not None or is_model_configuration_warning(reply)
+                if warning_reply:
+                    warning_event_type = (
+                        "model_warning" if decision.route == "chat" else "search_warning"
                     )
-                    if updated is None:
-                        if controller.is_cancelled():
-                            raise CancelledError()
-                        return
-                    emit("chat_completed", "简单对话回复已完成。", {"model": model})
-                    return
+                    warning_message = (
+                        "模型服务配置提醒。"
+                        if decision.route == "chat"
+                        else "搜索服务配置提醒。"
+                    )
+                    emit(
+                        warning_event_type,
+                        warning_message,
+                        {"model": model, "code": warning_code or "missing_provider_key"},
+                        level="warning",
+                    )
+                if self._complete_with_assistant_message(
+                    task_id,
+                    run_id,
+                    reply,
+                    level="warning" if warning_reply else None,
+                ):
+                    emit(
+                        "chat_completed" if decision.route == "chat" else "search_completed",
+                        "简单对话回复已完成。"
+                        if decision.route == "chat"
+                        else "轻量搜索回复已完成。",
+                        {"model": model},
+                    )
+                elif controller.is_cancelled():
+                    raise CancelledError()
+                return
+
+            if decision.route == "deep_agent":
+                try:
+                    orchestrator = DeepAgentOrchestrator(
+                        storage=self.storage,
+                        task_id=task_id,
+                        run_id=run_id,
+                        model=model,
+                        controller=controller,
+                        uploads=selected_uploads,
+                    )
+                    deep_agent_result = orchestrator.run(message)
+                    artifact_names = deep_agent_result.metadata.get("promoted_artifacts")
+                    if not isinstance(artifact_names, list):
+                        artifact_names = []
+                    if self._complete_with_assistant_message(
+                        task_id,
+                        run_id,
+                        deep_agent_result.output_text,
+                        artifact_names=[str(name) for name in artifact_names],
+                    ):
+                        emit(
+                            "deep_agent_completed",
+                            "DeepAgent 运行已完成。",
+                            deep_agent_result.metadata,
+                        )
+                    elif controller.is_cancelled():
+                        raise CancelledError()
+                except DeepAgentUnavailableError as exc:
+                    reply = f"{exc} 本轮没有读取历史上传文件，也没有启动文档分析子任务。"
+                    emit(
+                        "deep_agent_unavailable",
+                        "DeepAgent 运行库不可用。",
+                        {"code": "missing_deepagents_dependency"},
+                        level="warning",
+                    )
+                    self._complete_with_assistant_message(
+                        task_id, run_id, reply, level="warning"
+                    )
+                return
+
+            if not selected_uploads:
                 raise NeedsInputError(
                     "开始文档分析任务前，请先上传 Markdown 或 JSON 文件。",
                     {"required_file_type": "markdown_or_json"},
                 )
-            result = run_bid_analysis(
+            bid_result = run_bid_analysis(
                 task_id=task_id,
                 run_id=run_id,
-                uploads=uploads,
+                uploads=selected_uploads,
                 task_message=message,
                 model=model,
                 model_provider=self.model_provider,
@@ -204,7 +305,7 @@ class TaskRunner:
                 raise CancelledError()
             assistant_text = (
                 "分析完成。可以打开本轮 `report.html` 查看交互式对比报告。"
-                f"证据记录：{result['evidence_count']} 条。"
+                f"证据记录：{bid_result['evidence_count']} 条。"
             )
             updated = self.storage.update_task_if_status(
                 task_id,
@@ -217,13 +318,13 @@ class TaskRunner:
                     run_id=run_id,
                 ),
                 run_id=run_id,
-                artifact_names=result.get("artifacts"),
+                artifact_names=bid_result.get("artifacts"),
             )
             if updated is None:
                 if controller.is_cancelled():
                     raise CancelledError()
                 return
-            emit("task_completed", "任务已完成。", result)
+            emit("task_completed", "任务已完成。", bid_result)
         except CancelledError:
             emit("task_cancelled", "任务已取消，已保留中间产物。", {})
             self.storage.update_task_if_status(
@@ -248,6 +349,67 @@ class TaskRunner:
             with self._lock:
                 self._controllers.pop(task_id, None)
                 self._threads.pop(task_id, None)
+
+    def _run_simple_message(
+        self,
+        task_id: str,
+        message: str,
+        model: str,
+        route: Literal["chat", "search"],
+        controller: CancellationController,
+    ) -> tuple[str, str | None]:
+        if route == "search":
+            workspace_tools = WorkspaceTools(
+                self.storage.task_dir(task_id),
+                PermissionPolicy(self.storage.task_dir(task_id)),
+                self.settings.tavily_api_key,
+                controller,
+            )
+            result = workspace_tools.tavily_search(message)
+            warning = result.get("warning")
+            if isinstance(warning, str) and warning:
+                return (
+                    "联网搜索未启用：后端未配置 TAVILY_API_KEY。"
+                    "本轮已按轻量搜索请求处理，没有读取历史上传文件，也没有启动文档分析。",
+                    "missing_tavily_key",
+                )
+            return render_search_reply(result), None
+
+        try:
+            reply = self.model_provider.chat(message, model, controller)
+        except RuntimeError as exc:
+            if controller.is_cancelled():
+                raise CancelledError() from exc
+            raise
+        if controller.is_cancelled():
+            raise CancelledError()
+        warning_code = "missing_provider_key" if is_model_configuration_warning(reply) else None
+        return reply, warning_code
+
+    def _complete_with_assistant_message(
+        self,
+        task_id: str,
+        run_id: str,
+        content: str,
+        *,
+        level: Literal["info", "warning", "error"] | None = None,
+        artifact_names: list[str] | None = None,
+    ) -> bool:
+        updated = self.storage.update_task_if_status(
+            task_id,
+            RUNNING_STATUSES,
+            status="complete",
+            append_message=ChatMessage(
+                role="assistant",
+                content=content,
+                created_at=utc_now(),
+                run_id=run_id,
+                level=level,
+            ),
+            run_id=run_id,
+            artifact_names=artifact_names,
+        )
+        return updated is not None
 
 
 def utc_now() -> str:
@@ -275,16 +437,25 @@ def build_input_manifest(uploads: list[Path]) -> list[dict[str, Any]]:
 
 
 def requires_document_uploads(message: str) -> bool:
-    markers = [
-        "串标",
-        "围标",
-        "投标",
-        "招标",
-        "bid",
-        "tender",
-        "document",
-        "文件",
-        "报告",
-    ]
-    lowered = message.lower()
-    return any(marker.lower() in lowered for marker in markers)
+    return route_intent(message).requires_uploads
+
+
+def render_search_reply(result: dict[str, Any]) -> str:
+    items = result.get("results")
+    if not isinstance(items, list) or not items:
+        return "没有检索到可用结果。本轮没有读取历史上传文件，也没有启动文档分析。"
+
+    lines = ["已完成轻量联网检索，本轮没有读取历史上传文件。"]
+    for index, item in enumerate(items[:5], start=1):
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "未命名结果")
+        url = str(item.get("url") or "")
+        content = str(item.get("content") or item.get("snippet") or "").strip()
+        summary = f"{index}. {title}"
+        if url:
+            summary += f" - {url}"
+        if content:
+            summary += f"\n   {content[:240]}"
+        lines.append(summary)
+    return "\n".join(lines)

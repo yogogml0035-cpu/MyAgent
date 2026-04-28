@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .model_provider import ModelProvider
+from .reasoning_trace import ReasoningConfidence, ReasoningPhase, emit_reasoning_trace
 from .runtime import CancellationController
 from .storage import TaskStorage, source_format_for_upload
 from .tools import WorkspaceTools
@@ -479,6 +480,15 @@ class SubAgentWorker:
                     "prompt": self.spec.prompt,
                 },
             )
+            self._emit_reasoning_trace(
+                phase="plan",
+                summary=(
+                    f"将围绕“{self.spec.label}”检查 {len(self.spec.input_files)} 个本轮输入文件，"
+                    "只记录可追溯的结构化证据。"
+                ),
+                confidence="high",
+                evidence_refs=[self.spec.category, *self.spec.input_files],
+            )
             self._call_tool(
                 "list_dir", {"relative_path": "uploads"}, lambda: self.tools.list_dir("uploads")
             )
@@ -511,8 +521,26 @@ class SubAgentWorker:
                         "bid collusion red flags tender response deviation", 3
                     ),
                 )
-            reasoning = self._model_reasoning()
             evidence = self._inspect()
+            self._emit_reasoning_trace(
+                phase="observe",
+                summary=self._observation_summary(evidence),
+                confidence=self._confidence_for_evidence(evidence),
+                evidence_refs=self._evidence_refs(evidence),
+            )
+            reasoning = self._model_reasoning()
+            self._emit_reasoning_trace(
+                phase="decide",
+                summary=self._decision_summary(evidence),
+                confidence=self._confidence_for_evidence(evidence),
+                evidence_refs=self._evidence_refs(evidence),
+            )
+            self._emit_reasoning_trace(
+                phase="final_summary",
+                summary=self._final_summary(evidence),
+                confidence=self._confidence_for_evidence(evidence),
+                evidence_refs=self._evidence_refs(evidence),
+            )
             self._raise_if_cancelled()
             return {
                 "agent_id": self.spec.agent_id,
@@ -623,6 +651,84 @@ class SubAgentWorker:
         for suffix in DOCUMENT_SEARCH_SUFFIXES:
             results.extend(self.tools.full_text_search(query, suffix))
         return results
+
+    def _emit_reasoning_trace(
+        self,
+        *,
+        phase: ReasoningPhase,
+        summary: str,
+        confidence: ReasoningConfidence,
+        evidence_refs: list[str],
+    ) -> None:
+        try:
+            emit_reasoning_trace(
+                self.emit,
+                agent_id=self.spec.agent_id,
+                phase=phase,
+                summary=summary,
+                confidence=confidence,
+                evidence_refs=evidence_refs,
+            )
+        except Exception as exc:
+            self.emit(
+                "reasoning_warning",
+                f"{self.spec.agent_id} 思考摘要记录失败，已继续执行分析。",
+                {"agent_id": self.spec.agent_id, "category": self.spec.category, "error": str(exc)},
+            )
+
+    def _observation_summary(self, evidence: list[dict[str, Any]]) -> str:
+        count = len(evidence)
+        if count == 0:
+            return f"“{self.spec.label}”暂未发现达到记录阈值的结构化证据。"
+        severity_counts = self._severity_counts(evidence)
+        parts = [
+            f"{SEVERITY_LABELS[severity]}风险 {value} 条"
+            for severity, value in severity_counts.items()
+            if value
+        ]
+        return f"“{self.spec.label}”发现 {count} 条候选证据；" + "，".join(parts) + "。"
+
+    def _decision_summary(self, evidence: list[dict[str, Any]]) -> str:
+        count = len(evidence)
+        if count == 0:
+            return f"本轮“{self.spec.label}”不纳入风险证据，只保留已执行的工具审计记录。"
+        severity_counts = self._severity_counts(evidence)
+        strongest = next((SEVERITY_LABELS[key] for key in ("high", "medium", "low") if severity_counts[key]), "低")
+        return (
+            f"本轮“{self.spec.label}”纳入 {count} 条结构化证据，最高风险等级为{strongest}；"
+            "后续汇总器会按投标人、类别和风险等级归一化。"
+        )
+
+    def _final_summary(self, evidence: list[dict[str, Any]]) -> str:
+        return (
+            f"“{self.spec.label}”子任务完成，输出 {len(evidence)} 条结构化发现，"
+            "未向日志写入上传原文或模型原始推理。"
+        )
+
+    def _confidence_for_evidence(self, evidence: list[dict[str, Any]]) -> ReasoningConfidence:
+        if any(item.get("severity") == "high" for item in evidence):
+            return "high"
+        if evidence:
+            return "medium"
+        return "low"
+
+    def _severity_counts(self, evidence: list[dict[str, Any]]) -> dict[str, int]:
+        return {
+            severity: sum(1 for item in evidence if item.get("severity") == severity)
+            for severity in ("high", "medium", "low")
+        }
+
+    def _evidence_refs(self, evidence: list[dict[str, Any]]) -> list[str]:
+        refs = [self.spec.category]
+        for item in evidence:
+            for location in item.get("locations", []):
+                if not isinstance(location, dict):
+                    continue
+                filename = location.get("file")
+                if isinstance(filename, str) and filename not in refs:
+                    refs.append(filename)
+        refs.extend(name for name in self.spec.input_files if name not in refs)
+        return refs
 
     def _raise_if_cancelled(self) -> None:
         if self.controller.is_cancelled():

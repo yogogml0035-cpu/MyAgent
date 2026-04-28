@@ -25,6 +25,18 @@ export type ExecutionLog = {
   level?: "info" | "success" | "warning" | "error";
   createdAt?: string;
   runId?: string | null;
+  reasoning?: ReasoningTrace;
+};
+
+export type ReasoningPhase = "plan" | "observe" | "decide" | "next_step" | "final_summary" | "risk";
+export type ReasoningConfidence = "low" | "medium" | "high";
+
+export type ReasoningTrace = {
+  agentId: string;
+  phase: ReasoningPhase;
+  summary: string;
+  confidence?: ReasoningConfidence;
+  evidenceRefs: string[];
 };
 
 export type Artifact = {
@@ -44,6 +56,22 @@ export type ArtifactRequest = {
 export type ModelOption = {
   id: string;
   label: string;
+};
+
+export type MessageMode = "auto" | "chat" | "search" | "document_analysis" | "deep_agent";
+export type MessageInputScope = "auto" | "none" | "task_uploads";
+
+export type MessageInputScopeOption = {
+  value: MessageInputScope;
+  label: string;
+};
+
+export type MessageRequestPayload = {
+  content: string;
+  message: string;
+  model: string;
+  mode: MessageMode;
+  input_scope: MessageInputScope;
 };
 
 export type TaskRunRecord = {
@@ -109,6 +137,14 @@ type BrowserLocation = {
 
 const DEFAULT_API_BASE_URL = "http://localhost:8001";
 const DEFAULT_API_PORT = "8001";
+const DEFAULT_MESSAGE_MODE: MessageMode = "auto";
+const DEFAULT_MESSAGE_INPUT_SCOPE: MessageInputScope = "auto";
+
+export const MESSAGE_INPUT_SCOPE_OPTIONS: MessageInputScopeOption[] = [
+  { value: "auto", label: "自动" },
+  { value: "none", label: "不用文件" },
+  { value: "task_uploads", label: "使用文件" },
+];
 
 function formatUrlHostname(hostname: string) {
   return hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
@@ -131,6 +167,20 @@ export function resolveApiBaseUrl(configuredApiBaseUrl?: string, location?: Brow
   return `${protocol}//${formatUrlHostname(hostname)}:${DEFAULT_API_PORT}`;
 }
 
+export function buildMessageRequestPayload(
+  message: string,
+  model: string,
+  options: { mode?: MessageMode; inputScope?: MessageInputScope } = {},
+): MessageRequestPayload {
+  return {
+    content: message,
+    message,
+    model,
+    mode: options.mode ?? DEFAULT_MESSAGE_MODE,
+    input_scope: options.inputScope ?? DEFAULT_MESSAGE_INPUT_SCOPE,
+  };
+}
+
 function readOptionalString(value: unknown) {
   return typeof value === "string" ? value : undefined;
 }
@@ -139,6 +189,25 @@ function readLevel(value: unknown) {
   const level = readString(value);
   return level === "info" || level === "success" || level === "warning" || level === "error"
     ? level
+    : undefined;
+}
+
+function readReasoningPhase(value: unknown): ReasoningPhase | undefined {
+  const phase = readString(value);
+  return phase === "plan" ||
+    phase === "observe" ||
+    phase === "decide" ||
+    phase === "next_step" ||
+    phase === "final_summary" ||
+    phase === "risk"
+    ? phase
+    : undefined;
+}
+
+function readReasoningConfidence(value: unknown): ReasoningConfidence | undefined {
+  const confidence = readString(value);
+  return confidence === "low" || confidence === "medium" || confidence === "high"
+    ? confidence
     : undefined;
 }
 
@@ -303,6 +372,28 @@ function maybeRunId(record: Record<string, unknown>) {
   return runId || null;
 }
 
+function normalizeReasoningTrace(type: string | undefined, payload: Record<string, unknown>) {
+  if (type !== "reasoning_trace") {
+    return undefined;
+  }
+  const agentId = readString(payload.agent_id);
+  const phase = readReasoningPhase(payload.phase);
+  const summary = readString(payload.summary).trim();
+  if (!agentId || !phase || !summary) {
+    return undefined;
+  }
+  const confidence = readReasoningConfidence(payload.confidence);
+  const rawEvidenceRefs = Array.isArray(payload.evidence_refs) ? payload.evidence_refs : [];
+  const evidenceRefs = rawEvidenceRefs.filter((value): value is string => typeof value === "string");
+  return {
+    agentId,
+    phase,
+    summary,
+    confidence,
+    evidenceRefs,
+  };
+}
+
 function normalizeMessage(value: unknown, index: number): ChatMessage {
   const record = isRecord(value) ? value : {};
   const role = readString(record.role, "assistant");
@@ -322,17 +413,19 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
   const record = isRecord(value) ? value : {};
   const payload = isRecord(record.payload) ? record.payload : {};
   const level = readLevel(record.level ?? payload.level) ?? "info";
+  const type = readOptionalString(record.type);
   const fallbackTitle = readString(record.message ?? record.event ?? record.type, "Agent event");
   const rawTitle = readString(record.title ?? fallbackTitle, fallbackTitle);
   const rawDetail = readOptionalString(record.detail ?? record.content);
   return {
     id: readString(record.id, `log-${index}`),
-    type: readOptionalString(record.type),
+    type,
     title: translateKnownDisplayText(rawTitle),
     detail: rawDetail ? translateKnownDisplayText(rawDetail) : undefined,
     level,
     createdAt: readOptionalString(record.created_at ?? record.createdAt),
     runId: maybeRunId(record),
+    reasoning: normalizeReasoningTrace(type, payload),
   };
 }
 

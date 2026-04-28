@@ -152,7 +152,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         require_task(storage, task_id)
         validate_model(request.model)
         try:
-            runner.start(task_id, request.message, request.model)
+            runner.start(
+                task_id,
+                request.message,
+                request.model,
+                mode=request.mode,
+                input_scope=request.input_scope,
+            )
         except RuntimeError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         return storage.get_task(task_id)

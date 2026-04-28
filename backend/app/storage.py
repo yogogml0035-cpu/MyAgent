@@ -4,6 +4,7 @@ import json
 import re
 import threading
 import uuid
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from json import JSONDecodeError
 from pathlib import Path
@@ -11,6 +12,11 @@ from typing import Any, Literal, TypeAlias
 
 from fastapi import UploadFile
 
+from .reasoning_trace import (
+    ReasoningConfidence,
+    ReasoningPhase,
+    build_reasoning_trace_payload,
+)
 from .schemas import (
     ArtifactRecord,
     ChatMessage,
@@ -33,6 +39,24 @@ RUN_ARTIFACT_NAMES = {
     "evidence.json",
     "final-summary.md",
     "report.html",
+}
+FILE_TOOL_AUDIT_KEYS = {
+    "tool",
+    "tool_name",
+    "operation",
+    "op",
+    "requested_path",
+    "virtual_path",
+    "relative_path",
+    "resolved_workspace_path",
+    "status",
+    "reason",
+    "bytes",
+    "sha256",
+    "partial",
+    "source",
+    "promoted_artifact_id",
+    "timestamp",
 }
 TYPE_MAP: dict[str, ArtifactType] = {
     ".html": "html",
@@ -446,6 +470,57 @@ class TaskStorage:
             with events_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(event.model_dump(), ensure_ascii=False) + "\n")
             return event
+
+    def append_file_tool_audit(
+        self, task_id: str, run_id: str | None, record: Mapping[str, Any]
+    ) -> EventRecord:
+        payload = dict(record)
+        payload["run_id"] = run_id
+        missing = FILE_TOOL_AUDIT_KEYS.difference(payload)
+        if missing:
+            raise ValueError(f"文件工具审计记录缺少字段：{', '.join(sorted(missing))}")
+        status = payload.get("status")
+        level: Literal["info", "success", "warning", "error"] = "info"
+        if status in {"denied", "cancelled"}:
+            level = "warning"
+        elif status == "failed":
+            level = "error"
+        return self.append_event(
+            task_id,
+            "file_tool_audit",
+            "已记录文件工具访问审计。",
+            payload,
+            run_id=run_id,
+            level=level,
+        )
+
+    def append_reasoning_trace(
+        self,
+        task_id: str,
+        run_id: str,
+        *,
+        agent_id: str,
+        phase: ReasoningPhase,
+        summary: str,
+        confidence: ReasoningConfidence | None = None,
+        evidence_refs: Iterable[Any] | None = None,
+        source_event_id: str | None = None,
+    ) -> EventRecord:
+        payload = build_reasoning_trace_payload(
+            agent_id=agent_id,
+            phase=phase,
+            summary=summary,
+            confidence=confidence,
+            evidence_refs=evidence_refs,
+            source_event_id=source_event_id,
+        )
+        return self.append_event(
+            task_id,
+            "reasoning_trace",
+            f"{payload['agent_id']} 已记录思考摘要。",
+            payload,
+            run_id=run_id,
+        )
 
     def read_events(self, task_id: str, *, after_id: str | None = None) -> list[EventRecord]:
         with self._lock:

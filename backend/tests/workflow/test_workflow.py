@@ -7,13 +7,14 @@ import sys
 import time
 from pathlib import Path
 from threading import Event, Thread
-from typing import cast
+from typing import Any, cast
 from unittest.mock import patch
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import app.deep_agent_runtime as deep_agent_runtime
 from app.analysis import (
     CancelledError,
     MarkdownDocument,
@@ -106,6 +107,11 @@ def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> Non
     assert any(event["type"] == "tool_result" for event in state["events"])
     assert any(event["type"] == "model_call" for event in state["events"])
     assert any(event["type"] == "model_result" for event in state["events"])
+    reasoning_events = [event for event in state["events"] if event["type"] == "reasoning_trace"]
+    assert reasoning_events
+    assert {event["run_id"] for event in reasoning_events} == {state["runs"][0]["id"]}
+    reasoning_phases = {event["payload"]["phase"] for event in reasoning_events}
+    assert {"plan", "observe", "decide", "final_summary"}.issubset(reasoning_phases)
     assert any(event["type"] == "task_completed" for event in state["events"])
     assert any(
         event["type"] == "plan_created" and event["message"] == "已生成执行计划。"
@@ -128,12 +134,18 @@ def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> Non
     assert "deepseek-reasoner" in subagent_report
     assert "reasoning" in subagent_report
     run_manifest = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
-    assert [item["filename"] for item in run_manifest["inputs"]] == [
+    expected_selected_uploads = [
         "bidder-a.md",
         "bidder-b.md",
         "bidder-c.md",
         "tender.md",
     ]
+    assert run_manifest["mode"] == "auto"
+    assert run_manifest["intent"]["name"] == "document_analysis"
+    assert run_manifest["intent"]["route"] == "document_analysis"
+    assert run_manifest["input_scope"] == {"requested": "auto", "resolved": "task_uploads"}
+    assert run_manifest["selected_uploads"] == expected_selected_uploads
+    assert [item["filename"] for item in run_manifest["inputs"]] == expected_selected_uploads
     assert {item["source_format"] for item in run_manifest["inputs"]} == {"markdown"}
     assert all(item["size_bytes"] == item["bytes"] for item in run_manifest["inputs"])
     input_manifest = json.loads(
@@ -152,6 +164,51 @@ def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> Non
     assert report.status_code == 200
     assert "投标人对比视图" in report.text
     assert 'data-severity="high"' in report.text or 'data-severity="medium"' in report.text
+
+
+def test_reasoning_trace_does_not_expose_prompt_upload_content_or_private_paths(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    created = client.post("/api/tasks", json={"model": "deepseek-reasoner"}).json()
+    task_id = created["task_id"]
+    files = [
+        ("files", ("tender.md", TENDER_DOC.encode("utf-8"), "text/markdown")),
+        (
+            "files",
+            (
+                "bidder-a.md",
+                (BIDDER_A + "\nSECRET_DOC_CANARY_123").encode("utf-8"),
+                "text/markdown",
+            ),
+        ),
+        ("files", ("bidder-b.md", BIDDER_B.encode("utf-8"), "text/markdown")),
+    ]
+    assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
+
+    response = client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={
+            "message": (
+                "帮我检查是否有串标围标嫌疑 RAW_PROMPT_CANARY_456 "
+                "Authorization: Bearer AUTH_HEADER_CANARY_789"
+            ),
+            "model": "deepseek-reasoner",
+        },
+    )
+    assert response.status_code == 200
+    state = wait_for_terminal_status(client, task_id)
+    reasoning_events = [event for event in state["events"] if event["type"] == "reasoning_trace"]
+    serialized_reasoning = json.dumps(
+        [{"message": event["message"], "payload": event["payload"]} for event in reasoning_events],
+        ensure_ascii=False,
+    )
+
+    assert reasoning_events
+    assert "SECRET_DOC_CANARY_123" not in serialized_reasoning
+    assert "RAW_PROMPT_CANARY_456" not in serialized_reasoning
+    assert "AUTH_HEADER_CANARY_789" not in serialized_reasoning
+    assert str(tmp_path) not in serialized_reasoning
 
 
 def test_follow_up_task_run_preserves_existing_artifacts_and_reuses_uploads(
@@ -194,13 +251,200 @@ def test_follow_up_task_run_preserves_existing_artifacts_and_reuses_uploads(
     assert second_run_id != first_run_id
     assert (first_run_dir / "report.html").read_bytes() == report_before
     assert (first_run_dir / "evidence.json").read_bytes() == evidence_before
-    assert [item["filename"] for item in second_manifest["inputs"]] == [
+    expected_selected_uploads = [
         "bidder-a.md",
         "bidder-b.md",
         "tender.md",
     ]
+    assert second_manifest["intent"]["name"] == "continue_with_uploads"
+    assert second_manifest["intent"]["route"] == "document_analysis"
+    assert second_manifest["input_scope"] == {"requested": "auto", "resolved": "task_uploads"}
+    assert second_manifest["selected_uploads"] == expected_selected_uploads
+    assert [item["filename"] for item in second_manifest["inputs"]] == expected_selected_uploads
     assert {item["source_format"] for item in second_manifest["inputs"]} == {"markdown"}
     assert all(message["run_id"] for message in second_state["messages"])
+
+
+@pytest.mark.parametrize(
+    ("message", "expected_intent"),
+    [
+        ("今天天气怎么样？", "weather"),
+        ("帮我搜索一下本周建筑行业新闻", "search"),
+        ("你好，帮我写一句欢迎语", "chat"),
+    ],
+)
+def test_auto_with_existing_uploads_routes_non_document_messages_to_chat(
+    tmp_path: Path, message: str, expected_intent: str
+) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    files = [
+        ("files", ("tender.md", TENDER_DOC.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-a.md", BIDDER_A.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-b.md", BIDDER_B.encode("utf-8"), "text/markdown")),
+    ]
+    assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
+
+    response = client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": message, "model": "deepseek-reasoner"},
+    )
+    state = wait_for_terminal_status(client, task_id)
+    state = client.get(f"/api/tasks/{task_id}").json()
+    task_dir = tmp_path / "tasks" / task_id
+    run_manifest = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert state["status"] == "complete"
+    assert state["artifacts"] == []
+    assert run_manifest["intent"]["name"] == expected_intent
+    assert run_manifest["intent"]["route"] in {"chat", "search"}
+    assert run_manifest["input_scope"] == {"requested": "auto", "resolved": "none"}
+    assert run_manifest["inputs"] == []
+    assert run_manifest["selected_uploads"] == []
+    assert [item["filename"] for item in run_manifest["available_uploads"]] == [
+        "bidder-a.md",
+        "bidder-b.md",
+        "tender.md",
+    ]
+    assert any(event["type"] in {"chat_completed", "search_completed"} for event in state["events"])
+    assert not any(event["type"] == "plan_created" for event in state["events"])
+    assert not (task_dir / "plan.json").exists()
+
+
+def test_search_with_document_words_does_not_reuse_existing_uploads(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    files = [
+        ("files", ("tender.md", TENDER_DOC.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-a.md", BIDDER_A.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-b.md", BIDDER_B.encode("utf-8"), "text/markdown")),
+    ]
+    assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
+
+    response = client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": "帮我搜索最新招标公告", "model": "deepseek-reasoner"},
+    )
+    state = wait_for_terminal_status(client, task_id)
+    state = client.get(f"/api/tasks/{task_id}").json()
+    task_dir = tmp_path / "tasks" / task_id
+    run_manifest = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert state["status"] == "complete"
+    assert run_manifest["intent"]["route"] == "search"
+    assert run_manifest["input_scope"] == {"requested": "auto", "resolved": "none"}
+    assert run_manifest["selected_uploads"] == []
+    assert run_manifest["inputs"] == []
+    assert any(event["type"] == "search_completed" for event in state["events"])
+    assert not any(event["type"] == "plan_created" for event in state["events"])
+    assert not (task_dir / "plan.json").exists()
+
+
+def test_input_scope_none_prevents_upload_reuse_for_bid_analysis_text(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    files = [
+        ("files", ("tender.md", TENDER_DOC.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-a.md", BIDDER_A.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-b.md", BIDDER_B.encode("utf-8"), "text/markdown")),
+    ]
+    assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
+
+    response = client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={
+            "message": "帮我检查是否有串标围标嫌疑",
+            "model": "deepseek-reasoner",
+            "input_scope": "none",
+        },
+    )
+    state = wait_for_terminal_status(client, task_id)
+    state = client.get(f"/api/tasks/{task_id}").json()
+    task_dir = tmp_path / "tasks" / task_id
+    run_manifest = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert state["status"] == "complete"
+    assert state["artifacts"] == []
+    assert run_manifest["intent"]["route"] == "chat"
+    assert run_manifest["intent"]["reason"] == "input_scope_none"
+    assert run_manifest["input_scope"] == {"requested": "none", "resolved": "none"}
+    assert run_manifest["inputs"] == []
+    assert run_manifest["selected_uploads"] == []
+    assert any(event["type"] == "chat_completed" for event in state["events"])
+    assert not any(event["type"] == "plan_created" for event in state["events"])
+    assert not (task_dir / "plan.json").exists()
+
+
+def test_explicit_deep_agent_mode_uses_audited_runtime_without_document_workflow(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fake_factory(
+        *,
+        model: str,
+        tools: list[Any],
+        system_prompt: str,
+        subagents: list[dict[str, Any]],
+        backend: Any,
+    ) -> Any:
+        assert model == "deepseek-reasoner"
+        assert "uploads/" in system_prompt
+        assert subagents[0]["name"] == "file-record-agent"
+        assert isinstance(backend, deep_agent_runtime.AuditedDeepAgentBackend)
+        assert backend.audited is True
+        tool_map = {tool.__name__: tool for tool in tools}
+
+        def fake_agent(payload: dict[str, Any], **_kwargs: Any) -> dict[str, str]:
+            assert payload["messages"][0]["content"] == "请用 DeepAgent 记录本轮输出"
+            tool_map["write_file"]("outputs/summary.md", "DeepAgent 输出")
+            return {"content": "DeepAgent 已完成本轮输出。"}
+
+        return fake_agent
+
+    monkeypatch.setattr(deep_agent_runtime, "_DEFAULT_AGENT_FACTORY", fake_factory)
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    response = client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={
+            "message": "请用 DeepAgent 记录本轮输出",
+            "model": "deepseek-reasoner",
+            "mode": "deep_agent",
+        },
+    )
+    state = wait_for_terminal_status(client, task_id)
+    state = client.get(f"/api/tasks/{task_id}").json()
+    task_dir = tmp_path / "tasks" / task_id
+    run_id = state["runs"][0]["id"]
+    run_manifest = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+
+    assert response.status_code == 200
+    assert state["status"] == "complete"
+    assert state["messages"][-1]["content"] == "DeepAgent 已完成本轮输出。"
+    assert run_manifest["intent"]["route"] == "deep_agent"
+    assert run_manifest["input_scope"] == {"requested": "auto", "resolved": "none"}
+    assert run_manifest["selected_uploads"] == []
+    assert {artifact["name"] for artifact in state["artifacts"]} == {
+        "deep-agent-summary.md"
+    }
+    assert (task_dir / "agent_workspace" / "runs" / run_id / "outputs" / "summary.md").exists()
+    assert any(event["type"] == "file_tool_audit" for event in state["events"])
+    deep_reasoning = [
+        event["payload"]
+        for event in state["events"]
+        if event["type"] == "reasoning_trace"
+    ]
+    assert {payload["phase"] for payload in deep_reasoning} >= {
+        "plan",
+        "observe",
+        "final_summary",
+    }
+    assert any(payload.get("source_event_id") for payload in deep_reasoning)
+    assert any(event["type"] == "deep_agent_completed" for event in state["events"])
+    assert not any(event["type"] == "plan_created" for event in state["events"])
 
 
 def test_bidder_only_documents_are_not_reclassified_as_tender() -> None:
@@ -1100,7 +1344,16 @@ def test_message_without_uploads_requests_input(tmp_path: Path) -> None:
         json={"message": "帮我检查是否有串标围标嫌疑", "model": "deepseek-reasoner"},
     )
     state = wait_for_terminal_status(client, task_id)
+    run_manifest = json.loads(
+        (tmp_path / "tasks" / task_id / "run.json").read_text(encoding="utf-8")
+    )
+
     assert state["status"] == "needs_input"
+    assert run_manifest["intent"]["name"] == "document_analysis"
+    assert run_manifest["intent"]["route"] == "document_analysis"
+    assert run_manifest["input_scope"] == {"requested": "auto", "resolved": "none"}
+    assert run_manifest["inputs"] == []
+    assert run_manifest["selected_uploads"] == []
     assert state["needs_input"]["required_file_type"] == "markdown_or_json"
     assert state["runs"][0]["status"] == "needs_input"
     assert state["runs"][0]["needs_input"]["required_file_type"] == "markdown_or_json"

@@ -25,6 +25,11 @@ export type RunActivityGroup = {
   reportArtifacts: Artifact[];
 };
 
+export type VisibleLogPartition = {
+  visibleLogs: ExecutionLog[];
+  hiddenReasoningCount: number;
+};
+
 export type ConversationStreamItem =
   | {
       id: string;
@@ -130,11 +135,69 @@ export function buildLogClipboardText(logs: ExecutionLog[]) {
     logs
       .map((log) => {
         const time = formatTime(log.createdAt);
+        if (log.reasoning) {
+          const refs =
+            log.reasoning.evidenceRefs.length > 0
+              ? ` 关联：${log.reasoning.evidenceRefs.join("、")}`
+              : "";
+          return `${time} 思考摘要 ${formatReasoningPhaseLabel(log.reasoning.phase)} ${log.reasoning.agentId}：${log.reasoning.summary}${refs}`;
+        }
         const detail = log.detail ? ` ${log.detail}` : "";
         return `${time} ${formatLogLevelLabel(log.level)} ${log.title}${detail}`;
       })
       .join("\n") || "暂无日志"
   );
+}
+
+export function formatReasoningPhaseLabel(phase: NonNullable<ExecutionLog["reasoning"]>["phase"]) {
+  switch (phase) {
+    case "plan":
+      return "计划";
+    case "observe":
+      return "观察";
+    case "decide":
+      return "决策";
+    case "next_step":
+      return "下一步";
+    case "final_summary":
+      return "总结";
+    case "risk":
+      return "风险";
+  }
+}
+
+export function countReasoningLogs(logs: ExecutionLog[]) {
+  return logs.filter((log) => Boolean(log.reasoning)).length;
+}
+
+export function partitionVisibleLogs(
+  logs: ExecutionLog[],
+  options: { reasoningLimit?: number; expanded?: boolean } = {},
+): VisibleLogPartition {
+  const reasoningLimit = options.reasoningLimit ?? 3;
+  if (options.expanded) {
+    return { visibleLogs: logs, hiddenReasoningCount: 0 };
+  }
+  let visibleInfoReasoning = 0;
+  const visibleLogs: ExecutionLog[] = [];
+  let hiddenReasoningCount = 0;
+
+  logs.forEach((log) => {
+    const isReasoning = Boolean(log.reasoning);
+    const isWarningOrError = log.level === "warning" || log.level === "error";
+    if (!isReasoning || isWarningOrError) {
+      visibleLogs.push(log);
+      return;
+    }
+    visibleInfoReasoning += 1;
+    if (visibleInfoReasoning <= reasoningLimit) {
+      visibleLogs.push(log);
+      return;
+    }
+    hiddenReasoningCount += 1;
+  });
+
+  return { visibleLogs, hiddenReasoningCount };
 }
 
 export function formatLogLevelLabel(level: ExecutionLog["level"] = "info") {
@@ -293,8 +356,11 @@ function artifactForRenderedRun(runId: string, artifact: Artifact): Artifact {
   return { ...artifact, runId, id: `${runId}:${artifact.name}` };
 }
 
-function isUploadLog(log: ExecutionLog) {
-  return log.type === "file_uploaded";
+function isSetupFallbackLog(log: ExecutionLog) {
+  if (log.level === "warning" || log.level === "error") {
+    return false;
+  }
+  return log.type === "task_created" || log.type === "file_uploaded";
 }
 
 export function buildRunActivityGroups(
@@ -355,18 +421,15 @@ export function buildRunActivityGroups(
       (!artifact.runId && runs.length !== 1) || (artifact.runId && !knownRunIds.has(artifact.runId)),
   );
   const fallbackReportArtifacts = fallbackArtifacts.filter(isReportArtifact);
-  const hideUploadOnlyFallback =
-    runs.length > 0 &&
-    fallbackLogs.length > 0 &&
-    fallbackLogs.every(isUploadLog) &&
-    fallbackReportArtifacts.length === 0;
+  const visibleFallbackLogs =
+    runs.length > 0 ? fallbackLogs.filter((log) => !isSetupFallbackLog(log)) : fallbackLogs;
 
-  if (!hideUploadOnlyFallback && (fallbackLogs.length > 0 || fallbackReportArtifacts.length > 0)) {
+  if (visibleFallbackLogs.length > 0 || fallbackReportArtifacts.length > 0) {
     groups.push({
       runId: "legacy",
       title: runs.length > 0 ? "历史日志" : "第 1 轮",
       status: "unknown",
-      logs: fallbackLogs.sort(byCreatedAt),
+      logs: visibleFallbackLogs.sort(byCreatedAt),
       reportArtifacts: fallbackReportArtifacts.map((artifact) =>
         artifactForRenderedRun("legacy", artifact),
       ),
