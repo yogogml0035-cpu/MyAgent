@@ -8,7 +8,6 @@ It applies when editing:
 
 - `backend/.env.example`
 - `frontend/.env.example`
-- `.env.example`
 - `backend/app/settings.py`
 - `backend/app/main.py`
 - `backend/app/model_provider.py`
@@ -22,7 +21,7 @@ It applies when editing:
 - If `MYAGENT_ACCESS_TOKEN` is set, task APIs accept either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
 - The frontend sends `NEXT_PUBLIC_MYAGENT_TOKEN` as `X-MyAgent-Token` for local protected task access.
 - Backend CORS is controlled by comma-separated `MYAGENT_CORS_ORIGINS`, defaulting to `http://localhost:3001,http://127.0.0.1:3001`.
-- LAN frontend access requires an exact backend CORS origin such as `http://10.11.148.97:3001`. The frontend API base URL should usually be `auto`, which derives `http://<current page hostname>:8001`; explicit URLs such as `http://10.11.148.97:8001` remain supported.
+- LAN frontend access requires an exact backend CORS origin such as `http://<LAN_IP>:3001`. The frontend API base URL should usually be `auto`, which derives `http://<current page hostname>:8001`; explicit URLs such as `http://<LAN_IP>:8001` remain supported.
 - New configuration should use `MYAGENT_*`; legacy `AGENT_CHAT_*` names remain compatibility fallbacks.
 - The backend is single-process oriented because task runners and JSON task storage are in-process/local.
 
@@ -51,7 +50,7 @@ NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
 NEXT_PUBLIC_MYAGENT_TOKEN=
 ```
 
-LAN frontend `.env.local` example for host `10.11.148.97`:
+LAN frontend `.env.local` example for host `<LAN_IP>`:
 
 ```env
 NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
@@ -80,7 +79,7 @@ X-MyAgent-Token: <token>
 - `NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto` follows the browser page hostname and assumes backend port `8001`; non-default backend ports require an explicit API base URL or a frontend resolver change.
 - Upload request limits and JSON body limits are enforced before task mutation.
 - Multi-worker deployment is blocked by `WEB_CONCURRENCY`, `UVICORN_WORKERS`, and `GUNICORN_WORKERS` checks.
-- Root `.env.example` is a reference file; the current runtime loads `backend/.env` for backend settings and frontend env values through the frontend toolchain.
+- The current runtime loads `backend/.env` for backend settings and frontend env values through the frontend toolchain.
 
 ## Known Pitfalls
 
@@ -97,7 +96,6 @@ X-MyAgent-Token: <token>
 - `backend/app/main.py`
 - `backend/app/model_provider.py`
 - `frontend/app/page.tsx`
-- `.env.example`
 - `backend/.env.example`
 - `frontend/.env.example`
 

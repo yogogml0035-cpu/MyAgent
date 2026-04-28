@@ -7,7 +7,6 @@
 - `asset/frontend_task_workspace_knowledge_pack.md`: frontend chat workspace layout, task creation, file upload, message submission, polling, logs, and artifact opening.
 - `asset/backend_task_runtime_knowledge_pack.md`: backend task-as-conversation APIs, run lifecycle, event logs, versioned artifacts, and local storage boundaries.
 - `asset/model_provider_security_knowledge_pack.md`: model-provider secrets, environment variables, access tokens, CORS/local-first security, upload limits, and JSON limits.
-- `asset/local_dev_wsl_scripts_knowledge_pack.md`: WSL local development scripts for stopping occupied backend/frontend ports and opening separate WSL terminals for both services.
 
 ## Registration Rules
 
@@ -16,6 +15,7 @@
 - Do not include customer source text, secrets, tokens, private local paths, or other sensitive data.
 - Do not preserve patch timelines, deleted filenames, or temporary script paths as long-term knowledge.
 - If a new package fully absorbs an old package, delete the old package and update this index in the same change.
+- Do not keep a separate package for single-machine development walkthroughs. Keep concise reusable script cautions in `AGENTS.md` and operational steps in `README.md`.
 
 ## Required Package Sections
 

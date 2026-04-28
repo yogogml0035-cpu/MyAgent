@@ -1,6 +1,6 @@
 # MyAgent Agent 协作规范
 
-本文件是仓库级长期规则，适用于整个 `/mnt/d/AgentProject/MyAgent`。主题级、能力级、排障后沉淀的长期知识进入 `asset/`，不要把一次性过程日志塞进本文件。
+本文件是仓库级长期规则，适用于整个 `/mnt/d/AgentProject/MyAgent`。它负责约束协作边界、验证入口和知识包路由；主题级长期知识进入 `asset/`，一次性过程日志不要写入长期文档。
 
 ## 仓库事实
 
@@ -10,6 +10,7 @@
 - 后端测试：`backend/tests/test_workflow.py`。
 - 前端测试：`frontend/tests/task-state.test.ts`。
 - 长期知识包索引：`asset/README.md`。
+- 当前保留的长期知识包只覆盖稳定业务/运行边界：后端任务运行、前端任务工作区、模型提供方与安全边界。
 
 ## 工作前必须读取
 
@@ -18,13 +19,14 @@
 - 涉及长期规则或已形成稳定主题边界时，先读 `asset/README.md`，再读索引中列出的相关知识包。
 - 搜索优先用 `rg` 或 `rg --files`。
 
-## 样例与知识包必须同步
+## 知识包读取与同步
 
 - 影响稳定业务规则、输入输出、用户路径、运行边界或测试入口时，必须在 `asset/` 下新增或更新对应知识包。
 - 更新知识包前，优先更新 `asset/README.md` 中的索引。
 - 优先更新已有主题包；只有形成独立长期边界且无法并入现有主题时，才允许新建知识包。
 - 知识包只沉淀稳定边界、同步面、验证入口与回归风险，不保留单次排障时间线、临时脚本路径或已删除文件名。
 - 知识包至少包含：背景与范围、业务规则、输入输出样例、边界条件、已知坑点、关联代码路径、关联测试路径。
+- 保留知识包时优先问两个问题：未来需求是否会反复用到；是否描述了代码/产品边界而不是单机操作步骤。若答案是否定的，把少量可复用提醒并入 `AGENTS.md` 或 `README.md`，删除独立知识包。
 
 ## 测试必须同步
 
@@ -57,17 +59,28 @@
 
 ### 当前有效知识包
 
-- 当前还没有主题知识包。
-- `asset/README.md` 是唯一有效索引；新增主题包前必须先更新该索引。
+- `asset/backend_task_runtime_knowledge_pack.md`：任务 API、状态机、runner、事件日志、版本化产物与本地 JSON 存储。
+- `asset/frontend_task_workspace_knowledge_pack.md`：任务工作区、文件上传、消息提交、状态轮询、日志合并与产物打开。
+- `asset/model_provider_security_knowledge_pack.md`：provider 密钥、环境变量、访问令牌、CORS、本地优先安全边界、上传与 JSON 限制。
+- `asset/README.md` 是唯一有效索引；新增、删除或改名知识包时必须同步更新。
 
 ### 需求修改后的知识回写路由
 
 - 改后端任务 API、状态机、任务 runner、取消/中断、事件日志、产物下载或本地存储：优先沉淀到 `asset/backend_task_runtime_knowledge_pack.md`。
-- 改 Markdown 招投标文档分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：优先沉淀到 `asset/bid_analysis_workflow_knowledge_pack.md`。
+- 改 Markdown 招投标文档分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：若形成独立长期边界，先在 `asset/README.md` 登记，再新增或更新 `asset/bid_analysis_workflow_knowledge_pack.md`。
 - 改前端任务创建、文件上传、消息提交、状态轮询、日志合并、产物 URL 或打开逻辑：优先沉淀到 `asset/frontend_task_workspace_knowledge_pack.md`。
 - 改模型提供方、环境变量、访问令牌、CORS、本地优先安全边界或上传/JSON 限制：优先沉淀到 `asset/model_provider_security_knowledge_pack.md`。
+- 改本地启动脚本、WSL 端口清理或开发终端启动方式：通常只更新 `README.md` 和本文件的本地开发建议；只有脚本演进为跨需求复用的稳定子系统时，才单独新增知识包。
 - 上述文件名是建议路由；若 `asset/README.md` 已存在更合适主包，以索引为准。
 - 若新规则会影响未来多数需求，再把它从知识包提升写回 `AGENTS.md`。
+
+## 本地开发参考与建议
+
+- 默认后端开发端口为 `8001`，默认前端开发端口为 `3001`；前端 `auto` API base 默认按页面 hostname 访问后端 `8001`。
+- WSL 本地开发脚本在 `scripts/`：`start-dev-wsl.sh` 负责开前后端终端，`stop-dev-ports.sh` 负责释放默认或指定端口。
+- 修改本地脚本时至少运行 `bash -n scripts/start-dev-wsl.sh`、`bash -n scripts/stop-dev-ports.sh`、对应 `--help`/`--dry-run` 和 `git diff --check`。
+- 同一个 `frontend/.next` 目录只运行一个 `next dev`；并行开发服务可能污染生成产物。
+- 启动脚本不得嵌入 provider 密钥、访问令牌、客户文档路径或本机私密绝对路径。非 loopback 访问仍必须遵守访问令牌与 CORS 边界。
 
 ## 运行与验证命令
 

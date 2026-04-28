@@ -117,7 +117,6 @@ Output: the model picker closes and stores the selected model ID for subsequent 
 - Keep artifact opening token-aware, otherwise protected local deployments will fail to open reports.
 - Keep run-scoped artifact URL construction token-aware and path-free; do not fall back to local artifact paths when the backend supplies `run_id`.
 - Do not hard-code a single LAN IP into frontend code for local development; IP addresses change, and the page hostname should be the source of truth when `auto` is configured.
-- If Next.js reports a missing generated chunk such as `Cannot find module './778.js'`, check for duplicate dev servers sharing `frontend/.next`, stop the extra process, clear `.next`, and restart the intended dev script.
 
 ## Related Code Paths
 
