@@ -21,7 +21,7 @@ class CancellationController:
 
     def raise_if_cancelled(self) -> None:
         if self.is_cancelled():
-            raise RuntimeError("Task was cancelled")
+            raise RuntimeError("任务已取消")
 
     def register_future(self, future: Future) -> None:
         with self._lock:
@@ -102,14 +102,14 @@ def run_cancellable_command(
         while process.poll() is None:
             if controller.is_cancelled():
                 controller.cancel()
-                raise RuntimeError("Command cancelled")
+                raise RuntimeError("命令已取消")
             if time.monotonic() > deadline:
                 controller.cancel()
-                raise TimeoutError(f"Command timed out after {timeout} seconds")
+                raise TimeoutError(f"命令执行超过 {timeout} 秒限制")
             time.sleep(0.05)
         stdout, stderr = process.communicate()
         if controller.is_cancelled():
-            raise RuntimeError("Command cancelled")
+            raise RuntimeError("命令已取消")
         return subprocess.CompletedProcess(command, process.returncode or 0, stdout, stderr)
     finally:
         controller.unregister_process(process)

@@ -26,6 +26,7 @@ class ChatMessage(BaseModel):
     content: str
     created_at: str
     run_id: str | None = None
+    level: Literal["info", "warning", "error"] | None = None
 
 
 class EventRecord(BaseModel):
@@ -35,6 +36,7 @@ class EventRecord(BaseModel):
     created_at: str
     payload: dict[str, Any] = Field(default_factory=dict)
     run_id: str | None = None
+    level: Literal["info", "success", "warning", "error"] | None = None
 
 
 class ArtifactRecord(BaseModel):

@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   buildModelDisplayOptions,
   selectedModelDisplayOption,
-} from "../app/model-ui";
+} from "../../app/model-ui";
 
 test("buildModelDisplayOptions adds compact model descriptions for the picker", () => {
   const options = buildModelDisplayOptions([
@@ -26,7 +26,7 @@ test("buildModelDisplayOptions adds compact model descriptions for the picker", 
         label: "Deepseek",
       },
       {
-        badge: "Beta",
+        badge: "测试",
         description: "海量搜索、长文写作、批量处理",
         label: "K2.6 Agent 集群",
       },

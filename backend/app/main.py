@@ -6,6 +6,7 @@ from ipaddress import ip_address
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from starlette.responses import Response
@@ -28,13 +29,22 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved_settings = settings or load_settings()
     enforce_single_process_runtime()
     storage = TaskStorage(resolved_settings.task_root)
-    storage.interrupt_running_tasks("Task was interrupted by backend startup or reload.")
+    storage.interrupt_running_tasks("后端启动或重载时中断了任务。")
     runner = TaskRunner(storage, ProviderRouter(resolved_settings), resolved_settings)
 
     app = FastAPI(title="MyAgent Backend", version="0.1.0")
     app.state.settings = resolved_settings
     app.state.storage = storage
     app.state.runner = runner
+
+    @app.exception_handler(RequestValidationError)
+    async def request_validation_exception_handler(
+        _request: Request, _exc: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content={"detail": "请求参数校验失败，请检查输入内容。"},
+        )
 
     @app.middleware("http")
     async def enforce_request_limits_and_task_access(
@@ -56,8 +66,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     status_code=413,
                     content={
                         "detail": (
-                            "Upload request exceeds the "
-                            f"{resolved_settings.max_upload_request_bytes} byte limit"
+                            "上传请求超过 "
+                            f"{resolved_settings.max_upload_request_bytes} 字节总量限制"
                         )
                     },
                 )
@@ -91,7 +101,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if request.message is not None:
             raise HTTPException(
                 status_code=400,
-                detail="Create a task without an initial message, then send it to /messages.",
+                detail="请先创建不含初始消息的任务，再通过 /messages 发送消息。",
             )
         return storage.create_task(None, request.model)
 
@@ -113,13 +123,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         state = require_task(storage, task_id)
         if state.status == "running" and not runner.is_running(task_id):
             storage.mark_interrupted_if_running(
-                task_id, "Task was interrupted because no active runner owns it."
+                task_id, "任务已中断：当前没有运行器接管该任务。"
             )
             state = storage.get_task(task_id)
         if state.status == "running" or runner.is_running(task_id):
             raise HTTPException(
                 status_code=409,
-                detail="Cannot upload files while the task is running",
+                detail="任务运行中不能上传文件",
             )
         try:
             storage.save_uploads(
@@ -161,9 +171,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="Artifact not found") from None
+            raise HTTPException(status_code=404, detail="未找到产物") from None
         if not path.exists():
-            raise HTTPException(status_code=404, detail="Artifact not found")
+            raise HTTPException(status_code=404, detail="未找到产物")
         media_type = media_type_for(path)
         return FileResponse(path, media_type=media_type, filename=path.name)
 
@@ -175,9 +185,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
         except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="Artifact not found") from None
+            raise HTTPException(status_code=404, detail="未找到产物") from None
         if not path.exists():
-            raise HTTPException(status_code=404, detail="Artifact not found")
+            raise HTTPException(status_code=404, detail="未找到产物")
         media_type = media_type_for(path)
         return FileResponse(path, media_type=media_type, filename=path.name)
 
@@ -186,14 +196,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
 def validate_model(model: str) -> None:
     if model not in {item["id"] for item in MODEL_REGISTRY}:
-        raise HTTPException(status_code=400, detail=f"Unsupported model: {model}")
+        raise HTTPException(status_code=400, detail=f"不支持的模型：{model}")
 
 
 def require_task(storage: TaskStorage, task_id: str, *, include_events: bool = True) -> TaskState:
     try:
         return storage.get_task(task_id, include_events=include_events)
     except (FileNotFoundError, ValueError):
-        raise HTTPException(status_code=404, detail="Task not found") from None
+        raise HTTPException(status_code=404, detail="未找到任务") from None
 
 
 def media_type_for(path: Path) -> str:
@@ -217,7 +227,7 @@ async def enforce_json_body_limit(request: Request, max_bytes: int) -> JSONRespo
         if len(body) > max_bytes:
             return JSONResponse(
                 status_code=413,
-                content={"detail": f"JSON request exceeds the {max_bytes} byte limit"},
+                content={"detail": f"JSON 请求超过 {max_bytes} 字节限制"},
             )
     request._body = bytes(body)  # noqa: SLF001 - Starlette reuses this for downstream parsing.
     return None
@@ -232,13 +242,13 @@ def authorize_task_request(request: Request, settings: Settings) -> JSONResponse
         )
         if supplied_token and compare_digest(supplied_token, settings.access_token):
             return None
-        return JSONResponse(status_code=401, content={"detail": "Invalid or missing access token"})
+        return JSONResponse(status_code=401, content={"detail": "访问令牌无效或缺失。"})
     if is_local_client(request):
         return None
     return JSONResponse(
         status_code=403,
         content={
-            "detail": "Task APIs are restricted to localhost unless MYAGENT_ACCESS_TOKEN is set"
+            "detail": "任务 API 默认只允许本机访问；如需非本机访问，请设置 MYAGENT_ACCESS_TOKEN"
         },
     )
 

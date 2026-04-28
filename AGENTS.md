@@ -7,10 +7,10 @@
 - 后端：`backend/`，FastAPI + `uv`，入口为 `backend/app/main.py`。
 - 前端：`frontend/`，Next.js app router，主界面在 `frontend/app/page.tsx`。
 - 默认任务存储：`backend/storage/tasks/`。
-- 后端测试：`backend/tests/test_workflow.py`。
-- 前端测试：`frontend/tests/task-state.test.ts`。
+- 后端测试：`backend/tests/`，当前任务工作流集成套件在 `backend/tests/workflow/test_workflow.py`。
+- 前端测试：`frontend/tests/`，按 `state/`、`workspace/`、`upload/`、`model/` 分类，文件名必须以 `test_` 开头。
 - 长期知识包索引：`asset/README.md`。
-- 当前保留的长期知识包只覆盖稳定业务/运行边界：后端任务运行、前端任务工作区、模型提供方与安全边界。
+- 当前唯一长期主知识包：`asset/task_workspace_runtime_knowledge_pack.md`，覆盖任务运行、前端工作区、模型提供方、安全边界、上传限制、产物访问和测试布局。
 
 ## 工作前必须读取
 
@@ -33,6 +33,9 @@
 - 后端行为变化至少补或更新 API、任务生命周期、存储、权限、模型路由或分析服务测试。
 - 前端行为变化至少补或更新表单、状态转换器、URL 映射、产物请求或注册表测试。
 - 影响关键用户路径时，再补创建任务、上传文件、发送消息、事件轮询、完成状态、产物打开/下载的集成验证；必要时补 E2E。
+- 所有新增、拆分或重命名的测试文件名称必须以 `test_` 开头。Python 测试使用 `test_*.py`；前端 Node 测试使用 `test_*.test.ts`。
+- 测试文件必须按测试类型分类到对应模块目录。后端当前集成/工作流测试放在 `backend/tests/workflow/`；新增窄域测试按 `api/`、`runtime/`、`storage/`、`security/`、`analysis/` 等模块建目录。前端当前分类为 `frontend/tests/state/`、`frontend/tests/workspace/`、`frontend/tests/upload/`、`frontend/tests/model/`。
+- 调整测试目录或命名时，必须同步测试 runner、`README.md`、`asset/README.md`、相关知识包和本文件中的测试路径。
 - 只改文档时至少运行 `git diff --check`，并说明未运行代码测试的理由。
 
 ## 最低交付标准
@@ -59,17 +62,13 @@
 
 ### 当前有效知识包
 
-- `asset/backend_task_runtime_knowledge_pack.md`：任务 API、状态机、runner、事件日志、版本化产物与本地 JSON 存储。
-- `asset/frontend_task_workspace_knowledge_pack.md`：任务工作区、文件上传、消息提交、状态轮询、日志合并与产物打开。
-- `asset/model_provider_security_knowledge_pack.md`：provider 密钥、环境变量、访问令牌、CORS、本地优先安全边界、上传与 JSON 限制。
+- `asset/task_workspace_runtime_knowledge_pack.md`：任务 API、状态机、runner、事件日志、版本化产物、本地 JSON 存储、前端任务工作区、文件上传、消息提交、状态轮询、日志合并、产物打开、provider 密钥、环境变量、访问令牌、CORS、本地优先安全边界、上传/JSON 限制和测试布局。
 - `asset/README.md` 是唯一有效索引；新增、删除或改名知识包时必须同步更新。
 
 ### 需求修改后的知识回写路由
 
-- 改后端任务 API、状态机、任务 runner、取消/中断、事件日志、产物下载或本地存储：优先沉淀到 `asset/backend_task_runtime_knowledge_pack.md`。
-- 改 Markdown 招投标文档分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：若形成独立长期边界，先在 `asset/README.md` 登记，再新增或更新 `asset/bid_analysis_workflow_knowledge_pack.md`。
-- 改前端任务创建、文件上传、消息提交、状态轮询、日志合并、产物 URL 或打开逻辑：优先沉淀到 `asset/frontend_task_workspace_knowledge_pack.md`。
-- 改模型提供方、环境变量、访问令牌、CORS、本地优先安全边界或上传/JSON 限制：优先沉淀到 `asset/model_provider_security_knowledge_pack.md`。
+- 改后端任务 API、状态机、任务 runner、取消/中断、事件日志、产物下载、本地存储、前端任务创建、文件上传、消息提交、状态轮询、日志合并、产物 URL、模型提供方、环境变量、访问令牌、CORS、本地优先安全边界、上传/JSON 限制或测试布局：优先沉淀到 `asset/task_workspace_runtime_knowledge_pack.md`。
+- 改 Markdown/JSON 招投标文档分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：默认先更新 `asset/task_workspace_runtime_knowledge_pack.md` 中的相关稳定边界；若形成独立长期主题，先在 `asset/README.md` 登记，再新增或更新 `asset/bid_analysis_workflow_knowledge_pack.md`。
 - 改本地启动脚本、WSL 端口清理或开发终端启动方式：通常只更新 `README.md` 和本文件的本地开发建议；只有脚本演进为跨需求复用的稳定子系统时，才单独新增知识包。
 - 上述文件名是建议路由；若 `asset/README.md` 已存在更合适主包，以索引为准。
 - 若新规则会影响未来多数需求，再把它从知识包提升写回 `AGENTS.md`。

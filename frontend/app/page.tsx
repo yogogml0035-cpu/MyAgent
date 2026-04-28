@@ -36,16 +36,21 @@ import {
   buildModelDisplayOptions,
   selectedModelDisplayOption,
 } from "./model-ui";
-import { FILE_INPUT_ACCEPT, partitionMarkdownUploadFiles } from "./file-upload";
+import { FILE_INPUT_ACCEPT, partitionSupportedUploadFiles } from "./file-upload";
 import {
   buildConversationHistoryItems,
   buildConversationStreamItems,
   buildRunActivityGroups,
+  buildStateNoticeMessages,
+  buildWorkspaceNoticeMessages,
   buildLogClipboardText,
   calculateLogProgress,
   formatFileSize,
-  formatTaskStatus,
+  formatMessagePanelStatus,
+  formatLogLevelLabel,
+  formatRunLogStatus,
   formatTime,
+  getMessagePanelTone,
   shouldSubmitComposerKey,
 } from "./workspace-view";
 
@@ -60,7 +65,7 @@ const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
     label: "Deepseek",
   },
 ];
-const FILE_INPUT_ID = "markdown-files";
+const FILE_INPUT_ID = "document-files";
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   let response: Response;
@@ -95,7 +100,6 @@ export default function Home() {
   const [runs, setRuns] = useState<TaskState["runs"]>([]);
   const [taskSummaries, setTaskSummaries] = useState<TaskSummary[]>([]);
   const [uploadCount, setUploadCount] = useState(0);
-  const [taskModel, setTaskModel] = useState("");
   const [backendError, setBackendError] = useState("");
   const [needsInput, setNeedsInput] = useState<Record<string, unknown> | null>(null);
   const [input, setInput] = useState("");
@@ -105,15 +109,30 @@ export default function Home() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string>("");
+  const [errorLevel, setErrorLevel] = useState<"warning" | "error">("error");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const modelPickerRef = useRef<HTMLDivElement | null>(null);
+  const conversationCanvasRef = useRef<HTMLElement | null>(null);
 
   const canSend = input.trim().length > 0 || selectedFiles.length > 0;
   const activeTask = isTaskActive(status);
   const selectedFileNames = selectedFiles.map((file) => file.name).join("、");
   const selectedFileSize = selectedFiles.reduce((total, file) => total + file.size, 0);
+  const needsInputMessage = needsInput ? formatNeedsInput(needsInput) : "";
+  const stateNoticeMessages = useMemo(
+    () => buildStateNoticeMessages(backendError, needsInputMessage),
+    [backendError, needsInputMessage],
+  );
+  const workspaceNoticeMessages = useMemo(
+    () => buildWorkspaceNoticeMessages(error, errorLevel),
+    [error, errorLevel],
+  );
+  const noticeMessages = useMemo(
+    () => [...stateNoticeMessages, ...workspaceNoticeMessages],
+    [stateNoticeMessages, workspaceNoticeMessages],
+  );
   const hasConversation =
-    messages.length > 0 || logs.length > 0 || artifacts.length > 0 || Boolean(backendError || needsInput);
+    messages.length > 0 || logs.length > 0 || artifacts.length > 0 || noticeMessages.length > 0;
   const historyItems = useMemo(
     () => buildConversationHistoryItems(taskSummaries, taskId),
     [taskId, taskSummaries],
@@ -136,6 +155,17 @@ export default function Home() {
     [messages, runActivityGroups],
   );
 
+  useEffect(() => {
+    if (!hasConversation) {
+      return;
+    }
+    const canvas = conversationCanvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    canvas.scrollTo({ top: canvas.scrollHeight, behavior: "smooth" });
+  }, [conversationStreamItems, hasConversation, noticeMessages]);
+
   const applyTaskState = useCallback((state: TaskState, mergeLogs = false) => {
     setTaskId(state.id);
     setStatus(state.status);
@@ -144,7 +174,6 @@ export default function Home() {
     setArtifacts(state.artifacts);
     setRuns(state.runs);
     setUploadCount(state.uploadCount);
-    setTaskModel(state.model ?? "");
     setBackendError(state.error ?? "");
     setNeedsInput(state.needsInput ?? null);
   }, []);
@@ -180,6 +209,7 @@ export default function Home() {
 
     void refreshTaskSummaries().catch((caught) => {
       if (!cancelled) {
+        setErrorLevel("error");
         setError(formatRequestFailure(caught, API_BASE_URL));
       }
     });
@@ -313,7 +343,7 @@ export default function Home() {
     setError("");
     setIsBusy(true);
     const content = input.trim();
-    const taskContent = content || "Analyze the uploaded Markdown files for bid-collusion suspicion.";
+    const taskContent = content || "请分析已上传的 Markdown 或 JSON 文件是否存在串标围标嫌疑。";
     const files = selectedFiles;
     let requestTaskId = taskId;
 
@@ -332,6 +362,7 @@ export default function Home() {
       await refreshTask(id);
       await refreshTaskSummaries();
     } catch (caught) {
+      setErrorLevel("error");
       setError(formatRequestFailure(caught, API_BASE_URL));
       if (requestTaskId) {
         try {
@@ -358,6 +389,7 @@ export default function Home() {
       await refreshTask(taskId);
       await refreshTaskSummaries();
     } catch (caught) {
+      setErrorLevel("error");
       setError(formatRequestFailure(caught, API_BASE_URL));
     } finally {
       setIsBusy(false);
@@ -366,11 +398,12 @@ export default function Home() {
 
   function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const chosenFiles = Array.from(event.target.files ?? []);
-    const { markdownFiles, rejectedFiles } = partitionMarkdownUploadFiles(chosenFiles);
-    setSelectedFiles(markdownFiles);
+    const { supportedFiles, rejectedFiles } = partitionSupportedUploadFiles(chosenFiles);
+    setSelectedFiles(supportedFiles);
+    setErrorLevel("warning");
     setError(
       rejectedFiles.length > 0
-        ? `当前仅支持上传 Markdown 文件，已忽略 ${rejectedFiles.length} 个其他类型文件。`
+        ? `当前仅支持上传 Markdown 或 JSON 文件，已忽略 ${rejectedFiles.length} 个其他类型文件。`
         : "",
     );
   }
@@ -390,7 +423,6 @@ export default function Home() {
     setArtifacts([]);
     setRuns([]);
     setUploadCount(0);
-    setTaskModel("");
     setBackendError("");
     setNeedsInput(null);
     setInput("");
@@ -416,6 +448,7 @@ export default function Home() {
     try {
       await refreshTask(id);
     } catch (caught) {
+      setErrorLevel("error");
       setError(formatRequestFailure(caught, API_BASE_URL));
     }
   }
@@ -434,11 +467,123 @@ export default function Home() {
   }
 
   async function handleCopyLogs(copiedLogs = logs) {
+    await handleCopyText(buildLogClipboardText(copiedLogs), "复制日志失败，请检查浏览器权限。");
+  }
+
+  async function handleCopyText(text: string, failureMessage = "复制内容失败，请检查浏览器权限。") {
     try {
-      await navigator.clipboard.writeText(buildLogClipboardText(copiedLogs));
+      await navigator.clipboard.writeText(text);
     } catch {
-      setError("复制日志失败，请检查浏览器权限。");
+      setErrorLevel("error");
+      setError(failureMessage);
     }
+  }
+
+  function renderChatMessage(message: ChatMessage, key: string) {
+    const tone = getMessagePanelTone(message);
+    const messageClassName = [
+      "chatMessage",
+      `chatMessage-${message.role}`,
+      message.role === "user" ? "" : `chatMessage-${tone}`,
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    if (message.role === "user") {
+      return (
+        <div className="userMessageRow" key={key}>
+          <div className="userMessageFrame">
+            <article className={messageClassName}>
+              <p>{message.content}</p>
+            </article>
+            <time className="userMessageTime">{formatTime(message.createdAt, "short")}</time>
+          </div>
+          <div className="userMarker" aria-hidden="true" />
+        </div>
+      );
+    }
+
+    return (
+      <section className="assistantMessageRow" key={key}>
+        <div className="agentMarker" aria-hidden="true" />
+        <article className={messageClassName}>
+          <header className="messageCardHeader">
+            <div className="messageCardTitle">
+              <span className="messageBotIcon" aria-hidden="true" />
+              <strong>{message.role === "system" ? "系统消息" : "AI 生成内容"}</strong>
+              <span className={`statusGlyph statusGlyph-${tone}`} aria-hidden="true" />
+              <span>{formatMessagePanelStatus(message)}</span>
+            </div>
+            <button
+              aria-label="复制AI内容"
+              className="copyButton"
+              disabled={!message.content}
+              onClick={() => void handleCopyText(message.content)}
+              title="复制AI内容"
+              type="button"
+            >
+              <span aria-hidden="true" />
+            </button>
+          </header>
+
+          {tone === "error" ? <div className="messageErrorStrip">{message.content}</div> : null}
+
+          {tone !== "error" ? (
+            <div className="messageCardBody">
+              <p>{message.content}</p>
+            </div>
+          ) : null}
+
+          {message.createdAt ? (
+            <time className="messageCardTime">{formatTime(message.createdAt, "short")}</time>
+          ) : null}
+        </article>
+      </section>
+    );
+  }
+
+  function renderArtifactMessage(groupTitle: string, artifact: Artifact, key: string) {
+    const artifactKind = artifact.kind ?? (artifact.name.toLowerCase().endsWith(".html") ? "html" : "file");
+    const canOpen = artifactKind === "html" || artifact.name.toLowerCase().endsWith(".html");
+
+    return (
+      <section className="artifactMessageRow" key={key}>
+        <div className="agentMarker" aria-hidden="true" />
+        <article className="downloadCard">
+          <header className="downloadCardHeader">
+            <div className="downloadCardTitle">
+              <span className="downloadStatusIcon" aria-hidden="true" />
+              <strong>{canOpen ? "报告已生成" : "文件已生成"}</strong>
+              <span className="runRoundLabel">{groupTitle}</span>
+            </div>
+            <div className="downloadActions">
+              {canOpen ? (
+                <button
+                  className="downloadSecondaryButton"
+                  onClick={() => void handleOpenArtifact(artifact)}
+                  type="button"
+                >
+                  打开报告
+                </button>
+              ) : null}
+              <button
+                className="downloadPrimaryButton"
+                onClick={() => void handleDownloadArtifact(artifact)}
+                type="button"
+              >
+                <span className="downloadButtonIcon" aria-hidden="true" />
+                下载文件
+              </button>
+            </div>
+          </header>
+
+          <div className="downloadCardBody">
+            <span className="downloadFileIcon" aria-hidden="true" />
+            <span className="downloadFileName">{artifact.name}</span>
+          </div>
+        </article>
+      </section>
+    );
   }
 
   async function fetchArtifactBlob(artifact: Artifact) {
@@ -456,10 +601,29 @@ export default function Home() {
     return response.blob();
   }
 
+  async function handleDownloadArtifact(artifact: Artifact) {
+    setError("");
+    try {
+      const blob = await fetchArtifactBlob(artifact);
+      const objectUrl = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = objectUrl;
+      anchor.download = artifact.name || "artifact";
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+    } catch (caught) {
+      setErrorLevel("error");
+      setError(formatRequestFailure(caught, API_BASE_URL));
+    }
+  }
+
   async function handleOpenArtifact(artifact: Artifact) {
     setError("");
     const artifactWindow = window.open("about:blank", "_blank");
     if (!artifactWindow) {
+      setErrorLevel("error");
       setError("报告窗口被浏览器拦截，请允许弹窗后重试。");
       return;
     }
@@ -471,6 +635,7 @@ export default function Home() {
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
     } catch (caught) {
       artifactWindow.close();
+      setErrorLevel("error");
       setError(formatRequestFailure(caught, API_BASE_URL));
     }
   }
@@ -502,214 +667,210 @@ export default function Home() {
       </aside>
 
       <section className={hasConversation ? "chatWorkspace hasConversation" : "chatWorkspace isEmpty"}>
-        <section className="conversationCanvas" aria-label="任务对话">
-        <div className="conversationStream">
-          {backendError ? <div className="stateBanner stateBanner-error">{backendError}</div> : null}
-          {needsInput ? (
-            <div className="stateBanner stateBanner-warning">{formatNeedsInput(needsInput)}</div>
-          ) : null}
-
-          {!hasConversation ? (
-            <h1 className="heroMark">MYAGENT</h1>
-          ) : (
-            <>
-              {conversationStreamItems.map((item) => {
-                if (item.kind === "message") {
-                  const message = item.message;
-                  return (
-                    <article className={`chatMessage chatMessage-${message.role}`} key={item.id}>
-                      <p>{message.content}</p>
-                      <time>{formatTime(message.createdAt, "short")}</time>
-                    </article>
-                  );
-                }
-
-                const group = item.group;
-                const groupActive = isTaskActive(group.status);
-                const groupProgress = calculateLogProgress(group.logs.length);
-                const groupLogStatusText = groupActive
-                  ? "日志收集中..."
-                  : group.logs.length > 0
-                    ? "日志已同步"
-                    : "等待日志";
-
-                return (
-                  <section className="traceRow" aria-label={`${group.title}进度日志`} key={item.id}>
-                    <div className="agentMarker" aria-hidden="true">
-                      <span />
-                    </div>
-                    <article className="traceCard">
-                      <header className="traceHeader">
-                        <div className="traceTitle">
-                          <span className="documentIcon" aria-hidden="true" />
-                          <strong>{group.title}</strong>
-                          <span className={`runStatus runStatus-${group.status}`}>
-                            {formatTaskStatus(group.status)}
-                          </span>
-                          <span className={groupActive ? "spinner" : "syncDot"} aria-hidden="true" />
-                          <span>{groupLogStatusText}</span>
-                        </div>
-                        <button
-                          aria-label={`复制${group.title}日志`}
-                          className="copyButton"
-                          disabled={group.logs.length === 0}
-                          onClick={() => void handleCopyLogs(group.logs)}
-                          type="button"
-                        >
-                          <span aria-hidden="true" />
-                        </button>
-                      </header>
-
-                      <div className="progressSummary">
-                        {`${groupProgress.count}/${groupProgress.total} (${groupProgress.percent}%)`}
-                      </div>
-
-                      <div className="logList">
-                        {group.logs.length === 0 ? (
-                          <p className="emptyLog">计划、子任务分派、工具调用和产物会显示在这里。</p>
-                        ) : (
-                          group.logs.map((log) => (
-                            <article className={`logItem log-${log.level ?? "info"}`} key={log.id}>
-                              <time>{formatTime(log.createdAt)}</time>
-                              <span className="logLevel">{(log.level ?? "info").toUpperCase()}</span>
-                              <div>
-                                <strong>{log.title}</strong>
-                                {log.detail ? <p>{log.detail}</p> : null}
-                              </div>
-                            </article>
-                          ))
-                        )}
-                      </div>
-
-                      {group.reportArtifacts.length > 0 ? (
-                        <div className="artifactDock" aria-label={`${group.title}报告产物`}>
-                          {group.reportArtifacts.map((artifact) => (
-                            <button key={artifact.id} onClick={() => void handleOpenArtifact(artifact)} type="button">
-                              打开 {artifact.name}
-                            </button>
-                          ))}
-                        </div>
-                      ) : null}
-                    </article>
-                  </section>
-                );
-              })}
-            </>
-          )}
-        </div>
-      </section>
-
-      <form className="composerShell" onSubmit={handleSubmit}>
-        <input
-          accept={FILE_INPUT_ACCEPT}
-          className="fileInput"
-          id={FILE_INPUT_ID}
-          multiple
-          onChange={handleFileChange}
-          ref={fileInputRef}
-          type="file"
-        />
-
-        <div className="composerPanel">
-          {selectedFiles.length > 0 ? (
-            <div className="fileCard">
-              <span className="fileIcon" aria-hidden="true" />
-              <div className="fileInfo">
-                <span>Markdown</span>
-                <strong>{selectedFileNames}</strong>
-                <small>{formatFileSize(selectedFileSize)}</small>
-              </div>
-              <label className="replaceFileButton" htmlFor={FILE_INPUT_ID}>
-                更换
-              </label>
-              <button aria-label="移除文件" className="removeFileButton" onClick={handleClearFiles} type="button">
-                ×
-              </button>
-            </div>
-          ) : null}
-
-          <textarea
-            className="promptTextarea"
-            onChange={(event) => setInput(event.target.value)}
-            onKeyDown={handleComposerKeyDown}
-            placeholder={activeTask ? "回复生成中，请稍候..." : "尽管问..."}
-            rows={2}
-            value={input}
-          />
-
-          <div className="composerControls">
-            <label aria-label="上传 Markdown 文件" className="roundButton addFileButton" htmlFor={FILE_INPUT_ID}>
-              <span aria-hidden="true" />
-            </label>
-
-            {uploadCount > 0 ? <span className="uploadMeta">已上传 {uploadCount} 个文件</span> : null}
-            {taskModel ? <span className="uploadMeta">{taskModel}</span> : null}
-
-            <div className="composerSpacer" />
-
-            <div className="modelPicker" ref={modelPickerRef}>
-              <button
-                aria-expanded={isModelPickerOpen}
-                aria-haspopup="listbox"
-                className="modelPickerTrigger"
-                onClick={() => setIsModelPickerOpen((current) => !current)}
-                type="button"
-              >
-                <span className="modelPickerLabel">{selectedModelDisplay.label}</span>
-                <span className="modelChevron" aria-hidden="true" />
-              </button>
-
-              {isModelPickerOpen ? (
-                <div aria-label="模型" className="modelPickerMenu" role="listbox">
-                  {modelDisplayOptions.map((option) => {
-                    const isSelected = option.id === model;
-                    return (
-                      <button
-                        aria-selected={isSelected}
-                        className={isSelected ? "modelOption modelOption-active" : "modelOption"}
-                        key={option.id}
-                        onClick={() => {
-                          setModel(option.id);
-                          setIsModelPickerOpen(false);
-                        }}
-                        role="option"
-                        type="button"
-                      >
-                        <span className="modelOptionCopy">
-                          <span className="modelOptionTitle">
-                            <span>{option.label}</span>
-                            {option.badge ? <span className="modelBadge">{option.badge}</span> : null}
-                          </span>
-                          <small>{option.description}</small>
-                        </span>
-                        <span className="modelCheck" aria-hidden="true" />
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
-            </div>
-
-            {activeTask ? (
-              <button
-                aria-label="停止任务"
-                className="roundButton primaryAction stopAction"
-                disabled={isBusy}
-                onClick={handleStop}
-                type="button"
-              >
-                <span aria-hidden="true" />
-              </button>
+        <section className="conversationCanvas" aria-label="任务对话" ref={conversationCanvasRef}>
+          <div className="conversationStream">
+            {!hasConversation ? (
+              <h1 className="heroMark">MYAGENT</h1>
             ) : (
-              <button aria-label={isBusy ? "发送中" : "发送"} className="sendButton" disabled={!canSend || isBusy} type="submit">
-                <span aria-hidden="true" />
-              </button>
+              <>
+                {conversationStreamItems.map((item) => {
+                  if (item.kind === "message") {
+                    return renderChatMessage(item.message, item.id);
+                  }
+
+                  if (item.kind === "artifact") {
+                    return renderArtifactMessage(item.group.title, item.artifact, item.id);
+                  }
+
+                  const group = item.group;
+                  const groupActive = isTaskActive(group.status);
+                  const groupProgress = calculateLogProgress(group.logs.length);
+                  const groupLogStatusText = formatRunLogStatus(group.status);
+
+                  return (
+                    <section className="traceRow" aria-label={`${group.title}进度日志`} key={item.id}>
+                      <div className="agentMarker" aria-hidden="true" />
+                      <article className={`traceCard traceCard-${group.status}`}>
+                        <header className="traceHeader">
+                          <div className="traceTitle">
+                            <span className="documentIcon" aria-hidden="true" />
+                            <strong>进度日志</strong>
+                            <span className="runRoundLabel">{group.title}</span>
+                            <span
+                              className={groupActive ? "spinner" : `statusGlyph statusGlyph-${group.status}`}
+                              aria-hidden="true"
+                            />
+                            <span>{groupLogStatusText}</span>
+                          </div>
+                          <button
+                            aria-label={`复制${group.title}日志`}
+                            className="copyButton"
+                            disabled={group.logs.length === 0}
+                            onClick={() => void handleCopyLogs(group.logs)}
+                            type="button"
+                          >
+                            <span aria-hidden="true" />
+                          </button>
+                        </header>
+
+                        <div className="progressSummary">
+                          {`${groupProgress.count}/${groupProgress.total} (${groupProgress.percent}%)`}
+                        </div>
+
+                        <div className="logList">
+                          {group.logs.length === 0 ? (
+                            <p className="emptyLog">计划、子任务分派、工具调用和产物会显示在这里。</p>
+                          ) : (
+                            group.logs.map((log) => (
+                              <article className={`logItem log-${log.level ?? "info"}`} key={log.id}>
+                                <time>{formatTime(log.createdAt)}</time>
+                                <span className="logLevel">{formatLogLevelLabel(log.level)}</span>
+                                <div>
+                                  <strong>{log.title}</strong>
+                                  {log.detail ? <p>{log.detail}</p> : null}
+                                </div>
+                              </article>
+                            ))
+                          )}
+                        </div>
+
+                      </article>
+                    </section>
+                  );
+                })}
+                {noticeMessages.map((message) => renderChatMessage(message, `notice:${message.id}`))}
+              </>
             )}
           </div>
-        </div>
+        </section>
 
-        {error ? <div className="errorBanner">{error}</div> : null}
-      </form>
+        <form className="composerShell" onSubmit={handleSubmit}>
+          <input
+            accept={FILE_INPUT_ACCEPT}
+            className="fileInput"
+            id={FILE_INPUT_ID}
+            multiple
+            onChange={handleFileChange}
+            ref={fileInputRef}
+            type="file"
+          />
+
+          <div className="composerPanel">
+            {selectedFiles.length > 0 ? (
+              <div className="fileCard">
+                <span className="fileIcon" aria-hidden="true" />
+                <div className="fileInfo">
+                  <span>Markdown / JSON</span>
+                  <strong>{selectedFileNames}</strong>
+                  <small>{formatFileSize(selectedFileSize)}</small>
+                </div>
+                <label className="replaceFileButton" htmlFor={FILE_INPUT_ID}>
+                  更换
+                </label>
+                <button aria-label="移除文件" className="removeFileButton" onClick={handleClearFiles} type="button">
+                  ×
+                </button>
+              </div>
+            ) : null}
+
+            <textarea
+              className="promptTextarea"
+              onChange={(event) => setInput(event.target.value)}
+              onKeyDown={handleComposerKeyDown}
+              placeholder={activeTask ? "回复生成中，请稍候..." : "尽管问..."}
+              rows={2}
+              value={input}
+            />
+
+            <div className="composerControls">
+              <label
+                aria-label="上传 Markdown 或 JSON 文件"
+                className="roundButton addFileButton"
+                htmlFor={FILE_INPUT_ID}
+              >
+                <span aria-hidden="true" />
+              </label>
+
+              {uploadCount > 0 ? <span className="uploadMeta">已上传 {uploadCount} 个文件</span> : null}
+
+              <div className="composerSpacer" />
+
+              <div className="modelPicker" ref={modelPickerRef}>
+                <button
+                  aria-expanded={isModelPickerOpen}
+                  aria-haspopup="listbox"
+                  className="modelPickerTrigger"
+                  onClick={() => setIsModelPickerOpen((current) => !current)}
+                  type="button"
+                >
+                  <span className="modelPickerLabel">{selectedModelDisplay.label}</span>
+                  <span className="modelChevron" aria-hidden="true" />
+                </button>
+
+                {isModelPickerOpen ? (
+                  <div aria-label="模型" className="modelPickerMenu" role="listbox">
+                    {modelDisplayOptions.map((option) => {
+                      const isSelected = option.id === model;
+                      return (
+                        <button
+                          aria-selected={isSelected}
+                          className={isSelected ? "modelOption modelOption-active" : "modelOption"}
+                          key={option.id}
+                          onClick={() => {
+                            setModel(option.id);
+                            setIsModelPickerOpen(false);
+                          }}
+                          role="option"
+                          type="button"
+                        >
+                          <span className="modelOptionCopy">
+                            <span className="modelOptionTitle">
+                              <span>{option.label}</span>
+                              {option.badge ? <span className="modelBadge">{option.badge}</span> : null}
+                            </span>
+                            <small>{option.description}</small>
+                          </span>
+                          <span className="modelCheck" aria-hidden="true" />
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+
+              {activeTask ? (
+                <button
+                  aria-label="停止任务"
+                  className="sendButton stopAction"
+                  disabled={isBusy}
+                  onClick={handleStop}
+                  type="button"
+                >
+                  <svg aria-hidden="true" className="sendButtonIcon" fill="none" viewBox="0 0 24 24">
+                    <rect fill="currentColor" height="12" rx="2.5" width="12" x="6" y="6" />
+                  </svg>
+                </button>
+              ) : (
+                <button
+                  aria-label={isBusy ? "发送中" : "发送"}
+                  className="sendButton"
+                  disabled={!canSend || isBusy}
+                  type="submit"
+                >
+                  <svg aria-hidden="true" className="sendButtonIcon" fill="none" viewBox="0 0 24 24">
+                    <path
+                      d="M12 19V5m0 0-6 6m6-6 6 6"
+                      stroke="currentColor"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeWidth="2.4"
+                    />
+                  </svg>
+                </button>
+              )}
+            </div>
+          </div>
+        </form>
       </section>
     </main>
   );

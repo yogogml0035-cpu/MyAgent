@@ -9,6 +9,11 @@ import httpx
 from .runtime import CancellationController
 from .settings import MODEL_REGISTRY, Settings
 
+MISSING_DEEPSEEK_API_KEY_MESSAGE = (
+    "已选择 DeepSeek，但后端 .env 未配置 DEEPSEEK_API_KEY。"
+    "配置后可启用实时模型回复；文档分析仍可使用本地确定性分析器。"
+)
+
 
 class ModelProvider(Protocol):
     def chat(
@@ -26,7 +31,7 @@ class ProviderRouter:
         unsupported = model_provider_names() - self.providers.keys()
         if unsupported:
             raise ValueError(
-                f"Unsupported model providers configured: {', '.join(sorted(unsupported))}"
+                f"配置了不支持的模型服务提供方：{', '.join(sorted(unsupported))}"
             )
 
     def chat(
@@ -43,11 +48,15 @@ class ProviderRouter:
         for item in MODEL_REGISTRY:
             if item["id"] == model:
                 return self.providers[str(item["provider"])]
-        raise ValueError(f"Unsupported model: {model}")
+        raise ValueError(f"不支持的模型：{model}")
 
 
 def model_provider_names() -> set[str]:
     return {str(item["provider"]) for item in MODEL_REGISTRY}
+
+
+def is_model_configuration_warning(message: str) -> bool:
+    return message == MISSING_DEEPSEEK_API_KEY_MESSAGE
 
 
 class DeepSeekProvider:
@@ -58,11 +67,7 @@ class DeepSeekProvider:
         self, message: str, model: str, controller: CancellationController | None = None
     ) -> str:
         if not self.settings.deepseek_api_key:
-            return (
-                "DeepSeek is selected, but DEEPSEEK_API_KEY is not configured in the backend .env. "
-                "Configure it to enable live model replies. Document-analysis workflows can still run "
-                "with the local deterministic v1 analyzer."
-            )
+            return MISSING_DEEPSEEK_API_KEY_MESSAGE
         if controller is not None:
             return self._chat_http_cancellable(message, model, controller)
         return self._chat_http(message, model)
@@ -82,8 +87,8 @@ class DeepSeekProvider:
     ) -> str:
         if not self.settings.deepseek_api_key:
             return (
-                "MODEL_FALLBACK: DEEPSEEK_API_KEY is not configured, so this sub-agent used "
-                "the local deterministic evidence engine after preparing a model prompt."
+                "模型推理未启用：后端未配置 DEEPSEEK_API_KEY，本轮子任务已使用"
+                "本地确定性证据引擎。"
             )
         if controller is None:
             return self.chat(prompt, model)
@@ -93,7 +98,7 @@ class DeepSeekProvider:
         self, message: str, model: str, controller: CancellationController
     ) -> str:
         if controller.is_cancelled():
-            raise RuntimeError("Model call cancelled")
+            raise RuntimeError("模型调用已取消")
         return asyncio.run(self._chat_http_cancellable_async(message, model, controller))
 
     async def _chat_http_cancellable_async(
@@ -110,7 +115,7 @@ class DeepSeekProvider:
             request_task.cancel()
             with suppress(asyncio.CancelledError):
                 await request_task
-            raise RuntimeError("Model call cancelled")
+            raise RuntimeError("模型调用已取消")
 
         for task in pending:
             task.cancel()
@@ -135,7 +140,7 @@ class DeepSeekProvider:
             "messages": [
                 {
                     "role": "system",
-                    "content": "You are a careful local task assistant. Keep replies concise.",
+                    "content": "你是谨慎的本地任务助手。默认使用中文简洁回复，除非用户明确要求其他语言。",
                 },
                 {"role": "user", "content": message},
             ],

@@ -4,9 +4,7 @@
 
 ## Current Knowledge Packs
 
-- `asset/frontend_task_workspace_knowledge_pack.md`: frontend chat workspace layout, task creation, file upload, message submission, polling, logs, and artifact opening.
-- `asset/backend_task_runtime_knowledge_pack.md`: backend task-as-conversation APIs, run lifecycle, event logs, versioned artifacts, and local storage boundaries.
-- `asset/model_provider_security_knowledge_pack.md`: model-provider secrets, environment variables, access tokens, CORS/local-first security, upload limits, and JSON limits.
+- `asset/task_workspace_runtime_knowledge_pack.md`: the single main package for backend task runtime, frontend task workspace, model-provider security, upload limits, local-first access boundaries, artifact handling, and test layout.
 
 ## Registration Rules
 
@@ -16,6 +14,7 @@
 - Do not preserve patch timelines, deleted filenames, or temporary script paths as long-term knowledge.
 - If a new package fully absorbs an old package, delete the old package and update this index in the same change.
 - Do not keep a separate package for single-machine development walkthroughs. Keep concise reusable script cautions in `AGENTS.md` and operational steps in `README.md`.
+- Test-path changes must update this index, the relevant knowledge package, and `AGENTS.md` in the same change.
 
 ## Required Package Sections
 

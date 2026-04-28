@@ -3,15 +3,15 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, Thread
-from typing import Any
+from typing import Any, Literal
 
 from .analysis import CancelledError, NeedsInputError, run_bid_analysis
-from .model_provider import ModelProvider
+from .model_provider import ModelProvider, is_model_configuration_warning
 from .permissions import PermissionPolicy
 from .runtime import CancellationController
 from .schemas import ChatMessage, TaskStatus
 from .settings import Settings
-from .storage import TaskStorage
+from .storage import TaskStorage, source_format_for_upload
 from .tools import WorkspaceTools
 
 STARTABLE_STATUSES: set[TaskStatus] = {
@@ -38,15 +38,15 @@ class TaskRunner:
         with self._lock:
             existing = self._threads.get(task_id)
             if existing and existing.is_alive():
-                raise RuntimeError("Task is already running")
+                raise RuntimeError("任务正在运行中")
             state = self.storage.get_task(task_id, include_events=False)
             if state.status == "running":
                 self.storage.mark_interrupted_if_running(
-                    task_id, "Task was interrupted because no active runner owns it."
+                    task_id, "任务已中断：当前没有运行器接管该任务。"
                 )
-                raise RuntimeError("Task was marked running without an active runner")
+                raise RuntimeError("任务被标记为运行中，但没有活动运行器接管")
             if state.status not in STARTABLE_STATUSES:
-                raise RuntimeError(f"Cannot start a task in {state.status} status")
+                raise RuntimeError(f"任务处于 {state.status} 状态，不能启动新运行")
             controller = CancellationController()
             self._controllers[task_id] = controller
             started = self.storage.start_run(
@@ -57,12 +57,12 @@ class TaskRunner:
             )
             if started is None:
                 self._controllers.pop(task_id, None)
-                raise RuntimeError("Task status changed before the run could start")
+                raise RuntimeError("运行启动前任务状态已变化")
             _, run_id = started
             self.storage.append_event(
                 task_id,
                 "user_message_received",
-                "User message accepted; workflow started",
+                "已接收用户消息，工作流开始执行。",
                 {"model": model, "message": message},
                 run_id=run_id,
             )
@@ -81,13 +81,13 @@ class TaskRunner:
             controller = self._controllers.get(task_id)
             if controller is None or thread is None or not thread.is_alive():
                 if self.storage.mark_interrupted_if_running(
-                    task_id, "Task was interrupted because no active runner owns it."
+                    task_id, "任务已中断：当前没有运行器接管该任务。"
                 ):
                     return
                 self.storage.append_event(
                     task_id,
                     "cancel_ignored",
-                    "Cancellation ignored because the task is not running",
+                    "任务未在运行，已忽略取消请求。",
                     {},
                 )
                 return
@@ -95,7 +95,7 @@ class TaskRunner:
         state = self.storage.get_task(task_id, include_events=False)
         run_id = state.active_run_id
         self.storage.append_event(
-            task_id, "cancel_requested", "Cancellation requested", {}, run_id=run_id
+            task_id, "cancel_requested", "已请求取消任务。", {}, run_id=run_id
         )
         updated = self.storage.update_task_if_status(
             task_id, RUNNING_STATUSES, status="cancelled", run_id=run_id
@@ -104,7 +104,7 @@ class TaskRunner:
             self.storage.append_event(
                 task_id,
                 "cancel_ignored",
-                "Cancellation ignored because the task is no longer running",
+                "任务已不再运行，已忽略取消请求。",
                 {},
             )
 
@@ -117,9 +117,15 @@ class TaskRunner:
         self, task_id: str, run_id: str, message: str, model: str, controller: CancellationController
     ) -> None:
         def emit(
-            event_type: str, event_message: str, payload: dict[str, Any] | None = None
+            event_type: str,
+            event_message: str,
+            payload: dict[str, Any] | None = None,
+            *,
+            level: Literal["info", "success", "warning", "error"] | None = None,
         ) -> None:
-            self.storage.append_event(task_id, event_type, event_message, payload or {}, run_id=run_id)
+            self.storage.append_event(
+                task_id, event_type, event_message, payload or {}, run_id=run_id, level=level
+            )
 
         try:
             uploads = self.storage.list_uploads(task_id)
@@ -133,11 +139,11 @@ class TaskRunner:
             self.storage.write_run_manifest(task_id, run_id, run_manifest)
             emit(
                 "run_manifest_created",
-                "Run input manifest recorded",
+                "已记录本轮输入清单。",
                 {"files": [item["filename"] for item in input_manifest]},
             )
             if not uploads:
-                if not requires_markdown_documents(message):
+                if not requires_document_uploads(message):
                     try:
                         reply = self.model_provider.chat(message, model, controller)
                     except RuntimeError as exc:
@@ -146,6 +152,14 @@ class TaskRunner:
                         raise
                     if controller.is_cancelled():
                         raise CancelledError()
+                    warning_reply = is_model_configuration_warning(reply)
+                    if warning_reply:
+                        emit(
+                            "model_warning",
+                            "模型服务配置提醒。",
+                            {"model": model, "code": "missing_provider_key"},
+                            level="warning",
+                        )
                     updated = self.storage.update_task_if_status(
                         task_id,
                         RUNNING_STATUSES,
@@ -155,6 +169,7 @@ class TaskRunner:
                             content=reply,
                             created_at=utc_now(),
                             run_id=run_id,
+                            level="warning" if warning_reply else None,
                         ),
                         run_id=run_id,
                     )
@@ -162,11 +177,11 @@ class TaskRunner:
                         if controller.is_cancelled():
                             raise CancelledError()
                         return
-                    emit("chat_completed", "Simple chat response completed", {"model": model})
+                    emit("chat_completed", "简单对话回复已完成。", {"model": model})
                     return
                 raise NeedsInputError(
-                    "Upload Markdown files before starting a document-analysis task.",
-                    {"required_file_type": "markdown"},
+                    "开始文档分析任务前，请先上传 Markdown 或 JSON 文件。",
+                    {"required_file_type": "markdown_or_json"},
                 )
             result = run_bid_analysis(
                 task_id=task_id,
@@ -208,9 +223,9 @@ class TaskRunner:
                 if controller.is_cancelled():
                     raise CancelledError()
                 return
-            emit("task_completed", "Task completed", result)
+            emit("task_completed", "任务已完成。", result)
         except CancelledError:
-            emit("task_cancelled", "Task cancelled; intermediate artifacts were kept", {})
+            emit("task_cancelled", "任务已取消，已保留中间产物。", {})
             self.storage.update_task_if_status(
                 task_id, RUNNING_STATUSES, status="cancelled", run_id=run_id
             )
@@ -225,7 +240,7 @@ class TaskRunner:
                 run_id=run_id,
             )
         except Exception as exc:
-            emit("task_failed", "Task failed", {"error": str(exc)})
+            emit("task_failed", "任务执行失败。", {"error": str(exc)})
             self.storage.update_task_if_status(
                 task_id, RUNNING_STATUSES, status="failed", error=str(exc), run_id=run_id
             )
@@ -247,6 +262,8 @@ def build_input_manifest(uploads: list[Path]) -> list[dict[str, Any]]:
             {
                 "filename": path.name,
                 "relative_path": f"uploads/{path.name}",
+                "source_format": source_format_for_upload(path),
+                "size_bytes": stat.st_size,
                 "bytes": stat.st_size,
                 "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc)
                 .replace(microsecond=0)
@@ -257,7 +274,7 @@ def build_input_manifest(uploads: list[Path]) -> list[dict[str, Any]]:
     return manifest
 
 
-def requires_markdown_documents(message: str) -> bool:
+def requires_document_uploads(message: str) -> bool:
     markers = [
         "串标",
         "围标",

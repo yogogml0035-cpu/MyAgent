@@ -26,11 +26,11 @@ npm run dev
 The frontend reads `NEXT_PUBLIC_MYAGENT_API_BASE_URL`. When it is unset or set to `auto`,
 the browser derives the backend URL from the current page host as
 `http://<hostname>:8001`, so both `http://localhost:3001` and a LAN URL such as
-`http://10.11.148.97:3001` target the matching backend host. Explicit backend URLs such
+`http://<LAN_IP>:3001` target the matching backend host. Explicit backend URLs such
 as `http://localhost:8001` are still supported. If the backend sets
 `MYAGENT_ACCESS_TOKEN`, set the same value as `NEXT_PUBLIC_MYAGENT_TOKEN` for local
 development. When opening the UI through a LAN address, include the frontend origin such
-as `http://10.11.148.97:3001` in backend `MYAGENT_CORS_ORIGINS`.
+as `http://<LAN_IP>:3001` in backend `MYAGENT_CORS_ORIGINS`.
 
 The legacy `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_AGENT_CHAT_TOKEN` names are still
 accepted for migrated local setups.
@@ -38,7 +38,7 @@ accepted for migrated local setups.
 Expected backend endpoints:
 
 - `POST /api/tasks` creates a task.
-- `POST /api/tasks/{task_id}/files` uploads Markdown files as multipart form data.
+- `POST /api/tasks/{task_id}/files` uploads Markdown or JSON files as multipart form data.
 - `POST /api/tasks/{task_id}/messages` sends a user message.
 - `POST /api/tasks/{task_id}/cancel` stops a task.
 - `GET /api/tasks/{task_id}` fetches task state, messages, logs, and artifacts.

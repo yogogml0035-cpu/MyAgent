@@ -56,7 +56,7 @@ class WorkspaceTools:
     def write_markdown(self, relative_path: str, content: str) -> Path:
         path = self._resolve(relative_path)
         if path.suffix.lower() != ".md":
-            raise ValueError("write_markdown only writes .md files")
+            raise ValueError("write_markdown 只能写入 .md 文件")
         decision = self.policy.classify_path_access(path, write=True)
         if decision.status != "allow":
             raise PermissionError(decision.reason)
@@ -67,7 +67,7 @@ class WorkspaceTools:
     def write_python_script(self, relative_path: str, content: str) -> Path:
         path = self._resolve(relative_path)
         if path.suffix.lower() != ".py":
-            raise ValueError("write_python_script only writes .py files")
+            raise ValueError("write_python_script 只能写入 .py 文件")
         decision = self.policy.classify_path_access(path, write=True)
         if decision.status != "allow":
             raise PermissionError(decision.reason)
@@ -95,7 +95,7 @@ class WorkspaceTools:
     def tavily_search(self, query: str, max_results: int = 5) -> dict[str, Any]:
         self.controller.raise_if_cancelled()
         if not self.tavily_api_key:
-            return {"results": [], "warning": "TAVILY_API_KEY is not configured"}
+            return {"results": [], "warning": "未配置 TAVILY_API_KEY"}
         response = httpx.post(
             "https://api.tavily.com/search",
             json={"api_key": self.tavily_api_key, "query": query, "max_results": max_results},
@@ -108,5 +108,5 @@ class WorkspaceTools:
     def _resolve(self, relative_path: str) -> Path:
         path = (self.workspace_root / relative_path).resolve()
         if not (path == self.workspace_root or self.workspace_root in path.parents):
-            raise PermissionError("Path escapes the task workspace")
+            raise PermissionError("路径超出任务工作区")
         return path

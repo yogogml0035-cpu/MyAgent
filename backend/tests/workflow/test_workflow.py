@@ -107,6 +107,14 @@ def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> Non
     assert any(event["type"] == "model_call" for event in state["events"])
     assert any(event["type"] == "model_result" for event in state["events"])
     assert any(event["type"] == "task_completed" for event in state["events"])
+    assert any(
+        event["type"] == "plan_created" and event["message"] == "已生成执行计划。"
+        for event in state["events"]
+    )
+    assert any(
+        event["type"] == "task_completed" and event["message"] == "任务已完成。"
+        for event in state["events"]
+    )
 
     task_dir = tmp_path / "tasks" / task_id
     assert (task_dir / "plan.json").exists()
@@ -126,6 +134,8 @@ def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> Non
         "bidder-c.md",
         "tender.md",
     ]
+    assert {item["source_format"] for item in run_manifest["inputs"]} == {"markdown"}
+    assert all(item["size_bytes"] == item["bytes"] for item in run_manifest["inputs"])
     input_manifest = json.loads(
         (task_dir / "artifacts" / "input-manifest.json").read_text(encoding="utf-8")
     )
@@ -135,11 +145,12 @@ def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> Non
         "bidder-b.md",
         "bidder-c.md",
     }
+    assert {item["source_format"] for item in input_manifest} == {"markdown"}
     assert sum(1 for item in input_manifest if item["role"] == "bidder") == 3
 
     report = client.get(f"/api/tasks/{task_id}/artifacts/report.html")
     assert report.status_code == 200
-    assert "Three-Bidder Comparison View" in report.text
+    assert "投标人对比视图" in report.text
     assert 'data-severity="high"' in report.text or 'data-severity="medium"' in report.text
 
 
@@ -188,6 +199,7 @@ def test_follow_up_task_run_preserves_existing_artifacts_and_reuses_uploads(
         "bidder-b.md",
         "tender.md",
     ]
+    assert {item["source_format"] for item in second_manifest["inputs"]} == {"markdown"}
     assert all(message["run_id"] for message in second_state["messages"])
 
 
@@ -245,6 +257,76 @@ def test_bidder_only_uploads_complete_with_all_files_as_bidders(tmp_path: Path) 
 
     assert state["status"] == "complete", state.get("error")
     assert [item["role"] for item in plan["input_material_roles"]] == ["bidder", "bidder"]
+
+
+def test_json_uploads_are_parsed_and_included_in_manifests(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    alpha = {
+        "投标人": "Alpha Construction",
+        "技术方案": "采用每日巡检、周报复核和问题闭环整改方式确保施工质量。",
+        "报价": "1000000元",
+        "分项一": "230000元",
+    }
+    beta = {
+        "投标人": "Beta Construction",
+        "技术方案": "采用每日巡检、周报复核和问题闭环整改方式确保施工质量。",
+        "报价": "1000000元",
+        "分项一": "230000元",
+    }
+    files = [
+        ("files", ("alpha.json", json.dumps(alpha).encode("utf-8"), "application/json")),
+        ("files", ("beta.json", json.dumps(beta).encode("utf-8"), "application/json")),
+    ]
+    upload = client.post(f"/api/tasks/{task_id}/files", files=files)
+    assert upload.status_code == 200
+    assert upload.json()["upload_count"] == 2
+
+    client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": "帮我检查是否有串标围标嫌疑", "model": "deepseek-reasoner"},
+    )
+    state = wait_for_terminal_status(client, task_id)
+    task_dir = tmp_path / "tasks" / task_id
+    run_manifest = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+    input_manifest = json.loads(
+        (task_dir / "artifacts" / "input-manifest.json").read_text(encoding="utf-8")
+    )
+    plan = json.loads((task_dir / "plan.json").read_text(encoding="utf-8"))
+
+    assert state["status"] == "complete", state.get("error")
+    assert [item["filename"] for item in run_manifest["inputs"]] == ["alpha.json", "beta.json"]
+    assert {item["source_format"] for item in run_manifest["inputs"]} == {"json"}
+    assert all(item["relative_path"].startswith("uploads/") for item in run_manifest["inputs"])
+    assert all(item["size_bytes"] == item["bytes"] for item in run_manifest["inputs"])
+    assert {item["source_format"] for item in input_manifest} == {"json"}
+    assert {item["relative_path"] for item in input_manifest} == {
+        "uploads/alpha.json",
+        "uploads/beta.json",
+    }
+    assert [item["source_format"] for item in plan["input_material_roles"]] == ["json", "json"]
+
+
+def test_runtime_invalid_json_storage_drift_fails_with_filename(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    files = [
+        ("files", ("alpha.json", b'{"bidder": "Alpha", "price": "1000000"}', "application/json")),
+        ("files", ("beta.json", b'{"bidder": "Beta", "price": "1000000"}', "application/json")),
+    ]
+    assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
+    (tmp_path / "tasks" / task_id / "uploads" / "beta.json").write_text(
+        '{"bidder": ', encoding="utf-8"
+    )
+
+    client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": "帮我检查是否有串标围标嫌疑", "model": "deepseek-reasoner"},
+    )
+    state = wait_for_terminal_status(client, task_id)
+
+    assert state["status"] == "failed"
+    assert state["error"] == "JSON 文件 beta.json 无效：内容不是合法 JSON"
 
 
 def test_upload_while_task_is_running_returns_conflict_without_persisting(
@@ -338,7 +420,7 @@ def test_startup_marks_persisted_running_task_as_interrupted(tmp_path: Path) -> 
     state = client.get(f"/api/tasks/{task_id}").json()
 
     assert state["status"] == "interrupted"
-    assert "startup or reload" in state["error"]
+    assert "后端启动或重载" in state["error"]
     assert any(event["type"] == "task_interrupted" for event in state["events"])
     assert not cast(FastAPI, client.app).state.runner.is_running(task_id)
 
@@ -479,7 +561,7 @@ def test_cors_allows_default_local_frontend_origin(tmp_path: Path) -> None:
 
 
 def test_cors_allows_configured_lan_frontend_origin(tmp_path: Path) -> None:
-    origin = "http://10.11.148.97:3001"
+    origin = "http://192.0.2.10:3001"
     client = make_client(tmp_path, access_token="test-token", cors_origins=(origin,))
 
     response = client.options(
@@ -501,7 +583,7 @@ def test_cors_rejects_unconfigured_lan_frontend_origin(tmp_path: Path) -> None:
     response = client.options(
         "/api/tasks",
         headers={
-            "Origin": "http://10.11.148.97:3001",
+            "Origin": "http://192.0.2.10:3001",
             "Access-Control-Request-Method": "POST",
         },
     )
@@ -513,12 +595,12 @@ def test_cors_rejects_unconfigured_lan_frontend_origin(tmp_path: Path) -> None:
 def test_cors_origin_env_parser_trims_empty_items_and_trailing_slashes(monkeypatch) -> None:
     monkeypatch.setenv(
         "MYAGENT_CORS_ORIGINS",
-        " http://localhost:3001/, , http://10.11.148.97:3001/ ",
+        " http://localhost:3001/, , http://192.0.2.10:3001/ ",
     )
 
     origins = read_list_env("MYAGENT_CORS_ORIGINS", ("http://127.0.0.1:3001",))
 
-    assert origins == ("http://localhost:3001", "http://10.11.148.97:3001")
+    assert origins == ("http://localhost:3001", "http://192.0.2.10:3001")
 
 
 def test_artifact_download_requires_and_accepts_access_token(tmp_path: Path) -> None:
@@ -582,7 +664,7 @@ def test_run_scoped_artifact_endpoint_is_allowlisted_and_path_safe(tmp_path: Pat
     latest = client.get(f"/api/tasks/{task_id}/artifacts/report.html")
 
     assert allowed.status_code == 200
-    assert "Three-Bidder Comparison View" in allowed.text
+    assert "投标人对比视图" in allowed.text
     assert unlisted.status_code == 404
     assert traversal.status_code in {400, 404}
     assert latest.status_code == 200
@@ -642,6 +724,7 @@ def test_message_over_length_limit_is_rejected_without_starting_run(tmp_path: Pa
     state = client.get(f"/api/tasks/{task_id}").json()
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "请求参数校验失败，请检查输入内容。"
     assert state["status"] == "idle"
     assert state["messages"] == []
     assert not (tmp_path / "tasks" / task_id / "run.json").exists()
@@ -657,6 +740,7 @@ def test_create_task_rejects_initial_message_over_length_limit(tmp_path: Path) -
     )
 
     assert response.status_code == 422
+    assert response.json()["detail"] == "请求参数校验失败，请检查输入内容。"
     assert list((tmp_path / "tasks").iterdir()) == []
 
 
@@ -669,7 +753,7 @@ def test_create_task_rejects_initial_message_without_persisting(tmp_path: Path) 
     )
 
     assert response.status_code == 400
-    assert "without an initial message" in response.json()["detail"]
+    assert "不含初始消息" in response.json()["detail"]
     assert client.get("/api/tasks").json() == []
     assert list((tmp_path / "tasks").iterdir()) == []
 
@@ -793,7 +877,7 @@ def test_similarity_comparison_observes_cancelled_controller() -> None:
         similar_paragraph_pairs(left, right, controller)
 
 
-def test_upload_rejects_non_markdown_file(tmp_path: Path) -> None:
+def test_upload_rejects_unsupported_file_type(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
     response = client.post(
@@ -801,7 +885,7 @@ def test_upload_rejects_non_markdown_file(tmp_path: Path) -> None:
         files=[("files", ("notes.txt", b"not markdown", "text/plain"))],
     )
     assert response.status_code == 400
-    assert "Only Markdown" in response.json()["detail"]
+    assert "仅支持上传 Markdown 或 JSON 文件" in response.json()["detail"]
 
 
 def test_uppercase_markdown_upload_is_discoverable(tmp_path: Path) -> None:
@@ -816,6 +900,20 @@ def test_uppercase_markdown_upload_is_discoverable(tmp_path: Path) -> None:
     assert response.status_code == 200
     assert response.json()["upload_count"] == 1
     assert (tmp_path / "tasks" / task_id / "uploads" / "BID.md").exists()
+
+
+def test_uppercase_json_upload_is_discoverable(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    response = client.post(
+        f"/api/tasks/{task_id}/files",
+        files=[("files", ("DATA.JSON", b'{"ok": true}', "application/json"))],
+    )
+
+    assert response.status_code == 200
+    assert response.json()["upload_count"] == 1
+    assert (tmp_path / "tasks" / task_id / "uploads" / "DATA.json").exists()
 
 
 def test_duplicate_upload_name_is_rejected_without_overwrite(tmp_path: Path) -> None:
@@ -837,6 +935,23 @@ def test_duplicate_upload_name_is_rejected_without_overwrite(tmp_path: Path) -> 
     assert stored == "original"
 
 
+def test_duplicate_json_upload_name_is_rejected_case_insensitively(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    response = client.post(
+        f"/api/tasks/{task_id}/files",
+        files=[
+            ("files", ("data.JSON", b'{"one": 1}', "application/json")),
+            ("files", ("data.json", b'{"two": 2}', "application/json")),
+        ],
+    )
+
+    assert response.status_code == 409
+    assert client.get(f"/api/tasks/{task_id}").json()["upload_count"] == 0
+    assert list((tmp_path / "tasks" / task_id / "uploads").iterdir()) == []
+
+
 def test_invalid_upload_batch_is_atomic(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
@@ -851,6 +966,25 @@ def test_invalid_upload_batch_is_atomic(tmp_path: Path) -> None:
     state = client.get(f"/api/tasks/{task_id}").json()
 
     assert response.status_code == 400
+    assert state["upload_count"] == 0
+    assert list((tmp_path / "tasks" / task_id / "uploads").iterdir()) == []
+
+
+def test_invalid_json_upload_batch_is_atomic(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    response = client.post(
+        f"/api/tasks/{task_id}/files",
+        files=[
+            ("files", ("good.md", b"# Good", "text/markdown")),
+            ("files", ("bad.json", b'{"broken": ', "application/json")),
+        ],
+    )
+    state = client.get(f"/api/tasks/{task_id}").json()
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "JSON 文件 bad.json 无效：内容不是合法 JSON"
     assert state["upload_count"] == 0
     assert list((tmp_path / "tasks" / task_id / "uploads").iterdir()) == []
 
@@ -899,7 +1033,7 @@ def test_upload_request_size_limit_is_rejected_before_persisting(tmp_path: Path)
     )
 
     assert response.status_code == 413
-    assert "Upload request exceeds" in response.json()["detail"]
+    assert "上传请求超过" in response.json()["detail"]
     assert client.get(f"/api/tasks/{task_id}").json()["upload_count"] == 0
     assert list((tmp_path / "tasks" / task_id / "uploads").iterdir()) == []
 
@@ -922,7 +1056,7 @@ def test_upload_request_size_limit_is_enforced_from_streamed_bytes(tmp_path: Pat
     )
 
     assert response.status_code == 413
-    assert "Upload request exceeds" in response.json()["detail"]
+    assert "上传请求超过" in response.json()["detail"]
     assert client.get(f"/api/tasks/{task_id}").json()["upload_count"] == 0
     assert list((tmp_path / "tasks" / task_id / "uploads").iterdir()) == []
 
@@ -938,7 +1072,7 @@ def test_upload_rejects_overlong_filename_without_persisting(tmp_path: Path) -> 
     )
 
     assert response.status_code == 400
-    assert "filename exceeds" in response.json()["detail"]
+    assert "上传文件名超过" in response.json()["detail"]
     assert client.get(f"/api/tasks/{task_id}").json()["upload_count"] == 0
     assert list((tmp_path / "tasks" / task_id / "uploads").iterdir()) == []
 
@@ -967,9 +1101,9 @@ def test_message_without_uploads_requests_input(tmp_path: Path) -> None:
     )
     state = wait_for_terminal_status(client, task_id)
     assert state["status"] == "needs_input"
-    assert state["needs_input"]["required_file_type"] == "markdown"
+    assert state["needs_input"]["required_file_type"] == "markdown_or_json"
     assert state["runs"][0]["status"] == "needs_input"
-    assert state["runs"][0]["needs_input"]["required_file_type"] == "markdown"
+    assert state["runs"][0]["needs_input"]["required_file_type"] == "markdown_or_json"
     assert state["messages"][0]["run_id"] == state["runs"][0]["id"]
 
 
@@ -982,7 +1116,14 @@ def test_simple_chat_uses_deepseek_extension_point(tmp_path: Path) -> None:
     )
     state = wait_for_terminal_status(client, task_id)
     assert state["status"] == "complete"
+    assert "已选择 DeepSeek" in state["messages"][-1]["content"]
     assert "DEEPSEEK_API_KEY" in state["messages"][-1]["content"]
+    assert state["messages"][-1]["level"] == "warning"
+    warning_events = [event for event in state["events"] if event["type"] == "model_warning"]
+    assert warning_events
+    assert warning_events[-1]["level"] == "warning"
+    assert warning_events[-1]["message"] == "模型服务配置提醒。"
+    assert warning_events[-1]["payload"]["code"] == "missing_provider_key"
 
 
 def test_messages_and_events_from_new_runs_carry_run_id(tmp_path: Path) -> None:
@@ -1021,7 +1162,7 @@ def test_env_file_loader_reads_backend_secrets(tmp_path: Path, monkeypatch) -> N
 def test_workspace_run_tests_rejects_unlisted_commands(tmp_path: Path) -> None:
     tools = WorkspaceTools(tmp_path, PermissionPolicy(tmp_path), None)
 
-    with pytest.raises(PermissionError, match="allowlist"):
+    with pytest.raises(PermissionError, match="允许列表"):
         tools.run_tests([sys.executable, "-c", "print('outside allowlist')"])
 
 
@@ -1047,7 +1188,7 @@ def test_runtime_command_cancel_terminates_process(tmp_path: Path) -> None:
     thread.join(timeout=3)
 
     assert not thread.is_alive()
-    assert "cancel" in outcome["error"].lower()
+    assert "取消" in outcome["error"]
 
 
 def test_fetch_url_tool_is_not_exposed(tmp_path: Path) -> None:
@@ -1061,7 +1202,7 @@ def test_tavily_search_observes_cancelled_controller_before_http_request(tmp_pat
     controller.cancel()
     tools = WorkspaceTools(tmp_path, PermissionPolicy(tmp_path), "test-key", controller)
 
-    with patch("app.tools.httpx.post") as post, pytest.raises(RuntimeError, match="cancelled"):
+    with patch("app.tools.httpx.post") as post, pytest.raises(RuntimeError, match="取消"):
         tools.tavily_search("query")
 
     post.assert_not_called()
@@ -1160,7 +1301,7 @@ def test_provider_router_rejects_unimplemented_registry_provider(
         ],
     )
 
-    with pytest.raises(ValueError, match="Unsupported model providers"):
+    with pytest.raises(ValueError, match="不支持的模型服务提供方"):
         ProviderRouter(settings)
 
 
@@ -1174,7 +1315,7 @@ def test_create_app_rejects_explicit_multi_worker_runtime(tmp_path: Path, monkey
     )
     monkeypatch.setenv("WEB_CONCURRENCY", "2")
 
-    with pytest.raises(RuntimeError, match="in-process task runners"):
+    with pytest.raises(RuntimeError, match="进程内任务运行器"):
         create_app(settings)
 
 
@@ -1208,7 +1349,7 @@ def test_model_reasoning_observes_cancellation(tmp_path: Path) -> None:
     thread.join(timeout=3)
 
     assert not thread.is_alive()
-    assert "cancel" in outcome["error"].lower()
+    assert "取消" in outcome["error"]
 
 
 def test_simple_chat_cancel_does_not_overwrite_cancelled_state(tmp_path: Path) -> None:

@@ -1,22 +1,25 @@
 from __future__ import annotations
 
 import itertools
+import json
 import re
 from collections.abc import Callable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from difflib import SequenceMatcher
 from functools import partial
 from html import escape
+from json import JSONDecodeError
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from .model_provider import ModelProvider
 from .runtime import CancellationController
-from .storage import TaskStorage
+from .storage import TaskStorage, source_format_for_upload
 from .tools import WorkspaceTools
 
 Emit = Callable[[str, str, dict[str, Any] | None], None]
+DocumentSourceFormat = Literal["markdown", "json"]
 
 
 @dataclass(frozen=True)
@@ -26,6 +29,9 @@ class MarkdownDocument:
     bidder_name: str | None
     text: str
     lines: list[str]
+    source_format: DocumentSourceFormat = "markdown"
+    relative_path: str | None = None
+    size_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -49,6 +55,7 @@ BID_CATEGORIES = [
 ]
 
 SUBAGENT_TOOL_NAMES = ["list_dir", "read_file", "full_text_search", "tavily_search"]
+DOCUMENT_SEARCH_SUFFIXES = (".md", ".json")
 MAX_SIMILARITY_PARAGRAPHS_PER_DOCUMENT = 120
 MAX_SIMILARITY_COMPARISONS_PER_PAIR = 20_000
 TENDER_FILENAME_MARKERS = ("tender", "招标", "采购文件", "需求书")
@@ -67,14 +74,16 @@ TENDER_HEADING_PATTERNS = (
 
 
 CATEGORY_LABELS = {
-    "quotation_similarity": "Quotation / bill similarity",
-    "technical_text_similarity": "Technical proposal copied sections",
-    "template_traces": "Identical typos, formatting, or template traces",
-    "shared_entities": "Repeated people, companies, places, or contacts",
-    "requirement_deviations": "Common deviations from tender requirements",
-    "metadata_clues": "Timestamp, author, or OCR metadata clues",
-    "common_deviations": "Repeated abnormal response patterns",
+    "quotation_similarity": "报价清单相似",
+    "technical_text_similarity": "技术方案相似段落",
+    "template_traces": "相同错别字、格式或模板痕迹",
+    "shared_entities": "重复人员、公司、地点或联系方式",
+    "requirement_deviations": "共同偏离招标要求",
+    "metadata_clues": "时间、作者或 OCR 元数据线索",
+    "common_deviations": "重复异常响应模式",
 }
+
+SEVERITY_LABELS = {"high": "高", "medium": "中", "low": "低"}
 
 
 def run_bid_analysis(
@@ -91,14 +100,14 @@ def run_bid_analysis(
     emit: Emit,
 ) -> dict[str, Any]:
     cancel_event = controller.event
-    documents = load_markdown_documents(uploads)
+    documents = load_analysis_documents(uploads)
     classified = classify_documents(documents)
     storage.write_run_json(task_id, run_id, "input-manifest.json", render_input_manifest(classified))
     plan = build_execution_plan(task_message, classified)
     storage.write_json(task_id, "plan.json", plan)
     storage.write_json(task_id, f"artifacts/runs/{run_id}/plan.json", plan)
     storage.write_run_text(task_id, run_id, "task-plan.md", render_plan_markdown(plan))
-    emit("plan_created", "Execution plan generated", {"plan": plan})
+    emit("plan_created", "已生成执行计划。", {"plan": plan})
 
     if cancel_event.is_set():
         raise CancelledError()
@@ -107,7 +116,7 @@ def run_bid_analysis(
     tender_docs = [doc for doc in classified if doc.role == "tender"]
     if len(bidder_docs) < 2:
         raise NeedsInputError(
-            "At least two Markdown bidder documents are required for comparison.",
+            "至少需要上传两份投标人文档才能进行对比。",
             {"minimum_bidder_documents": 2, "current_bidder_documents": len(bidder_docs)},
         )
 
@@ -142,7 +151,7 @@ def run_bid_analysis(
             pending.add(future)
         emit(
             "subagents_started",
-            "Concurrent sub-agent analysis started",
+            "并发子任务分析已开始。",
             {"count": len(pending), "max_workers": max_workers},
         )
 
@@ -167,7 +176,7 @@ def run_bid_analysis(
                         raise
                     emit(
                         "subagent_retry",
-                        f"Retrying {CATEGORY_LABELS[category]} after failure",
+                        f"{CATEGORY_LABELS[category]} 分析失败，正在重试。",
                         {"category": category, "error": str(exc)},
                     )
                     retry_spec = SubAgentSpec(
@@ -175,7 +184,7 @@ def run_bid_analysis(
                         category=spec.category,
                         label=spec.label,
                         prompt=spec.prompt
-                        + "\nRetry instruction: narrow the evidence search and return only supported findings.",
+                        + "\n重试要求：缩小证据检索范围，只返回有依据的发现。",
                         tools=spec.tools,
                         input_files=spec.input_files,
                     )
@@ -204,7 +213,7 @@ def run_bid_analysis(
                 )
                 emit(
                     "subagent_completed",
-                    f"{CATEGORY_LABELS[category]} completed",
+                    f"{CATEGORY_LABELS[category]} 分析已完成。",
                     {"category": category, "findings": len(report["evidence"])},
                 )
 
@@ -216,7 +225,7 @@ def run_bid_analysis(
     storage.write_run_text(task_id, run_id, "report.html", html_report)
     emit(
         "artifacts_written",
-        "Final report artifacts were written",
+        "最终报告产物已写入。",
         {"artifacts": ["task-plan.md", "evidence.json", "final-summary.md", "report.html"]},
     )
     return {
@@ -237,10 +246,14 @@ class NeedsInputError(RuntimeError):
         self.payload = payload
 
 
-def load_markdown_documents(paths: list[Path]) -> list[MarkdownDocument]:
+def load_analysis_documents(paths: list[Path]) -> list[MarkdownDocument]:
     documents = []
     for path in sorted(paths):
-        text = path.read_text(encoding="utf-8", errors="ignore")
+        source_format = source_format_for_upload(path)
+        if source_format == "json":
+            text = load_json_document_text(path)
+        else:
+            text = path.read_text(encoding="utf-8", errors="ignore")
         documents.append(
             MarkdownDocument(
                 filename=path.name,
@@ -248,9 +261,26 @@ def load_markdown_documents(paths: list[Path]) -> list[MarkdownDocument]:
                 bidder_name=None,
                 text=text,
                 lines=text.splitlines(),
+                source_format=source_format,
+                relative_path=f"uploads/{path.name}",
+                size_bytes=path.stat().st_size,
             )
         )
     return documents
+
+
+def load_markdown_documents(paths: list[Path]) -> list[MarkdownDocument]:
+    return load_analysis_documents(paths)
+
+
+def load_json_document_text(path: Path) -> str:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"JSON 文件 {path.name} 无效：文件必须使用 UTF-8 编码") from exc
+    except JSONDecodeError as exc:
+        raise ValueError(f"JSON 文件 {path.name} 无效：内容不是合法 JSON") from exc
+    return json.dumps(data, ensure_ascii=False, indent=2, sort_keys=True)
 
 
 def classify_documents(documents: list[MarkdownDocument]) -> list[MarkdownDocument]:
@@ -268,13 +298,11 @@ def classify_documents(documents: list[MarkdownDocument]) -> list[MarkdownDocume
     classified: list[MarkdownDocument] = []
     for index, doc in enumerate(documents):
         if index == tender_index:
-            classified.append(MarkdownDocument(doc.filename, "tender", None, doc.text, doc.lines))
+            classified.append(replace(doc, role="tender", bidder_name=None))
             continue
         bidder_counter += 1
         bidder_name = infer_bidder_name(doc, bidder_counter)
-        classified.append(
-            MarkdownDocument(doc.filename, "bidder", bidder_name, doc.text, doc.lines)
-        )
+        classified.append(replace(doc, role="bidder", bidder_name=bidder_name))
     return classified
 
 
@@ -289,8 +317,11 @@ def render_input_manifest(documents: list[MarkdownDocument]) -> list[dict[str, A
     return [
         {
             "filename": doc.filename,
+            "relative_path": doc.relative_path or f"uploads/{doc.filename}",
+            "source_format": doc.source_format,
             "role": doc.role,
             "bidder_name": doc.bidder_name,
+            "size_bytes": doc.size_bytes,
             "line_count": len(doc.lines),
             "character_count": len(doc.text),
         }
@@ -311,12 +342,17 @@ def infer_bidder_name(doc: MarkdownDocument, fallback_index: int) -> str:
                 return name
     stem = Path(doc.filename).stem
     cleaned = re.sub(r"(?i)(bid|bidder|投标|响应|报价|document|文件|[_\-\s]+)", "", stem).strip()
-    return cleaned or f"Bidder {fallback_index}"
+    return cleaned or f"投标人 {fallback_index}"
 
 
 def build_execution_plan(task_message: str, documents: list[MarkdownDocument]) -> dict[str, Any]:
     roles = [
-        {"filename": doc.filename, "role": doc.role, "bidder_name": doc.bidder_name}
+        {
+            "filename": doc.filename,
+            "source_format": doc.source_format,
+            "role": doc.role,
+            "bidder_name": doc.bidder_name,
+        }
         for doc in documents
     ]
     return {
@@ -329,7 +365,7 @@ def build_execution_plan(task_message: str, documents: list[MarkdownDocument]) -
         "evidence_recording_format": {
             "required": ["severity", "category", "title", "description", "bidders", "locations"],
             "location_fields": ["file", "line", "heading", "snippet"],
-            "page_number": "optional when present in Markdown/OCR text",
+            "page_number": "上传源文本中存在页码时可选",
         },
         "sub_agent_staffing": [
             {
@@ -342,10 +378,10 @@ def build_execution_plan(task_message: str, documents: list[MarkdownDocument]) -
             for category in BID_CATEGORIES
         ],
         "stopping_conditions": [
-            "All category subagents complete or exhaust retry budget",
-            "Evidence is normalized and grouped by bidder/category/severity",
-            "Interactive HTML report and Markdown summary are written",
-            "Cancellation token is observed if user stops the task",
+            "所有类别子任务完成或耗尽重试次数",
+            "证据按投标人、类别和风险等级归一化分组",
+            "写入交互式 HTML 报告和 Markdown 摘要产物",
+            "用户停止任务时遵守取消信号",
         ],
         "auto_start": True,
     }
@@ -356,7 +392,7 @@ def render_plan_markdown(plan: dict[str, Any]) -> str:
         f"- {item['label']} (`{item['id']}`)" for item in plan["analysis_dimensions"]
     )
     roles = "\n".join(
-        f"- `{item['filename']}`: {item['role']}"
+        f"- `{item['filename']}`：{role_label(item['role'])}"
         + (f" ({item['bidder_name']})" if item.get("bidder_name") else "")
         for item in plan["input_material_roles"]
     )
@@ -364,18 +400,22 @@ def render_plan_markdown(plan: dict[str, Any]) -> str:
         f"- `{item['agent_id']}`: {item['scope']}" for item in plan["sub_agent_staffing"]
     )
     return (
-        "# Execution Plan\n\n"
-        f"Task type: `{plan['task_type']}`\n\n"
-        "## Input Roles\n"
+        "# 执行计划\n\n"
+        f"任务类型：`{plan['task_type']}`\n\n"
+        "## 输入材料角色\n"
         f"{roles}\n\n"
-        "## Analysis Dimensions\n"
+        "## 分析维度\n"
         f"{dimensions}\n\n"
-        "## Concurrent Sub-Agents\n"
+        "## 并发子任务\n"
         f"{agents}\n\n"
-        "## Stopping Conditions\n"
+        "## 停止条件\n"
         + "\n".join(f"- {item}" for item in plan["stopping_conditions"])
         + "\n"
     )
+
+
+def role_label(role: str) -> str:
+    return {"tender": "招标文件", "bidder": "投标文件", "unknown": "未识别"}.get(role, role)
 
 
 def build_subagent_specs(
@@ -397,10 +437,10 @@ def build_subagent_specs(
 
 def build_subagent_prompt(category: str, task_message: str) -> str:
     return (
-        f"User task: {task_message}\n"
-        f"Act as a bounded evidence sub-agent for: {CATEGORY_LABELS[category]}.\n"
-        "Use scoped workspace tools to inspect uploaded Markdown files, record only traceable "
-        "evidence, and return a structured sub-agent report for supervisor aggregation."
+        f"用户任务：{task_message}\n"
+        f"你是“{CATEGORY_LABELS[category]}”方向的限定范围证据子任务。\n"
+        "使用受限工作区工具检查已上传的 Markdown 或 JSON 文档文件；"
+        "只记录可追溯证据，并返回供汇总器使用的结构化子任务报告。"
     )
 
 
@@ -432,7 +472,7 @@ class SubAgentWorker:
             self._raise_if_cancelled()
             self.emit(
                 "subagent_assigned",
-                f"{self.spec.agent_id} received a bounded prompt",
+                f"{self.spec.agent_id} 已收到限定范围的分析提示。",
                 {
                     "agent_id": self.spec.agent_id,
                     "category": self.spec.category,
@@ -454,10 +494,11 @@ class SubAgentWorker:
                 "shared_entities",
                 "template_traces",
             }:
+                search_probe = self._search_probe()
                 self._call_tool(
                     "full_text_search",
-                    {"query": self._search_probe(), "suffix": ".md"},
-                    lambda: self.tools.full_text_search(self._search_probe(), ".md"),
+                    {"query": search_probe, "suffixes": list(DOCUMENT_SEARCH_SUFFIXES)},
+                    lambda: self._full_text_search_documents(search_probe),
                 )
             if self.spec.category == "requirement_deviations":
                 self._call_tool(
@@ -508,14 +549,14 @@ class SubAgentWorker:
         )
         prompt = (
             f"{self.spec.prompt}\n\n"
-            "Tool context summaries:\n"
+            "工具上下文摘要：\n"
             f"{context}\n\n"
-            "Reason about what evidence this category should accept or reject. "
-            "Return concise rationale; deterministic evidence extraction will normalize citations."
+            "请判断该类别应接受或排除哪些证据。返回简洁理由；"
+            "确定性证据提取流程会统一归一化引用。"
         )
         self.emit(
             "model_call",
-            f"{self.spec.agent_id} requested model reasoning",
+            f"{self.spec.agent_id} 已请求模型推理。",
             {"agent_id": self.spec.agent_id, "model": self.model, "category": self.spec.category},
         )
         try:
@@ -526,12 +567,12 @@ class SubAgentWorker:
             if self.controller.is_cancelled():
                 raise CancelledError() from exc
             fallback = (
-                "MODEL_FALLBACK: model reasoning failed "
-                f"({type(exc).__name__}: {exc}); deterministic evidence extraction continued."
+                "模型推理失败"
+                f"（{type(exc).__name__}: {exc}），已继续使用本地确定性证据提取。"
             )
             self.emit(
                 "model_warning",
-                f"{self.spec.agent_id} model reasoning failed; deterministic analysis continued",
+                f"{self.spec.agent_id} 模型推理失败，已继续执行确定性分析。",
                 {
                     "agent_id": self.spec.agent_id,
                     "model": self.model,
@@ -542,7 +583,7 @@ class SubAgentWorker:
             return fallback
         self.emit(
             "model_result",
-            f"{self.spec.agent_id} completed model reasoning",
+            f"{self.spec.agent_id} 已完成模型推理。",
             {
                 "agent_id": self.spec.agent_id,
                 "model": self.model,
@@ -555,7 +596,7 @@ class SubAgentWorker:
         self._raise_if_cancelled()
         self.emit(
             "tool_call",
-            f"{self.spec.agent_id} called {name}",
+            f"{self.spec.agent_id} 调用了 {name}。",
             {"agent_id": self.spec.agent_id, "tool": name, "args": args},
         )
         result = call()
@@ -563,7 +604,7 @@ class SubAgentWorker:
         self.tool_calls.append({"tool": name, "args": args, "result_summary": summary})
         self.emit(
             "tool_result",
-            f"{self.spec.agent_id} completed {name}",
+            f"{self.spec.agent_id} 已完成 {name}。",
             {"agent_id": self.spec.agent_id, "tool": name, "summary": summary},
         )
         self._raise_if_cancelled()
@@ -576,6 +617,12 @@ class SubAgentWorker:
             "template_traces": "目录",
         }
         return probes.get(self.spec.category, "投标")
+
+    def _full_text_search_documents(self, query: str) -> list[dict[str, Any]]:
+        results: list[dict[str, Any]] = []
+        for suffix in DOCUMENT_SEARCH_SUFFIXES:
+            results.extend(self.tools.full_text_search(query, suffix))
+        return results
 
     def _raise_if_cancelled(self) -> None:
         if self.controller.is_cancelled():
@@ -610,8 +657,8 @@ def inspect_quotation_similarity(
                     "quotation_similarity",
                     "medium" if len(overlap) < 5 else "high",
                     [left_name, right_name],
-                    "Repeated quotation values",
-                    f"{left_name} and {right_name} share {len(overlap)} numeric quotation values.",
+                    "重复报价数值",
+                    f"{left_name} 与 {right_name} 共有 {len(overlap)} 个相同报价数值。",
                     find_quotation_locations([left, right], overlap[:3]),
                     {"values": overlap[:12]},
                 )
@@ -639,8 +686,8 @@ def inspect_text_similarity(
                     "technical_text_similarity",
                     "high" if strongest["score"] >= 0.92 else "medium",
                     [left_name, right_name],
-                    "Highly similar technical text",
-                    f"{left_name} and {right_name} contain similar proposal paragraphs.",
+                    "技术文本高度相似",
+                    f"{left_name} 与 {right_name} 存在相似的投标方案段落。",
                     [
                         location_from_line(left, strongest["left_line"], strongest["left_text"]),
                         location_from_line(right, strongest["right_line"], strongest["right_text"]),
@@ -665,8 +712,8 @@ def inspect_template_traces(
                     "template_traces",
                     "medium",
                     [doc.bidder_name or doc.filename for doc in docs],
-                    f"Shared template marker: {marker}",
-                    "Multiple bidder documents contain the same formatting/template clue.",
+                    f"共同模板痕迹：{marker}",
+                    "多份投标文件包含相同的格式或模板线索。",
                     find_locations(docs, [marker]),
                     {"marker": marker},
                 )
@@ -691,8 +738,8 @@ def inspect_shared_entities(
                     "shared_entities",
                     "medium",
                     [doc.bidder_name or doc.filename for doc in unique_docs],
-                    f"Repeated entity: {entity}",
-                    "The same person, company, contact, or place appears in multiple bidder documents.",
+                    f"重复实体：{entity}",
+                    "相同人员、公司、联系方式或地点出现在多份投标文件中。",
                     find_locations(unique_docs, [entity]),
                     {"entity": entity},
                 )
@@ -719,8 +766,8 @@ def inspect_requirement_deviations(
                     "requirement_deviations",
                     "low" if len(missing_docs) < len(bidder_docs) else "medium",
                     [doc.bidder_name or doc.filename for doc in missing_docs],
-                    f"Common missing response: {requirement['keyword']}",
-                    "Multiple bidder documents do not explicitly respond to a tender requirement keyword.",
+                    f"共同缺少响应：{requirement['keyword']}",
+                    "多份投标文件未明确响应同一招标要求关键词。",
                     [requirement["location"]],
                     {"requirement": requirement["text"]},
                 )
@@ -752,8 +799,8 @@ def inspect_metadata_clues(
                     "metadata_clues",
                     "medium",
                     [doc.bidder_name or doc.filename for doc in unique_docs],
-                    f"Repeated metadata value: {value}",
-                    "The same author/timestamp metadata appears across bidder documents.",
+                    f"重复元数据值：{value}",
+                    "相同作者或时间戳元数据出现在多份投标文件中。",
                     find_locations(unique_docs, [value]),
                     {"metadata_value": value},
                 )
@@ -775,8 +822,8 @@ def inspect_common_deviations(
                     "common_deviations",
                     "medium",
                     [doc.bidder_name or doc.filename for doc in docs],
-                    f"Repeated deviation marker: {marker}",
-                    "Multiple bidder documents contain the same deviation/exception wording.",
+                    f"重复偏离标记：{marker}",
+                    "多份投标文件包含相同的偏离或例外表述。",
                     find_locations(docs, [marker]),
                     {"marker": marker},
                 )
@@ -992,22 +1039,24 @@ def render_summary(documents: list[MarkdownDocument], evidence: list[dict[str, A
         for severity in ["high", "medium", "low"]
     }
     lines = [
-        "# Final Summary",
+        "# 最终摘要",
         "",
-        f"- Documents reviewed: {len(documents)}",
-        f"- Bidders compared: {', '.join(bidder_names) if bidder_names else 'none'}",
-        f"- Evidence: {counts['high']} high, {counts['medium']} medium, {counts['low']} low",
+        f"- 已审阅文档数：{len(documents)}",
+        f"- 已对比投标人：{', '.join(bidder_names) if bidder_names else '无'}",
+        f"- 证据统计：高 {counts['high']} 条，中 {counts['medium']} 条，低 {counts['low']} 条",
         "",
-        "## Evidence Highlights",
+        "## 证据要点",
     ]
     for item in evidence[:12]:
         bidders = ", ".join(item["bidders"])
-        lines.append(f"- **{item['severity'].upper()}** `{item['id']}` {item['title']} ({bidders})")
+        lines.append(f"- **{severity_label(item['severity'])}** `{item['id']}` {item['title']} ({bidders})")
     if not evidence:
-        lines.append(
-            "- No material suspicion evidence was detected by the v1 deterministic checks."
-        )
+        lines.append("- v1 确定性检查未发现需要写入报告的实质性疑点证据。")
     return "\n".join(lines) + "\n"
+
+
+def severity_label(severity: str) -> str:
+    return SEVERITY_LABELS.get(severity, severity)
 
 
 def render_html_report(
@@ -1018,7 +1067,7 @@ def render_html_report(
     table_rows = render_comparison_rows(bidder_names, categories, evidence)
     evidence_cards = "\n".join(render_evidence_card(item) for item in evidence) or (
         '<article class="evidence-card" data-severity="low" data-category="none" data-bidders="">'
-        "<h3>No suspicious evidence detected</h3><p>The v1 checks did not produce report-worthy findings.</p></article>"
+        "<h3>未发现疑点证据</h3><p>v1 确定性检查未生成需要写入报告的发现。</p></article>"
     )
     category_options = "\n".join(
         f'<option value="{escape(category)}">{escape(CATEGORY_LABELS.get(category, category))}</option>'
@@ -1028,11 +1077,11 @@ def render_html_report(
         f'<option value="{escape(name)}">{escape(name)}</option>' for name in bidder_names
     )
     return f"""<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bid Suspicion Analysis Report</title>
+  <title>围串标疑点分析报告</title>
   <style>
     body {{ margin: 0; font-family: Arial, sans-serif; color: #1f2937; background: #f6f7f9; }}
     header {{ padding: 28px 36px 18px; background: #ffffff; border-bottom: 1px solid #d8dee8; }}
@@ -1056,26 +1105,26 @@ def render_html_report(
 </head>
 <body>
   <header>
-    <h1>Bid Suspicion Analysis Report</h1>
-    <p class="meta">Task type: {escape(plan["task_type"])}. This report marks weakly supported items as suspicion evidence, not final legal conclusions.</p>
+    <h1>围串标疑点分析报告</h1>
+    <p class="meta">任务类型：{escape(plan["task_type"])}。本报告将弱支持项标记为疑点证据，不代表最终法律结论。</p>
   </header>
   <main>
-    <section class="controls" aria-label="Report filters">
-      <label><input type="checkbox" data-severity="high" checked /> High</label>
-      <label><input type="checkbox" data-severity="medium" checked /> Medium</label>
-      <label><input type="checkbox" data-severity="low" checked /> Low</label>
-      <select id="bidderFilter"><option value="">All bidders</option>{bidder_options}</select>
-      <select id="categoryFilter"><option value="">All categories</option>{category_options}</select>
+    <section class="controls" aria-label="报告筛选">
+      <label><input type="checkbox" data-severity="high" checked /> 高</label>
+      <label><input type="checkbox" data-severity="medium" checked /> 中</label>
+      <label><input type="checkbox" data-severity="low" checked /> 低</label>
+      <select id="bidderFilter"><option value="">全部投标人</option>{bidder_options}</select>
+      <select id="categoryFilter"><option value="">全部类别</option>{category_options}</select>
     </section>
     <section>
-      <h2>Three-Bidder Comparison View</h2>
+      <h2>投标人对比视图</h2>
       <table>
-        <thead><tr><th>Review item</th>{"".join(f"<th>{escape(name)}</th>" for name in bidder_names)}</tr></thead>
+        <thead><tr><th>审查项</th>{"".join(f"<th>{escape(name)}</th>" for name in bidder_names)}</tr></thead>
         <tbody>{table_rows}</tbody>
       </table>
     </section>
     <section>
-      <h2>Evidence</h2>
+      <h2>证据</h2>
       <div class="evidence-grid">{evidence_cards}</div>
     </section>
   </main>
@@ -1112,12 +1161,12 @@ def render_comparison_rows(
             if bidder_items:
                 cells.append(
                     "<br>".join(
-                        f"{escape(item['severity'].upper())}: {escape(item['title'])}"
+                        f"{escape(severity_label(item['severity']))}：{escape(item['title'])}"
                         for item in bidder_items[:3]
                     )
                 )
             else:
-                cells.append("No evidence recorded")
+                cells.append("未记录证据")
         bidders = ",".join(
             sorted({bidder for item in category_evidence for bidder in item["bidders"]})
         )
@@ -1154,6 +1203,6 @@ def render_evidence_card(item: dict[str, Any]) -> str:
         f'data-bidders="{escape(bidders)}">'
         f"<h3>{escape(item['id'])}: {escape(item['title'])}</h3>"
         f"<p>{escape(item['description'])}</p>"
-        f'<p class="meta">Severity: {escape(item["severity"])} | Bidders: {escape(bidders)} | Category: {escape(item["category_label"])}</p>'
+        f'<p class="meta">风险等级：{escape(severity_label(item["severity"]))} | 投标人：{escape(bidders)} | 类别：{escape(item["category_label"])}</p>'
         f"{locations}</article>"
     )

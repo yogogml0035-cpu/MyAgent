@@ -6,6 +6,7 @@ import {
   buildArtifactRequest,
   deriveConversationTitle,
   formatHttpErrorMessage,
+  formatNeedsInput,
   formatRequestFailure,
   isTaskActive,
   mergeExecutionLogs,
@@ -14,7 +15,7 @@ import {
   normalizeTaskState,
   resolveApiBaseUrl,
   type TaskState,
-} from "../app/task-state";
+} from "../../app/task-state";
 
 function baseState(overrides: Partial<TaskState> = {}): TaskState {
   return {
@@ -35,7 +36,7 @@ test("normalizeTaskState maps unknown backend statuses to unknown instead of run
   const state = normalizeTaskState({ task_id: "task-1", status: "paused" }, "fallback");
 
   assert.equal(state.status, "unknown");
-  assert.equal(state.statusLabel, "unknown: paused");
+  assert.equal(state.statusLabel, "未知状态：paused");
   assert.equal(isTaskActive(state.status), false);
 });
 
@@ -128,8 +129,12 @@ test("normalizeTaskState preserves run ids on messages, logs, artifacts, and run
           artifact_names: ["report.html"],
         },
       ],
-      messages: [{ id: "message-1", role: "user", content: "请分析", run_id: "run-1" }],
-      events: [{ id: "event-1", type: "task_completed", message: "完成", run_id: "run-1" }],
+      messages: [
+        { id: "message-1", role: "assistant", content: "请分析", run_id: "run-1", level: "warning" },
+      ],
+      events: [
+        { id: "event-1", type: "task_completed", message: "完成", run_id: "run-1", level: "success" },
+      ],
       artifacts: [{ name: "report.html", type: "html", run_id: "run-1" }],
     },
     "fallback",
@@ -137,8 +142,52 @@ test("normalizeTaskState preserves run ids on messages, logs, artifacts, and run
 
   assert.equal(state.runs[0].id, "run-1");
   assert.equal(state.messages[0].runId, "run-1");
+  assert.equal(state.messages[0].level, "warning");
   assert.equal(state.logs[0].runId, "run-1");
+  assert.equal(state.logs[0].level, "success");
+  assert.equal(state.logs[0].title, "完成");
   assert.equal(state.artifacts[0].runId, "run-1");
+});
+
+test("normalizeTaskState localizes fixed legacy event messages without changing machine fields", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        { id: "event-1", type: "plan_created", message: "Execution plan generated" },
+        { id: "event-2", type: "file_uploaded", message: "Uploaded input.json" },
+      ],
+      artifacts: [{}],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].type, "plan_created");
+  assert.equal(state.logs[0].title, "已生成执行计划。");
+  assert.equal(state.logs[1].type, "file_uploaded");
+  assert.equal(state.logs[1].title, "已上传 input.json");
+  assert.equal(state.artifacts[0].name, "产物 1");
+});
+
+test("formatNeedsInput localizes fixed payload keys and fallback messages", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "needs_input",
+      needs_input: {
+        message: "Additional input is required.",
+        required_file_type: "markdown_or_json",
+      },
+    },
+    "fallback",
+  );
+
+  assert.equal(state.needsInput?.required_file_type, "markdown_or_json");
+  assert.equal(
+    formatNeedsInput(state.needsInput ?? {}),
+    "需要补充输入。 所需文件类型：Markdown 或 JSON 文件",
+  );
 });
 
 test("normalizeTaskSummaries reads backend history titles without subtitles", () => {
@@ -179,14 +228,22 @@ test("request error formatting distinguishes backend-down from auth detail", () 
   );
   assert.equal(
     formatHttpErrorMessage(401, "Unauthorized", '{"detail":"Invalid or missing access token"}'),
-    "Invalid or missing access token",
+    "访问令牌无效或缺失。",
+  );
+  assert.equal(
+    formatHttpErrorMessage(
+      422,
+      "Unprocessable Entity",
+      '{"detail":[{"msg":"String should have at most 8000 characters"}]}',
+    ),
+    "请求参数校验失败，请检查输入内容。",
   );
 });
 
 test("resolveApiBaseUrl preserves explicit backend URLs without trailing slashes", () => {
   assert.equal(
-    resolveApiBaseUrl("http://10.11.148.97:8001/"),
-    "http://10.11.148.97:8001",
+    resolveApiBaseUrl("http://192.0.2.10:8001/"),
+    "http://192.0.2.10:8001",
   );
 });
 
@@ -196,7 +253,7 @@ test("resolveApiBaseUrl derives the backend URL from the current page host", () 
     "http://localhost:8001",
   );
   assert.equal(
-    resolveApiBaseUrl(undefined, { protocol: "http:", hostname: "10.11.148.97" }),
-    "http://10.11.148.97:8001",
+    resolveApiBaseUrl(undefined, { protocol: "http:", hostname: "192.0.2.10" }),
+    "http://192.0.2.10:8001",
   );
 });

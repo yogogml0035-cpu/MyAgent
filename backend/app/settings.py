@@ -128,8 +128,8 @@ def enforce_single_process_runtime() -> None:
             continue
         if worker_count > 1:
             raise RuntimeError(
-                "MyAgent uses in-process task runners and local JSON task storage; "
-                f"{name}={worker_count} would split task state across workers."
+                "MyAgent 使用进程内任务运行器和本地 JSON 任务存储；"
+                f"{name}={worker_count} 会把任务状态拆分到多个 worker。"
             )
 
 

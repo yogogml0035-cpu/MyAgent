@@ -22,6 +22,7 @@ from .schemas import (
 )
 
 ArtifactType: TypeAlias = Literal["html", "markdown", "json", "text"]
+UploadSourceFormat: TypeAlias = Literal["markdown", "json"]
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 MAX_FILENAME_BYTES = 180
 LEGACY_RUN_ID = "legacy"
@@ -38,6 +39,10 @@ TYPE_MAP: dict[str, ArtifactType] = {
     ".md": "markdown",
     ".json": "json",
     ".txt": "text",
+}
+UPLOAD_FORMATS: dict[str, UploadSourceFormat] = {
+    ".md": "markdown",
+    ".json": "json",
 }
 
 
@@ -77,13 +82,33 @@ def trim_filename_bytes(filename: str, max_bytes: int) -> str:
     return f"{trimmed_stem or 'upload'}{suffix}"
 
 
-def markdown_upload_filename(name: str) -> str:
+def document_upload_filename(name: str) -> str:
     filename = sanitize_filename(name or "upload.md") or "upload.md"
-    if not filename.lower().endswith(".md"):
-        raise ValueError("Only Markdown files are supported in v1")
-    if len(filename.encode("utf-8")) > MAX_FILENAME_BYTES:
-        raise ValueError(f"Upload filename exceeds the {MAX_FILENAME_BYTES} byte limit")
-    return f"{filename[:-3]}.md"
+    suffix = Path(filename).suffix
+    normalized_suffix = suffix.lower()
+    if normalized_suffix not in UPLOAD_FORMATS:
+        raise ValueError("仅支持上传 Markdown 或 JSON 文件")
+    normalized_name = f"{filename[: -len(suffix)]}{normalized_suffix}"
+    if len(normalized_name.encode("utf-8")) > MAX_FILENAME_BYTES:
+        raise ValueError(f"上传文件名超过 {MAX_FILENAME_BYTES} 字节限制")
+    return normalized_name
+
+
+def source_format_for_upload(path: Path) -> UploadSourceFormat:
+    suffix = path.suffix.lower()
+    try:
+        return UPLOAD_FORMATS[suffix]
+    except KeyError:
+        raise ValueError("不支持的上传文件类型") from None
+
+
+def validate_json_upload(path: Path, filename: str) -> None:
+    try:
+        json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise ValueError(f"JSON 文件 {filename} 无效：文件必须使用 UTF-8 编码") from exc
+    except JSONDecodeError as exc:
+        raise ValueError(f"JSON 文件 {filename} 无效：内容不是合法 JSON") from exc
 
 
 def generate_run_id() -> str:
@@ -93,18 +118,18 @@ def generate_run_id() -> str:
 
 def normalize_artifact_name(artifact_name: str) -> str:
     if not artifact_name or artifact_name in {".", ".."}:
-        raise ValueError("Invalid artifact name")
+        raise ValueError("产物名称无效")
     if Path(artifact_name).name != artifact_name:
-        raise ValueError("Artifact name must not contain path separators")
+        raise ValueError("产物名称不能包含路径分隔符")
     normalized = safe_filename(artifact_name)
     if normalized != artifact_name:
-        raise ValueError("Invalid artifact name")
+        raise ValueError("产物名称无效")
     return normalized
 
 
 def validate_run_id(run_id: str) -> str:
     if not run_id or not RUN_ID_PATTERN.fullmatch(run_id):
-        raise ValueError("Invalid run id")
+        raise ValueError("运行 ID 无效")
     return run_id
 
 
@@ -127,12 +152,12 @@ class TaskStorage:
     def task_dir(self, task_id: str) -> Path:
         path = (self.task_root / task_id).resolve()
         if self.task_root not in path.parents and path != self.task_root:
-            raise ValueError("Task path escaped task root")
+            raise ValueError("任务路径超出任务根目录")
         return path
 
     def create_task(self, message: str | None, model: str) -> TaskState:
         if message is not None:
-            raise ValueError("Initial messages must be sent through the run lifecycle")
+            raise ValueError("初始消息必须通过运行生命周期接口发送")
         now = utc_now()
         task_id = f"{now.replace(':', '').replace('-', '')}-{uuid.uuid4().hex[:8]}"
         task_dir = self.task_dir(task_id)
@@ -146,7 +171,7 @@ class TaskStorage:
             updated_at=now,
         )
         self._write_state(state)
-        self.append_event(task_id, "task_created", "Task directory created", {"model": model})
+        self.append_event(task_id, "task_created", "任务目录已创建。", {"model": model})
         return self.get_task(task_id)
 
     def get_task(self, task_id: str, *, include_events: bool = True) -> TaskState:
@@ -297,7 +322,9 @@ class TaskStorage:
         with self._lock:
             upload_dir = self.task_dir(task_id) / "uploads"
             if len(self.list_uploads(task_id)) + len(uploads) > max_files:
-                raise UploadLimitError(f"At most {max_files} Markdown files can be uploaded")
+                raise UploadLimitError(
+                    f"最多只能上传 {max_files} 个 Markdown 或 JSON 文件"
+                )
 
             batch = self._validate_upload_batch(task_id, uploads)
             staged: list[tuple[Path, Path, int]] = []
@@ -320,6 +347,9 @@ class TaskStorage:
                     total_bytes_written += bytes_written
                     staged.append((temp_path, destination, bytes_written))
                 for temp_path, destination, _ in staged:
+                    if source_format_for_upload(destination) == "json":
+                        validate_json_upload(temp_path, destination.name)
+                for temp_path, destination, _ in staged:
                     temp_path.replace(destination)
             except Exception:
                 for temp_path, _, _ in staged:
@@ -331,7 +361,7 @@ class TaskStorage:
                 self.append_event(
                     task_id,
                     "file_uploaded",
-                    f"Uploaded {destination.name}",
+                    f"已上传 {destination.name}",
                     {"filename": destination.name, "bytes": bytes_written},
                 )
             return saved_paths
@@ -341,7 +371,9 @@ class TaskStorage:
         if not upload_dir.exists():
             return []
         return sorted(
-            path for path in upload_dir.iterdir() if path.is_file() and path.suffix.lower() == ".md"
+            path
+            for path in upload_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in UPLOAD_FORMATS
         )
 
     def _validate_upload_batch(
@@ -351,12 +383,12 @@ class TaskStorage:
         seen_names: set[str] = set()
         batch: list[tuple[UploadFile, str]] = []
         for upload in uploads:
-            filename = markdown_upload_filename(upload.filename or "upload.md")
+            filename = document_upload_filename(upload.filename or "upload.md")
             key = filename.casefold()
             if key in seen_names:
-                raise UploadConflictError(f"Duplicate upload filename in request: {filename}")
+                raise UploadConflictError(f"本次请求中存在重复上传文件名：{filename}")
             if key in existing_names:
-                raise UploadConflictError(f"Upload already exists: {filename}")
+                raise UploadConflictError(f"上传文件已存在：{filename}")
             seen_names.add(key)
             batch.append((upload, filename))
         return batch
@@ -379,11 +411,11 @@ class TaskStorage:
                 bytes_written += len(chunk)
                 if bytes_written > max_file_bytes:
                     raise UploadLimitError(
-                        f"Markdown file exceeds the {max_file_bytes} byte upload limit"
+                        f"上传文档超过 {max_file_bytes} 字节单文件限制"
                     )
                 if current_request_bytes + bytes_written > max_request_bytes:
                     raise UploadLimitError(
-                        f"Upload request exceeds the {max_request_bytes} byte limit"
+                        f"上传请求超过 {max_request_bytes} 字节总量限制"
                     )
                 handle.write(chunk)
         return bytes_written
@@ -396,6 +428,7 @@ class TaskStorage:
         payload: dict[str, Any] | None = None,
         *,
         run_id: str | None = None,
+        level: Literal["info", "success", "warning", "error"] | None = None,
     ) -> EventRecord:
         with self._lock:
             if run_id:
@@ -407,6 +440,7 @@ class TaskStorage:
                 created_at=utc_now(),
                 payload=payload or {},
                 run_id=run_id,
+                level=level,
             )
             events_path = self.task_dir(task_id) / "logs" / "events.jsonl"
             with events_path.open("a", encoding="utf-8") as handle:
@@ -517,7 +551,7 @@ class TaskStorage:
         path = (self.task_dir(task_id) / "artifacts" / "runs" / run_id).resolve()
         runs_root = (self.task_dir(task_id) / "artifacts" / "runs").resolve()
         if runs_root not in path.parents and path != runs_root:
-            raise ValueError("Run artifact path escaped task root")
+            raise ValueError("运行产物路径超出任务根目录")
         return path
 
     def record_run_artifact(self, task_id: str, run_id: str, artifact_name: str) -> None:
@@ -527,7 +561,7 @@ class TaskStorage:
             state = self._read_state(task_id, synthesize_legacy=True)
             run = self._find_run(state, run_id)
             if run is None:
-                raise ValueError("Run not found")
+                raise ValueError("未找到运行记录")
             if name not in run.artifact_names:
                 run.artifact_names.append(name)
                 run.artifact_names.sort()
@@ -697,7 +731,7 @@ class TaskStorage:
         artifact_root = (self.task_dir(task_id) / "artifacts").resolve()
         path = (artifact_root / name).resolve()
         if artifact_root not in path.parents:
-            raise ValueError("Artifact path escaped task root")
+            raise ValueError("产物路径超出任务根目录")
         return path
 
     def _resolve_run_artifact_path(
@@ -708,10 +742,10 @@ class TaskStorage:
         base = (self.task_dir(task_id) / run.artifact_base_path).resolve()
         expected_base = self.run_artifact_dir(task_id, run.id)
         if base != expected_base:
-            raise ValueError("Run artifact path escaped task root")
+            raise ValueError("运行产物路径超出任务根目录")
         path = (base / artifact_name).resolve()
         if base not in path.parents:
-            raise ValueError("Artifact path escaped run directory")
+            raise ValueError("产物路径超出本轮运行目录")
         return path
 
     def _write_state(self, state: TaskState) -> None:

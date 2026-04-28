@@ -28,7 +28,7 @@ export function describeModelOption(option: ModelOption): ModelPresentation {
 
   if (marker.includes("agent") && (marker.includes("cluster") || marker.includes("集群"))) {
     return {
-      badge: "Beta",
+      badge: "测试",
       description: "海量搜索、长文写作、批量处理",
     };
   }
