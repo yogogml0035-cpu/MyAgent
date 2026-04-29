@@ -4,7 +4,7 @@
 
 ## Current Knowledge Packs
 
-- `asset/task_workspace_runtime_knowledge_pack.md`: the single main package for backend task runtime, frontend task workspace, model-provider security, upload limits, local-first access boundaries, artifact handling, and test layout.
+- `asset/task_workspace_runtime_knowledge_pack.md`: the single main package for backend task runtime, frontend task workspace, frontend visual-token boundaries, model-provider security, upload limits, local-first access boundaries, artifact handling, and test layout.
 
 ## Registration Rules
 

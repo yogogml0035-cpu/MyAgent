@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  MESSAGE_INPUT_SCOPE_OPTIONS,
   backendDownMessage,
   buildArtifactRequest,
   buildMessageRequestPayload,
@@ -117,36 +117,74 @@ test("buildArtifactRequest builds run-scoped artifact URLs with the access token
   assert.deepEqual(request.headers, { "X-MyAgent-Token": "secret-token" });
 });
 
-test("buildMessageRequestPayload sends mode and input scope defaults to message runs", () => {
+test("buildMessageRequestPayload sends the default mode without a file-scope toggle", () => {
   assert.deepEqual(buildMessageRequestPayload("请分析这些文件", "deepseek-reasoner"), {
     content: "请分析这些文件",
     message: "请分析这些文件",
     model: "deepseek-reasoner",
     mode: "auto",
-    input_scope: "auto",
   });
 });
 
-test("buildMessageRequestPayload allows explicit task upload scope", () => {
+test("buildMessageRequestPayload allows explicit mode overrides", () => {
   assert.deepEqual(
     buildMessageRequestPayload("继续分析这些文件", "deepseek-reasoner", {
-      inputScope: "task_uploads",
+      mode: "deep_agent",
     }),
     {
       content: "继续分析这些文件",
       message: "继续分析这些文件",
       model: "deepseek-reasoner",
-      mode: "auto",
-      input_scope: "task_uploads",
+      mode: "deep_agent",
     },
   );
 });
 
-test("message input scope options expose the composer context choices", () => {
-  assert.deepEqual(
-    MESSAGE_INPUT_SCOPE_OPTIONS.map((option) => option.value),
-    ["auto", "none", "task_uploads"],
+test("first-party composer no longer renders a file-use segmented control", () => {
+  const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf-8");
+
+  assert.equal(pageSource.includes("scopeSegment"), false);
+  assert.equal(pageSource.includes("本轮是否使用已上传文件"), false);
+  assert.equal(pageSource.includes("不用文件"), false);
+  assert.equal(pageSource.includes("使用文件"), false);
+});
+
+test("user message cards expose a copy action for the exact message content", () => {
+  const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf-8");
+
+  assert.equal(pageSource.includes('aria-label="复制用户消息"'), true);
+  assert.equal(pageSource.includes("handleCopyText(message.content)"), true);
+});
+
+test("normalizeTaskState preserves user message content without display localization", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "Task completed",
+        },
+        {
+          id: "message-2",
+          role: "user",
+          content: "Uploaded input.json",
+        },
+        {
+          id: "message-3",
+          role: "assistant",
+          content: "Task completed",
+        },
+      ],
+    },
+    "fallback",
   );
+
+  assert.equal(state.messages[0].content, "Task completed");
+  assert.equal(state.messages[1].content, "Uploaded input.json");
+  assert.equal(state.messages[2].content, "任务已完成。");
 });
 
 test("normalizeTaskState preserves run ids on messages, logs, artifacts, and runs", () => {
@@ -214,6 +252,146 @@ test("normalizeTaskState preserves valid reasoning trace metadata", () => {
     confidence: "medium",
     evidenceRefs: ["quotation_similarity", "bidder-a.md"],
   });
+});
+
+test("normalizeTaskState preserves valid deep agent activity metadata", () => {
+  const longTitle = "T".repeat(130);
+  const longSummary = "S".repeat(1010);
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "activity-1",
+          type: "deep_agent_activity",
+          message: "DeepAgent activity",
+          run_id: "run-1",
+          payload: {
+            schema_version: 1,
+            source: "deepagents",
+            source_event_id: "dg_evt_123",
+            activity_kind: "lifecycle",
+            phase: "tool_use",
+            status: "started",
+            title: longTitle,
+            summary: longSummary,
+            tool_name: "list_dir",
+            parameter_summary: "relative_path=uploads",
+            result_summary: "工具返回 3 个文件名。",
+            subgraph_path: ["agent", "file-record-agent", { unsafe: true }],
+            related_event_id: "file-tool-audit-event-id",
+            truncated: true,
+            arbitrary_secret: "SHOULD_NOT_RENDER",
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].agentActivity?.schemaVersion, 1);
+  assert.equal(state.logs[0].agentActivity?.source, "deepagents");
+  assert.equal(state.logs[0].agentActivity?.activityKind, "lifecycle");
+  assert.equal(state.logs[0].agentActivity?.phase, "tool_use");
+  assert.equal(state.logs[0].agentActivity?.status, "started");
+  assert.equal(state.logs[0].agentActivity?.toolName, "list_dir");
+  assert.equal(state.logs[0].agentActivity?.parameterSummary, "relative_path=uploads");
+  assert.equal(state.logs[0].agentActivity?.resultSummary, "工具返回 3 个文件名。");
+  assert.deepEqual(state.logs[0].agentActivity?.subgraphPath, ["agent", "file-record-agent"]);
+  assert.equal(state.logs[0].agentActivity?.relatedEventId, "file-tool-audit-event-id");
+  assert.equal(state.logs[0].agentActivity?.truncated, true);
+  assert.equal(state.logs[0].agentActivity?.title.length, 120);
+  assert.equal(state.logs[0].agentActivity?.summary.length, 1000);
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+});
+
+test("normalizeTaskState rejects malformed deep agent activity payloads", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "activity-invalid-status",
+          type: "deep_agent_activity",
+          message: "畸形活动。",
+          payload: {
+            schema_version: 1,
+            source: "deepagents",
+            activity_kind: "lifecycle",
+            phase: "tool_use",
+            status: "raw_provider_chunk",
+            title: "不能进入活动字段。",
+            summary: "不能进入活动字段。",
+            arbitrary_secret: "SHOULD_NOT_RENDER",
+          },
+        },
+        {
+          id: "activity-missing-summary",
+          type: "deep_agent_activity",
+          message: "缺少摘要。",
+          payload: {
+            schema_version: 1,
+            source: "deepagents",
+            activity_kind: "progress",
+            phase: "planning",
+            status: "running",
+            title: "缺少摘要。",
+            arbitrary_secret: "SHOULD_NOT_RENDER",
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].agentActivity, undefined);
+  assert.equal(state.logs[1].agentActivity, undefined);
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+});
+
+test("normalizeTaskState preserves safe file tool audit metadata only", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "audit-1",
+          type: "file_tool_audit",
+          message: "已记录文件工具访问审计。",
+          payload: {
+            tool_name: "read_file",
+            op: "read",
+            status: "success",
+            virtual_path: "uploads/source.md",
+            resolved_workspace_path: "/private/raw/path/source.md",
+            source: "upload_snapshot",
+            bytes: 241,
+            sha256: "abc123",
+            arbitrary_secret: "SHOULD_NOT_RENDER",
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.logs[0].fileAudit, {
+    toolName: "read_file",
+    operation: "read",
+    status: "success",
+    virtualPath: "uploads/source.md",
+    source: "upload_snapshot",
+    bytes: 241,
+    sha256: "abc123",
+    reason: undefined,
+    promotedArtifactId: undefined,
+    partial: undefined,
+  });
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+  assert.equal(JSON.stringify(state.logs).includes("/private/raw/path/source.md"), false);
 });
 
 test("normalizeTaskState falls back for malformed reasoning trace payloads", () => {

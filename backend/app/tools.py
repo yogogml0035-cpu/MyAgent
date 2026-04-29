@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import uuid
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -16,6 +17,13 @@ from .runtime import CancellationController, run_cancellable_command
 AuditStatus = Literal["success", "denied", "cancelled", "failed"]
 AuditOperation = Literal["list", "read", "write", "glob", "grep"]
 AuditSink = Callable[[dict[str, Any]], None]
+WINDOWS_ABSOLUTE_PATTERN = re.compile(r"(?:[A-Za-z]:[\\/]|\\\\|//)[^\s'\"<>]*")
+POSIX_ABSOLUTE_PATTERN = re.compile(r"(?<![\w<])/(?:[^\s'\"<>]+)")
+DEEPAGENTS_INTERNAL_AUDIT_PATH = "<deepagents-internal>"
+DEEPAGENTS_INTERNAL_RECORD_PREFIXES = (
+    "records/deepagents/conversation_history",
+    "records/deepagents/large_tool_results",
+)
 
 
 @dataclass(frozen=True)
@@ -35,16 +43,18 @@ class FileToolAuditRecord:
 
     def to_payload(self) -> dict[str, Any]:
         timestamp = self.timestamp or utc_now()
-        virtual_path = self.relative_path or self.requested_path
+        requested_path = safe_audit_path(self.requested_path) or self.requested_path
+        relative_path = safe_audit_path(self.relative_path)
+        virtual_path = relative_path or requested_path
         return {
             "tool": self.tool,
             "tool_name": self.tool,
             "operation": self.operation,
             "op": self.operation,
-            "requested_path": self.requested_path,
+            "requested_path": requested_path,
             "virtual_path": virtual_path,
-            "relative_path": self.relative_path,
-            "resolved_workspace_path": self.relative_path,
+            "relative_path": relative_path,
+            "resolved_workspace_path": relative_path,
             "status": self.status,
             "reason": self.reason,
             "bytes": self.bytes_count,
@@ -329,6 +339,9 @@ class AuditedWorkspaceTools:
             partial=partial,
         )
 
+    def sanitize_reason(self, reason: object) -> str:
+        return sanitize_file_tool_reason(str(reason), self.workspace_root)
+
     def _resolve(self, relative_path: str) -> tuple[Path, str]:
         raw_path = relative_path or "."
         if is_windows_absolute_path(raw_path):
@@ -401,7 +414,7 @@ class AuditedWorkspaceTools:
                 requested_path=requested_path,
                 relative_path=relative_path,
                 status=status,
-                reason=reason,
+                reason=self.sanitize_reason(reason),
                 bytes_count=bytes_count,
                 partial=partial,
                 sha256=sha256,
@@ -441,6 +454,24 @@ def source_for_relative_path(relative_path: str | None) -> str:
     return "output"
 
 
+def safe_audit_path(path: str | None) -> str | None:
+    if path is None:
+        return None
+    normalized = path.strip().replace("\\", "/").strip("/")
+    if not normalized:
+        return path
+    if any(
+        normalized == prefix or normalized.startswith(f"{prefix}/")
+        for prefix in DEEPAGENTS_INTERNAL_RECORD_PREFIXES
+    ):
+        return DEEPAGENTS_INTERNAL_AUDIT_PATH
+    if normalized in {"conversation_history", "large_tool_results"} or normalized.startswith(
+        ("conversation_history/", "large_tool_results/")
+    ):
+        return DEEPAGENTS_INTERNAL_AUDIT_PATH
+    return path
+
+
 def is_windows_absolute_path(raw_path: str) -> bool:
     normalized = raw_path.replace("/", "\\")
     return (
@@ -456,6 +487,25 @@ def windows_path_name(raw_path: str) -> str:
     normalized = stripped.replace("/", "\\")
     name = normalized.rsplit("\\", 1)[-1]
     return name or "<root>"
+
+
+def sanitize_file_tool_reason(reason: str, workspace_root: Path) -> str:
+    workspace_tokens = {str(workspace_root), workspace_root.as_posix()}
+    has_workspace_path = any(token and token in reason for token in workspace_tokens)
+    has_absolute_path = bool(
+        WINDOWS_ABSOLUTE_PATTERN.search(reason) or POSIX_ABSOLUTE_PATTERN.search(reason)
+    )
+    if not has_workspace_path and not has_absolute_path:
+        return reason
+
+    lowered = reason.casefold()
+    if "no such file" in lowered or "not found" in lowered or "不存在" in reason:
+        return "文件不存在或不可访问"
+    if "is a directory" in lowered:
+        return "目标是目录，不能作为文件读取"
+    if "permission denied" in lowered or "access is denied" in lowered:
+        return "文件访问被拒绝"
+    return "文件访问失败"
 
 
 class WorkspaceTools:

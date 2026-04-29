@@ -38,7 +38,8 @@ def load_settings() -> Settings:
     backend_root = Path(__file__).resolve().parents[1]
     load_env_file(backend_root / ".env")
     task_root = Path(
-        env_value("MYAGENT_TASK_ROOT", "AGENT_CHAT_TASK_ROOT") or backend_root / "storage" / "tasks"
+        env_value("MYAGENT_TASK_ROOT", "AGENT_CHAT_TASK_ROOT")
+        or backend_root / "storage" / "sessions"
     )
     max_upload_files = read_int_env("MYAGENT_MAX_UPLOAD_FILES", 10, "AGENT_CHAT_MAX_UPLOAD_FILES")
     max_upload_file_bytes = read_int_env(

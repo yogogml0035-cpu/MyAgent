@@ -14,12 +14,10 @@ import {
   type Artifact,
   type ChatMessage,
   type ExecutionLog,
-  type MessageInputScope,
   type ModelOption,
   type TaskState,
   type TaskStatus,
   type TaskSummary,
-  MESSAGE_INPUT_SCOPE_OPTIONS,
   buildArtifactRequest,
   buildMessageRequestPayload,
   formatHttpErrorMessage,
@@ -49,7 +47,12 @@ import {
   buildLogClipboardText,
   calculateLogProgress,
   countReasoningLogs,
+  formatAgentActivityKindLabel,
+  formatAgentActivityPhaseLabel,
+  formatAgentActivityStatusLabel,
   formatFileSize,
+  formatFileAuditOperationLabel,
+  formatFileAuditStatusLabel,
   formatMessagePanelStatus,
   formatLogLevelLabel,
   formatReasoningPhaseLabel,
@@ -111,7 +114,6 @@ export default function Home() {
   const [input, setInput] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
   const [model, setModel] = useState(DEFAULT_MODEL_OPTIONS[0].id);
-  const [inputScope, setInputScope] = useState<MessageInputScope>("auto");
   const [expandedReasoningRuns, setExpandedReasoningRuns] = useState<Record<string, boolean>>({});
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
@@ -362,9 +364,7 @@ export default function Home() {
 
       await requestJson<unknown>(`/api/tasks/${id}/messages`, {
         method: "POST",
-        body: JSON.stringify(
-          buildMessageRequestPayload(taskContent, model, { inputScope }),
-        ),
+        body: JSON.stringify(buildMessageRequestPayload(taskContent, model)),
       });
 
       setInput("");
@@ -436,7 +436,6 @@ export default function Home() {
     setBackendError("");
     setNeedsInput(null);
     setInput("");
-    setInputScope("auto");
     setSelectedFiles([]);
     setError("");
     if (fileInputRef.current) {
@@ -507,7 +506,19 @@ export default function Home() {
             <article className={messageClassName}>
               <p>{message.content}</p>
             </article>
-            <time className="userMessageTime">{formatTime(message.createdAt, "short")}</time>
+            <div className="userMessageMeta">
+              <button
+                aria-label="复制用户消息"
+                className="copyButton userCopyButton"
+                disabled={!message.content}
+                onClick={() => void handleCopyText(message.content)}
+                title="复制用户消息"
+                type="button"
+              >
+                <span aria-hidden="true" />
+              </button>
+              <time className="userMessageTime">{formatTime(message.createdAt, "short")}</time>
+            </div>
           </div>
           <div className="userMarker" aria-hidden="true" />
         </div>
@@ -742,38 +753,114 @@ export default function Home() {
                           {group.logs.length === 0 ? (
                             <p className="emptyLog">计划、子任务分派、工具调用和产物会显示在这里。</p>
                           ) : (
-                            visibleLogs.map((log) => (
-                              <article
-                                className={`logItem log-${log.level ?? "info"}${log.reasoning ? " logItem-reasoning" : ""}`}
-                                key={log.id}
-                              >
-                                <time>{formatTime(log.createdAt)}</time>
-                                <span className="logLevel">
-                                  {log.reasoning ? "思考摘要" : formatLogLevelLabel(log.level)}
-                                </span>
-                                <div>
-                                  {log.reasoning ? (
-                                    <>
-                                      <strong>
-                                        {formatReasoningPhaseLabel(log.reasoning.phase)}
-                                        ：{log.reasoning.agentId}
-                                      </strong>
-                                      <p>{log.reasoning.summary}</p>
-                                      {log.reasoning.evidenceRefs.length > 0 ? (
-                                        <p className="reasoningRefs">
-                                          关联：{log.reasoning.evidenceRefs.join("、")}
-                                        </p>
-                                      ) : null}
-                                    </>
-                                  ) : (
-                                    <>
-                                      <strong>{log.title}</strong>
-                                      {log.detail ? <p>{log.detail}</p> : null}
-                                    </>
-                                  )}
-                                </div>
-                              </article>
-                            ))
+                            visibleLogs.map((log) => {
+                              const logClassName = [
+                                "logItem",
+                                `log-${log.level ?? "info"}`,
+                                log.agentActivity ? "logItem-activity" : "",
+                                log.reasoning ? "logItem-reasoning" : "",
+                                log.fileAudit ? "logItem-fileAudit" : "",
+                              ]
+                                .filter(Boolean)
+                                .join(" ");
+
+                              return (
+                                <article className={logClassName} key={log.id}>
+                                  <time>{formatTime(log.createdAt)}</time>
+                                  <span className="logLevel">
+                                    {log.agentActivity
+                                      ? "执行进展"
+                                      : log.reasoning
+                                        ? "思考摘要"
+                                        : log.fileAudit
+                                          ? "文件审计"
+                                          : formatLogLevelLabel(log.level)}
+                                  </span>
+                                  <div>
+                                    {log.agentActivity ? (
+                                      <>
+                                        <strong>
+                                          {formatAgentActivityPhaseLabel(log.agentActivity.phase)}
+                                          ·{formatAgentActivityStatusLabel(log.agentActivity.status)}
+                                          ：{log.agentActivity.title}
+                                        </strong>
+                                        <p>{log.agentActivity.summary}</p>
+                                        <div className="logMetaGrid">
+                                          <span>
+                                            {formatAgentActivityKindLabel(log.agentActivity.activityKind)}
+                                          </span>
+                                          {log.agentActivity.toolName ? (
+                                            <span>工具：{log.agentActivity.toolName}</span>
+                                          ) : null}
+                                          {log.agentActivity.parameterSummary ? (
+                                            <span>参数：{log.agentActivity.parameterSummary}</span>
+                                          ) : null}
+                                          {log.agentActivity.resultSummary ? (
+                                            <span>结果：{log.agentActivity.resultSummary}</span>
+                                          ) : null}
+                                          {log.agentActivity.subgraphPath.length > 0 ? (
+                                            <span>
+                                              路径：{log.agentActivity.subgraphPath.join(" / ")}
+                                            </span>
+                                          ) : null}
+                                          {log.agentActivity.relatedEventId ? (
+                                            <span>关联：{log.agentActivity.relatedEventId}</span>
+                                          ) : null}
+                                          {log.agentActivity.truncated ? <span>已截断</span> : null}
+                                        </div>
+                                      </>
+                                    ) : log.reasoning ? (
+                                      <>
+                                        <strong>
+                                          {formatReasoningPhaseLabel(log.reasoning.phase)}
+                                          ：{log.reasoning.agentId}
+                                        </strong>
+                                        <p>{log.reasoning.summary}</p>
+                                        {log.reasoning.evidenceRefs.length > 0 ? (
+                                          <p className="reasoningRefs">
+                                            关联：{log.reasoning.evidenceRefs.join("、")}
+                                          </p>
+                                        ) : null}
+                                      </>
+                                    ) : log.fileAudit ? (
+                                      <>
+                                        <strong>
+                                          {formatFileAuditOperationLabel(log.fileAudit.operation)}
+                                          ·{formatFileAuditStatusLabel(log.fileAudit.status)}
+                                          ：{log.fileAudit.virtualPath}
+                                        </strong>
+                                        <div className="logMetaGrid">
+                                          {log.fileAudit.toolName ? (
+                                            <span>工具：{log.fileAudit.toolName}</span>
+                                          ) : null}
+                                          {log.fileAudit.source ? (
+                                            <span>来源：{log.fileAudit.source}</span>
+                                          ) : null}
+                                          {typeof log.fileAudit.bytes === "number" ? (
+                                            <span>字节：{log.fileAudit.bytes}</span>
+                                          ) : null}
+                                          {log.fileAudit.sha256 ? (
+                                            <span>SHA256：{log.fileAudit.sha256}</span>
+                                          ) : null}
+                                          {log.fileAudit.reason ? (
+                                            <span>原因：{log.fileAudit.reason}</span>
+                                          ) : null}
+                                          {log.fileAudit.promotedArtifactId ? (
+                                            <span>产物：{log.fileAudit.promotedArtifactId}</span>
+                                          ) : null}
+                                          {log.fileAudit.partial ? <span>部分写入</span> : null}
+                                        </div>
+                                      </>
+                                    ) : (
+                                      <>
+                                        <strong>{log.title}</strong>
+                                        {log.detail ? <p>{log.detail}</p> : null}
+                                      </>
+                                    )}
+                                  </div>
+                                </article>
+                              );
+                            })
                           )}
                           {showReasoningToggle ? (
                             <button
@@ -851,24 +938,6 @@ export default function Home() {
               </label>
 
               {uploadCount > 0 ? <span className="uploadMeta">已上传 {uploadCount} 个文件</span> : null}
-
-              <div className="scopeSegment" role="group" aria-label="本轮是否使用已上传文件">
-                {MESSAGE_INPUT_SCOPE_OPTIONS.map((option) => (
-                  <button
-                    aria-pressed={inputScope === option.value}
-                    className={
-                      inputScope === option.value
-                        ? "scopeSegmentButton scopeSegmentButton-active"
-                        : "scopeSegmentButton"
-                    }
-                    key={option.value}
-                    onClick={() => setInputScope(option.value)}
-                    type="button"
-                  >
-                    {option.label}
-                  </button>
-                ))}
-              </div>
 
               <div className="composerSpacer" />
 

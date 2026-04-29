@@ -3,14 +3,15 @@ from __future__ import annotations
 import shutil
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
+from .agent_activity import activity_payload_from_file_audit
 from .deep_agent_runtime import DeepAgentRunRequest, DeepAgentRunResult, DeepAgentRuntime
 from .permissions import PermissionPolicy
 from .reasoning_trace import ReasoningConfidence, ReasoningPhase
 from .runtime import CancellationController
 from .storage import TaskStorage
-from .tools import AuditedWorkspaceTools
+from .tools import AuditedWorkspaceTools, safe_audit_path
 
 
 class DeepAgentOrchestrator:
@@ -48,15 +49,19 @@ class DeepAgentOrchestrator:
             write_chunk_chars=write_chunk_chars,
             writable_roots=("records", "outputs"),
         )
-        self.runtime = DeepAgentRuntime(self.file_tools, agent_factory=agent_factory)
+        self.runtime = DeepAgentRuntime(
+            self.file_tools,
+            agent_factory=agent_factory,
+            activity_sink=self._append_activity,
+        )
 
     def run(self, message: str) -> DeepAgentRunResult:
         self._append_reasoning_trace(
             agent_id="deep-agent",
             phase="plan",
             summary=(
-                "DeepAgent 将在本轮隔离工作区内执行任务，读取显式选择的上传快照，"
-                "并只把可交付文件写入 outputs/。"
+                "DeepAgent 将在本轮隔离工作区内执行任务；uploads/ 中的上传快照"
+                "只是可用上下文，是否读取由模型按任务需要自主决定，并只把可交付文件写入 outputs/。"
             ),
             confidence="high",
             evidence_refs=[f"uploads/{name}" for name in self.upload_names],
@@ -88,12 +93,31 @@ class DeepAgentOrchestrator:
     def _append_audit(self, record: dict[str, Any]) -> None:
         audit_event = self.storage.append_file_tool_audit(self.task_id, self.run_id, record)
         try:
+            self._append_activity(
+                activity_payload_from_file_audit(
+                    audit_event.payload,
+                    related_event_id=audit_event.id,
+                )
+            )
+        except Exception as exc:
+            self.storage.append_event(
+                self.task_id,
+                "deep_agent_activity_warning",
+                "DeepAgent 执行活动记录失败，已继续执行。",
+                {"error": str(exc)},
+                run_id=self.run_id,
+                level="warning",
+            )
+        try:
             self._append_reasoning_trace(
                 agent_id="deep-agent",
                 phase="observe",
                 summary=self._audit_observation_summary(audit_event.payload),
                 confidence="medium",
-                evidence_refs=[str(audit_event.payload.get("virtual_path") or "")],
+                evidence_refs=[
+                    safe_audit_path(str(audit_event.payload.get("virtual_path") or ""))
+                    or ""
+                ],
                 source_event_id=audit_event.id,
             )
         except Exception as exc:
@@ -105,6 +129,29 @@ class DeepAgentOrchestrator:
                 run_id=self.run_id,
                 level="warning",
             )
+
+    def _append_activity(self, payload: dict[str, Any]) -> None:
+        level = self._activity_level(payload)
+        message = str(payload.get("title") or "DeepAgent 执行活动已更新。")
+        self.storage.append_event(
+            self.task_id,
+            "deep_agent_activity",
+            message,
+            payload,
+            run_id=self.run_id,
+            level=level,
+        )
+
+    @staticmethod
+    def _activity_level(payload: dict[str, Any]) -> Literal["info", "success", "warning", "error"]:
+        status = str(payload.get("status") or "")
+        if status == "failed":
+            return "error"
+        if status == "skipped":
+            return "warning"
+        if status == "completed":
+            return "success"
+        return "info"
 
     def _append_reasoning_trace(
         self,
@@ -144,7 +191,10 @@ class DeepAgentOrchestrator:
         }
         op = str(payload.get("op") or payload.get("operation") or "操作")
         status = str(payload.get("status") or "unknown")
-        virtual_path = str(payload.get("virtual_path") or payload.get("relative_path") or "")
+        virtual_path = (
+            safe_audit_path(str(payload.get("virtual_path") or payload.get("relative_path") or ""))
+            or ""
+        )
         source = str(payload.get("source") or "workspace")
         source_label = {
             "upload_snapshot": "上传快照",

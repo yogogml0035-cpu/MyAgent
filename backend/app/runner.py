@@ -227,14 +227,17 @@ class TaskRunner:
                     run_id,
                     reply,
                     level="warning" if warning_reply else None,
-                ):
-                    emit(
-                        "chat_completed" if decision.route == "chat" else "search_completed",
+                    completion_event_type=(
+                        "chat_completed" if decision.route == "chat" else "search_completed"
+                    ),
+                    completion_event_message=(
                         "简单对话回复已完成。"
                         if decision.route == "chat"
-                        else "轻量搜索回复已完成。",
-                        {"model": model},
-                    )
+                        else "轻量搜索回复已完成。"
+                    ),
+                    completion_event_payload={"model": model},
+                ):
+                    pass
                 elif controller.is_cancelled():
                     raise CancelledError()
                 return
@@ -258,12 +261,11 @@ class TaskRunner:
                         run_id,
                         deep_agent_result.output_text,
                         artifact_names=[str(name) for name in artifact_names],
+                        completion_event_type="deep_agent_completed",
+                        completion_event_message="DeepAgent 运行已完成。",
+                        completion_event_payload=deep_agent_result.metadata,
                     ):
-                        emit(
-                            "deep_agent_completed",
-                            "DeepAgent 运行已完成。",
-                            deep_agent_result.metadata,
-                        )
+                        pass
                     elif controller.is_cancelled():
                         raise CancelledError()
                 except DeepAgentUnavailableError as exc:
@@ -274,10 +276,29 @@ class TaskRunner:
                         {"code": "missing_deepagents_dependency"},
                         level="warning",
                     )
-                    self._complete_with_assistant_message(
-                        task_id, run_id, reply, level="warning"
-                    )
-                return
+                    if should_fallback_deep_agent_to_document_analysis(decision.reason):
+                        fallback_manifest = {
+                            **run_manifest,
+                            "intent": fallback_document_intent_manifest(decision.reason),
+                            "deep_agent_fallback": {
+                                "reason": "missing_deepagents_dependency",
+                                "message": "DeepAgent 运行库不可用，已使用确定性文档分析兼容路径。",
+                            },
+                        }
+                        self.storage.write_run_manifest(task_id, run_id, fallback_manifest)
+                        emit(
+                            "deep_agent_fallback",
+                            "DeepAgent 运行库不可用，已使用确定性文档分析兼容路径。",
+                            {"fallback_route": "document_analysis"},
+                            level="warning",
+                        )
+                    else:
+                        self._complete_with_assistant_message(
+                            task_id, run_id, reply, level="warning"
+                        )
+                        return
+                else:
+                    return
 
             if not selected_uploads:
                 raise NeedsInputError(
@@ -307,24 +328,17 @@ class TaskRunner:
                 "分析完成。可以打开本轮 `report.html` 查看交互式对比报告。"
                 f"证据记录：{bid_result['evidence_count']} 条。"
             )
-            updated = self.storage.update_task_if_status(
+            completed = self._complete_with_assistant_message(
                 task_id,
-                RUNNING_STATUSES,
-                status="complete",
-                append_message=ChatMessage(
-                    role="assistant",
-                    content=assistant_text,
-                    created_at=utc_now(),
-                    run_id=run_id,
-                ),
-                run_id=run_id,
+                run_id,
+                assistant_text,
                 artifact_names=bid_result.get("artifacts"),
+                completion_event_type="task_completed",
+                completion_event_message="任务已完成。",
+                completion_event_payload=bid_result,
             )
-            if updated is None:
-                if controller.is_cancelled():
-                    raise CancelledError()
-                return
-            emit("task_completed", "任务已完成。", bid_result)
+            if not completed and controller.is_cancelled():
+                raise CancelledError()
         except CancelledError:
             emit("task_cancelled", "任务已取消，已保留中间产物。", {})
             self.storage.update_task_if_status(
@@ -394,7 +408,31 @@ class TaskRunner:
         *,
         level: Literal["info", "warning", "error"] | None = None,
         artifact_names: list[str] | None = None,
+        completion_event_type: str | None = None,
+        completion_event_message: str = "",
+        completion_event_payload: dict[str, Any] | None = None,
+        completion_event_level: Literal["info", "success", "warning", "error"] | None = None,
     ) -> bool:
+        if completion_event_type:
+            updated = self.storage.update_task_if_status_and_append_event(
+                task_id,
+                RUNNING_STATUSES,
+                status="complete",
+                append_message=ChatMessage(
+                    role="assistant",
+                    content=content,
+                    created_at=utc_now(),
+                    run_id=run_id,
+                    level=level,
+                ),
+                run_id=run_id,
+                artifact_names=artifact_names,
+                event_type=completion_event_type,
+                event_message=completion_event_message,
+                event_payload=completion_event_payload,
+                event_level=completion_event_level,
+            )
+            return updated is not None
         updated = self.storage.update_task_if_status(
             task_id,
             RUNNING_STATUSES,
@@ -438,6 +476,21 @@ def build_input_manifest(uploads: list[Path]) -> list[dict[str, Any]]:
 
 def requires_document_uploads(message: str) -> bool:
     return route_intent(message).requires_uploads
+
+
+def should_fallback_deep_agent_to_document_analysis(reason: str) -> bool:
+    return reason in {"upload_reference_marker", "document_analysis_marker"}
+
+
+def fallback_document_intent_manifest(reason: str) -> dict[str, object]:
+    intent_name = "continue_with_uploads" if reason == "upload_reference_marker" else "document_analysis"
+    return {
+        "mode": "auto",
+        "name": intent_name,
+        "route": "document_analysis",
+        "requires_uploads": True,
+        "reason": f"{reason}_deep_agent_unavailable_fallback",
+    }
 
 
 def render_search_reply(result: dict[str, Any]) -> str:

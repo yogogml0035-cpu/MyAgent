@@ -49,8 +49,8 @@ def test_auto_search_markers_do_not_reuse_uploads_for_document_words(message: st
 def test_auto_search_with_explicit_file_reference_reuses_uploads() -> None:
     decision = route_intent("搜索刚才这些文件里的投标新闻线索", has_uploads=True)
 
-    assert decision.route == "document_analysis"
-    assert decision.intent == "continue_with_uploads"
+    assert decision.route == "deep_agent"
+    assert decision.intent == "deep_agent"
     assert decision.use_uploads is True
     assert decision.resolved_input_scope == "task_uploads"
 
@@ -58,17 +58,17 @@ def test_auto_search_with_explicit_file_reference_reuses_uploads() -> None:
 @pytest.mark.parametrize(
     ("message", "expected_intent"),
     [
-        ("继续分析", "continue_with_uploads"),
-        ("根据刚才文件重新总结当前报告", "continue_with_uploads"),
-        ("帮我检查是否有串标围标嫌疑", "document_analysis"),
+        ("继续分析", "deep_agent"),
+        ("根据刚才文件重新总结当前报告", "deep_agent"),
+        ("帮我检查是否有串标围标嫌疑", "deep_agent"),
     ],
 )
-def test_auto_reuses_uploads_for_clear_continue_or_bid_analysis_intents(
+def test_auto_routes_file_aware_prompts_to_deep_agent_with_available_uploads(
     message: str, expected_intent: str
 ) -> None:
     decision = route_intent(message, has_uploads=True)
 
-    assert decision.route == "document_analysis"
+    assert decision.route == "deep_agent"
     assert decision.intent == expected_intent
     assert decision.use_uploads is True
     assert decision.requires_uploads is True
@@ -85,14 +85,14 @@ def test_auto_bid_analysis_without_uploads_requires_document_input() -> None:
     assert decision.resolved_input_scope == "none"
 
 
-def test_explicit_mode_and_input_scope_override_auto_upload_reuse() -> None:
+def test_explicit_modes_win_but_legacy_input_scope_no_longer_forces_file_use() -> None:
     forced_chat = route_intent(
         "帮我检查是否有串标围标嫌疑",
         mode="chat",
         input_scope="uploads",
         has_uploads=True,
     )
-    forced_uploads = route_intent("你好", input_scope="task_uploads", has_uploads=True)
+    legacy_upload_scope = route_intent("你好", input_scope="task_uploads", has_uploads=True)
     no_upload_scope = route_intent(
         "帮我检查是否有串标围标嫌疑",
         input_scope="none",
@@ -105,19 +105,19 @@ def test_explicit_mode_and_input_scope_override_auto_upload_reuse() -> None:
     assert forced_chat.route == "chat"
     assert forced_chat.use_uploads is False
     assert forced_chat.intent == "forced_chat"
-    assert forced_uploads.route == "document_analysis"
-    assert forced_uploads.use_uploads is True
-    assert forced_uploads.intent == "forced_uploads"
-    assert no_upload_scope.route == "chat"
-    assert no_upload_scope.use_uploads is False
-    assert no_upload_scope.reason == "input_scope_none"
+    assert legacy_upload_scope.route == "chat"
+    assert legacy_upload_scope.use_uploads is False
+    assert legacy_upload_scope.intent == "chat"
+    assert no_upload_scope.route == "deep_agent"
+    assert no_upload_scope.use_uploads is True
+    assert no_upload_scope.reason == "document_analysis_marker"
     assert forced_bid.route == "document_analysis"
     assert forced_bid.use_uploads is True
     assert forced_bid.intent == "forced_document_analysis"
     assert forced_search.route == "search"
     assert forced_search.use_uploads is False
     assert forced_deep_agent.route == "deep_agent"
-    assert forced_deep_agent.use_uploads is False
+    assert forced_deep_agent.use_uploads is True
 
 
 def test_message_request_accepts_mode_and_input_scope() -> None:

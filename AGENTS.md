@@ -6,7 +6,7 @@
 
 - 后端：`backend/`，FastAPI + `uv`，入口为 `backend/app/main.py`。
 - 前端：`frontend/`，Next.js app router，主界面在 `frontend/app/page.tsx`。
-- 默认任务存储：`backend/storage/tasks/`。
+- 默认任务存储：`backend/storage/sessions/`。
 - 后端测试：`backend/tests/`，当前任务工作流集成套件在 `backend/tests/workflow/test_workflow.py`。
 - 前端测试：`frontend/tests/`，按 `state/`、`workspace/`、`upload/`、`model/` 分类，文件名必须以 `test_` 开头。
 - 长期知识包索引：`asset/README.md`。

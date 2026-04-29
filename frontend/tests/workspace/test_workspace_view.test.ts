@@ -86,6 +86,80 @@ test("buildLogClipboardText labels reasoning summaries without arbitrary payload
   assert.equal(text.includes("arbitrary_secret"), false);
 });
 
+test("buildLogClipboardText includes deep agent activity and file audit summaries", () => {
+  const text = buildLogClipboardText([
+    {
+      id: "activity-1",
+      type: "deep_agent_activity",
+      title: "DeepAgent activity",
+      level: "info",
+      createdAt: "2026-04-27T08:01:00.000Z",
+      agentActivity: {
+        schemaVersion: 1,
+        source: "deepagents",
+        activityKind: "lifecycle",
+        phase: "tool_use",
+        status: "started",
+        title: "工具调用准备",
+        summary: "本轮准备调用 list_dir 检查上传快照。",
+        toolName: "list_dir",
+        parameterSummary: "relative_path=uploads",
+        resultSummary: "工具返回 3 个文件名。",
+        subgraphPath: ["agent", "file-record-agent"],
+        relatedEventId: "audit-1",
+        truncated: false,
+      },
+    },
+    {
+      id: "audit-1",
+      type: "file_tool_audit",
+      title: "已记录文件工具访问审计。",
+      level: "info",
+      createdAt: "2026-04-27T08:02:00.000Z",
+      fileAudit: {
+        toolName: "read_file",
+        operation: "read",
+        status: "success",
+        virtualPath: "uploads/source.md",
+        source: "upload_snapshot",
+        bytes: 241,
+        sha256: "abc123",
+      },
+    },
+  ]);
+
+  assert.match(text, /执行进展 工具调用 已开始：工具调用准备 本轮准备调用 list_dir 检查上传快照。/);
+  assert.match(text, /工具：list_dir/);
+  assert.match(text, /参数：relative_path=uploads/);
+  assert.match(text, /结果：工具返回 3 个文件名。/);
+  assert.match(text, /路径：agent \/ file-record-agent/);
+  assert.match(text, /关联：audit-1/);
+  assert.match(text, /文件审计 读文件 成功：uploads\/source\.md/);
+  assert.match(text, /工具：read_file/);
+  assert.match(text, /来源：upload_snapshot/);
+  assert.match(text, /字节：241/);
+  assert.match(text, /SHA256：abc123/);
+});
+
+test("buildLogClipboardText ignores arbitrary malformed payload fields", () => {
+  const text = buildLogClipboardText([
+    {
+      id: "activity-bad",
+      type: "deep_agent_activity",
+      title: "畸形活动。",
+      level: "info",
+      payload: {
+        arbitrary_secret: "SHOULD_NOT_COPY",
+        raw_provider_chunk: "SHOULD_NOT_COPY",
+      },
+    } as never,
+  ]);
+
+  assert.equal(text, "--:--:-- 信息 畸形活动。");
+  assert.equal(text.includes("SHOULD_NOT_COPY"), false);
+  assert.equal(text.includes("raw_provider_chunk"), false);
+});
+
 test("formatLogLevelLabel keeps stored level values display-localized", () => {
   assert.equal(formatLogLevelLabel("info"), "信息");
   assert.equal(formatLogLevelLabel("success"), "成功");

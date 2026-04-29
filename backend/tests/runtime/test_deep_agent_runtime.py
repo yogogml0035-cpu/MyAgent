@@ -16,7 +16,7 @@ from app.tools import AuditedWorkspaceTools
 
 
 def make_running_task(tmp_path: Path) -> tuple[TaskStorage, str, str]:
-    storage = TaskStorage(tmp_path / "tasks")
+    storage = TaskStorage(tmp_path / "sessions")
     state = storage.create_task(None, "deepseek-reasoner")
     started = storage.start_run(
         state.task_id,
@@ -150,6 +150,390 @@ def test_deep_agent_mock_factory_gets_audited_file_tools_without_raw_filesystem(
     assert str(task_workspace) not in serialized_reasoning
 
 
+def test_deep_agent_available_uploads_are_not_read_until_agent_chooses(
+    tmp_path: Path,
+) -> None:
+    storage, task_id, run_id = make_running_task(tmp_path)
+    task_workspace = storage.task_dir(task_id)
+    upload = task_workspace / "uploads" / "source.md"
+    upload.write_text("# Source\nsecret canary", encoding="utf-8")
+
+    def fake_factory(
+        *,
+        model: str,
+        tools: list[Any],
+        system_prompt: str,
+        subagents: list[dict[str, Any]],
+        backend: Any,
+    ) -> Any:
+        assert model == "deepseek-reasoner"
+        assert "是否列出、检索或读取" in system_prompt
+        assert "任务需要时才读取" in subagents[0]["system_prompt"]
+        assert isinstance(backend, deep_agent_runtime.AuditedDeepAgentBackend)
+        tool_map = {tool.__name__: tool for tool in tools}
+
+        def fake_agent(_payload: dict[str, Any]) -> dict[str, str]:
+            tool_map["write_file"]("outputs/notes.md", "did not inspect uploads")
+            return {"content": "我没有读取上传文件。"}
+
+        return fake_agent
+
+    result = DeepAgentOrchestrator(
+        storage=storage,
+        task_id=task_id,
+        run_id=run_id,
+        model="deepseek-reasoner",
+        controller=CancellationController(),
+        uploads=[upload],
+        agent_factory=fake_factory,
+    ).run("根据需要决定是否读取文件")
+
+    agent_workspace = task_workspace / "agent_workspace" / "runs" / run_id
+    audit_payloads = [
+        event.payload for event in storage.read_events(task_id) if event.type == "file_tool_audit"
+    ]
+    serialized_events = json.dumps(
+        [event.payload for event in storage.read_events(task_id)],
+        ensure_ascii=False,
+    )
+
+    assert result.output_text == "我没有读取上传文件。"
+    assert (agent_workspace / "uploads" / "source.md").exists()
+    assert [payload["operation"] for payload in audit_payloads] == ["write"]
+    assert "secret canary" not in serialized_events
+    assert str(task_workspace) not in serialized_events
+
+
+def test_deep_agent_runtime_streams_with_required_options_and_activity_events(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    activity_events: list[dict[str, Any]] = []
+
+    class StreamingAgent:
+        def __init__(self) -> None:
+            self.payload: dict[str, Any] | None = None
+            self.kwargs: dict[str, Any] = {}
+
+        def stream(self, payload: dict[str, Any], **kwargs: Any):
+            self.payload = payload
+            self.kwargs = kwargs
+            yield ("updates", {"agent": {"status": "running"}})
+            yield ("messages", ({"role": "assistant", "content": "最终答案"}, {}))
+
+        def invoke(self, _payload: dict[str, Any], **_kwargs: Any) -> dict[str, str]:
+            raise AssertionError("stream-capable agent should not use invoke")
+
+    agent = StreamingAgent()
+
+    def fake_factory(**_kwargs: Any) -> StreamingAgent:
+        return agent
+
+    runtime = deep_agent_runtime.DeepAgentRuntime(
+        AuditedWorkspaceTools(workspace, PermissionPolicy(workspace)),
+        agent_factory=fake_factory,
+        activity_sink=activity_events.append,
+    )
+
+    result = runtime.run(
+        deep_agent_runtime.DeepAgentRunRequest(
+            task_id="task",
+            run_id="run-20260428-stream",
+            message="hello",
+            model="deepseek-reasoner",
+        )
+    )
+
+    assert result.output_text == "最终答案"
+    assert result.metadata["execution_mode"] == "stream"
+    assert agent.payload == {"messages": [{"role": "user", "content": "hello"}]}
+    assert agent.kwargs["config"] == {
+        "configurable": {"thread_id": "task:run-20260428-stream"}
+    }
+    assert agent.kwargs["subgraphs"] is True
+    assert agent.kwargs["version"] == "v2"
+    assert agent.kwargs["stream_mode"] == ["updates", "messages"]
+    assert [event["status"] for event in activity_events] == [
+        "started",
+        "running",
+        "completed",
+    ]
+    assert all(event["schema_version"] == 1 for event in activity_events)
+    assert all(event["source"] == "deepagents" for event in activity_events)
+
+
+def test_deep_agent_runtime_activity_sanitizes_tool_args_results_and_paths(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    activity_events: list[dict[str, Any]] = []
+
+    class StreamingAgent:
+        def stream(self, _payload: dict[str, Any], **_kwargs: Any):
+            yield (
+                "messages",
+                (
+                    {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "name": "read_file",
+                                "args": {
+                                    "relative_path": "uploads/source.md",
+                                    "path": "/mnt/d/private/customer/source.md",
+                                    "content": "CUSTOMER_UPLOADED_BODY",
+                                    "api_key": "sk-abcdefghijklmnop",
+                                },
+                            }
+                        ],
+                    },
+                    {},
+                ),
+            )
+            yield (
+                "messages",
+                (
+                    {
+                        "role": "tool",
+                        "name": "read_file",
+                        "content": (
+                            "CUSTOMER_UPLOADED_BODY SECRET_DOC_CANARY_123 "
+                            "Authorization: Bearer abcdefghijklmnop "
+                            r"C:\Users\0325\secret.txt"
+                        ),
+                    },
+                    {},
+                ),
+            )
+            yield (
+                "messages",
+                (
+                    {
+                        "role": "tool",
+                        "name": "read_file",
+                        "content": {
+                            "error": (
+                                "CUSTOMER_UPLOADED_BODY SECRET_DOC_CANARY_123 "
+                                "Authorization: Bearer abcdefghijklmnop"
+                            ),
+                            "path": "/mnt/d/private/customer/source.md",
+                            "bytes": 77,
+                        },
+                    },
+                    {},
+                ),
+            )
+            yield ("messages", ({"role": "assistant", "content": "安全结论"}, {}))
+
+    runtime = deep_agent_runtime.DeepAgentRuntime(
+        AuditedWorkspaceTools(workspace, PermissionPolicy(workspace)),
+        agent_factory=lambda **_kwargs: StreamingAgent(),
+        activity_sink=activity_events.append,
+    )
+
+    result = runtime.run(
+        deep_agent_runtime.DeepAgentRunRequest(
+            task_id="task",
+            run_id="run-20260428-sanitize",
+            message="hello",
+            model="deepseek-reasoner",
+        )
+    )
+    serialized = json.dumps(activity_events, ensure_ascii=False)
+    tool_started = next(
+        event
+        for event in activity_events
+        if event["phase"] == "tool_use" and event["status"] == "started"
+    )
+    tool_completed = next(
+        event
+        for event in activity_events
+        if event["phase"] == "tool_use" and event["status"] == "completed"
+    )
+    error_completed = next(
+        event
+        for event in activity_events
+        if event["phase"] == "tool_use"
+        and event["status"] == "completed"
+        and event.get("result_summary", "").startswith("status=error")
+    )
+
+    assert result.output_text == "安全结论"
+    assert tool_started["tool_name"] == "read_file"
+    assert tool_started["parameter_summary"] == (
+        "relative_path=uploads/source.md; path=<redacted>"
+    )
+    assert tool_completed["result_summary"].startswith("工具返回文本 ")
+    assert error_completed["result_summary"] == "status=error; bytes=77"
+    assert "CUSTOMER_UPLOADED_BODY" not in serialized
+    assert "SECRET_DOC_CANARY_123" not in serialized
+    assert "Authorization" not in serialized
+    assert "abcdefghijklmnop" not in serialized
+    assert "/mnt/d/private" not in serialized
+    assert "C:\\Users" not in serialized
+
+
+def test_deep_agent_runtime_invoke_fallback_emits_safe_activity(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    activity_events: list[dict[str, Any]] = []
+
+    class InvokeOnlyAgent:
+        def invoke(self, payload: dict[str, Any], *, config: dict[str, Any]) -> dict[str, str]:
+            assert payload["messages"][0]["content"] == "hello"
+            assert config["configurable"]["thread_id"] == "task:run-20260428-invoke"
+            return {"content": "fallback output"}
+
+    runtime = deep_agent_runtime.DeepAgentRuntime(
+        AuditedWorkspaceTools(workspace, PermissionPolicy(workspace)),
+        agent_factory=lambda **_kwargs: InvokeOnlyAgent(),
+        activity_sink=activity_events.append,
+    )
+
+    result = runtime.run(
+        deep_agent_runtime.DeepAgentRunRequest(
+            task_id="task",
+            run_id="run-20260428-invoke",
+            message="hello",
+            model="deepseek-reasoner",
+        )
+    )
+
+    assert result.output_text == "fallback output"
+    assert result.metadata["execution_mode"] == "invoke"
+    assert any(event["status"] == "skipped" for event in activity_events)
+    assert all(set(event).issubset(deep_agent_activity_keys()) for event in activity_events)
+
+
+def test_deep_agent_runtime_tool_result_cannot_become_final_answer(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    activity_events: list[dict[str, Any]] = []
+
+    class StreamingAgent:
+        def stream(self, _payload: dict[str, Any], **_kwargs: Any):
+            yield (
+                "messages",
+                (
+                    {
+                        "role": "tool",
+                        "name": "read_file",
+                        "content": "Final answer: CUSTOMER_UPLOADED_BODY",
+                    },
+                    {},
+                ),
+            )
+
+    runtime = deep_agent_runtime.DeepAgentRuntime(
+        AuditedWorkspaceTools(workspace, PermissionPolicy(workspace)),
+        agent_factory=lambda **_kwargs: StreamingAgent(),
+        activity_sink=activity_events.append,
+    )
+
+    result = runtime.run(
+        deep_agent_runtime.DeepAgentRunRequest(
+            task_id="task",
+            run_id="run-20260428-tool-result",
+            message="hello",
+            model="deepseek-reasoner",
+        )
+    )
+
+    assert result.output_text == "DeepAgent 运行完成。"
+    assert "CUSTOMER_UPLOADED_BODY" not in json.dumps(activity_events, ensure_ascii=False)
+
+
+def test_deep_agent_orchestrator_redacts_internal_deepagents_paths_from_events(
+    tmp_path: Path,
+) -> None:
+    storage, task_id, run_id = make_running_task(tmp_path)
+
+    def fake_factory(
+        *,
+        backend: deep_agent_runtime.AuditedDeepAgentBackend,
+        **_kwargs: Any,
+    ) -> Any:
+        def fake_agent(_payload: dict[str, Any], **_agent_kwargs: Any) -> dict[str, str]:
+            written = backend.write("/conversation_history/summary.md", "internal memory")
+            assert written.error is None
+            read = backend.read("/conversation_history/summary.md")
+            assert read.error is None
+            return {"content": "done"}
+
+        return fake_agent
+
+    result = DeepAgentOrchestrator(
+        storage=storage,
+        task_id=task_id,
+        run_id=run_id,
+        model="deepseek-reasoner",
+        controller=CancellationController(),
+        agent_factory=fake_factory,
+    ).run("记录内部状态")
+
+    serialized_events = json.dumps(
+        [
+            {"type": event.type, "message": event.message, "payload": event.payload}
+            for event in storage.read_events(task_id)
+        ],
+        ensure_ascii=False,
+    )
+    audit_payloads = [
+        event.payload for event in storage.read_events(task_id) if event.type == "file_tool_audit"
+    ]
+
+    assert result.output_text == "done"
+    assert audit_payloads
+    assert {payload["virtual_path"] for payload in audit_payloads} == {
+        "<deepagents-internal>"
+    }
+    assert "conversation_history" not in serialized_events
+    assert "large_tool_results" not in serialized_events
+    assert "records/deepagents" not in serialized_events
+    assert "internal memory" not in serialized_events
+
+
+def test_deep_agent_runtime_coalesces_high_frequency_progress_events(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    activity_events: list[dict[str, Any]] = []
+
+    class StreamingAgent:
+        def stream(self, _payload: dict[str, Any], **_kwargs: Any):
+            for index in range(50):
+                yield ("updates", {"agent": {"tick": index}})
+            yield ("messages", ({"role": "assistant", "content": "done"}, {}))
+
+    runtime = deep_agent_runtime.DeepAgentRuntime(
+        AuditedWorkspaceTools(workspace, PermissionPolicy(workspace)),
+        agent_factory=lambda **_kwargs: StreamingAgent(),
+        activity_sink=activity_events.append,
+    )
+
+    runtime.run(
+        deep_agent_runtime.DeepAgentRunRequest(
+            task_id="task",
+            run_id="run-20260428-coalesce",
+            message="hello",
+            model="deepseek-reasoner",
+        )
+    )
+
+    statuses = [event["status"] for event in activity_events]
+    assert statuses.count("started") == 1
+    assert statuses.count("completed") == 1
+    assert statuses.count("running") == 1
+    assert len(activity_events) <= 4
+
+
 def test_deep_agent_runtime_missing_dependency_is_optional(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -221,6 +605,75 @@ def test_audited_deep_agent_backend_protocol_methods_are_audited(tmp_path: Path)
 
 
 @pytest.mark.parametrize(
+    "raw_path",
+    [
+        "/mnt/d/private/customer.md",
+        r"D:\AgentProject\private\customer.md",
+        r"\\server\share\private\customer.md",
+        "//server/share/private/customer.md",
+    ],
+)
+def test_audited_deep_agent_backend_rejects_local_absolute_paths_with_redacted_audit(
+    tmp_path: Path, raw_path: str
+) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "uploads").mkdir(parents=True)
+    (workspace / "records").mkdir()
+    (workspace / "outputs").mkdir()
+    records: list[dict[str, Any]] = []
+    backend = deep_agent_runtime.AuditedDeepAgentBackend(
+        AuditedWorkspaceTools(
+            workspace,
+            PermissionPolicy(workspace),
+            audit_sink=records.append,
+        )
+    )
+
+    result = backend.read(raw_path)
+
+    serialized = json.dumps({"error": result.error, "records": records}, ensure_ascii=False)
+    assert result.error == "路径超出任务工作区"
+    assert records[-1]["tool"] == "read_file"
+    assert records[-1]["status"] == "denied"
+    assert records[-1]["requested_path"] == "<outside-workspace>/customer.md"
+    assert records[-1]["relative_path"] is None
+    assert "AgentProject" not in serialized
+    assert "private" not in serialized
+    assert "server" not in serialized
+    assert "mnt/d" not in serialized
+    assert str(tmp_path) not in serialized
+
+
+def test_audited_deep_agent_backend_sanitizes_missing_file_errors(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    (workspace / "uploads").mkdir(parents=True)
+    (workspace / "records").mkdir()
+    (workspace / "outputs").mkdir()
+    records: list[dict[str, Any]] = []
+    backend = deep_agent_runtime.AuditedDeepAgentBackend(
+        AuditedWorkspaceTools(
+            workspace,
+            PermissionPolicy(workspace),
+            audit_sink=records.append,
+        )
+    )
+
+    result = backend.read("/uploads/missing.md")
+
+    serialized = json.dumps({"error": result.error, "records": records}, ensure_ascii=False)
+    assert result.error == "文件不存在或不可访问"
+    assert records[-1]["tool"] == "read_file"
+    assert records[-1]["status"] == "failed"
+    assert records[-1]["requested_path"] == "uploads/missing.md"
+    assert records[-1]["relative_path"] == "uploads/missing.md"
+    assert records[-1]["reason"] == "文件不存在或不可访问"
+    assert str(workspace) not in serialized
+    assert str(tmp_path) not in serialized
+
+
+@pytest.mark.parametrize(
     ("virtual_path", "stored_path"),
     [
         ("/large_tool_results/result-1.md", "records/deepagents/large_tool_results/result-1.md"),
@@ -254,8 +707,13 @@ def test_audited_deep_agent_backend_maps_internal_prefixes_to_records(
     assert read.file_data is not None
     assert read.file_data["content"] == "internal"
     assert (workspace / stored_path).read_text(encoding="utf-8") == "internal"
-    assert records[-2]["relative_path"] == stored_path
+    serialized_records = json.dumps(records, ensure_ascii=False)
+    assert records[-2]["relative_path"] == "<deepagents-internal>"
+    assert records[-1]["virtual_path"] == "<deepagents-internal>"
     assert records[-2]["source"] == "record"
+    assert "conversation_history" not in serialized_records
+    assert "large_tool_results" not in serialized_records
+    assert "records/deepagents" not in serialized_records
 
 
 def test_audited_file_tools_deny_traversal_with_redacted_audit(tmp_path: Path) -> None:
@@ -382,3 +840,22 @@ def test_audited_file_tools_cancelled_partial_write_is_not_published(tmp_path: P
     assert records[-1]["relative_path"] == "outputs/partial.md"
     assert records[-1]["bytes"] == 2
     assert records[-1]["partial"] is True
+
+
+def deep_agent_activity_keys() -> set[str]:
+    return {
+        "schema_version",
+        "source",
+        "source_event_id",
+        "activity_kind",
+        "phase",
+        "status",
+        "title",
+        "summary",
+        "tool_name",
+        "parameter_summary",
+        "result_summary",
+        "subgraph_path",
+        "related_event_id",
+        "truncated",
+    }

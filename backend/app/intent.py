@@ -25,7 +25,6 @@ IntentName = Literal[
     "forced_search",
     "forced_document_analysis",
     "forced_deep_agent",
-    "forced_uploads",
 ]
 
 
@@ -137,7 +136,6 @@ def route_intent(
     has_uploads: bool = False,
 ) -> IntentDecision:
     normalized_mode = normalize_mode(mode)
-    normalized_input_scope = normalize_input_scope(input_scope)
 
     if normalized_mode == "deep_agent":
         return IntentDecision(
@@ -145,11 +143,9 @@ def route_intent(
             input_scope=input_scope,
             route="deep_agent",
             intent="forced_deep_agent",
-            resolved_input_scope="task_uploads"
-            if normalized_input_scope == "task_uploads" and has_uploads
-            else "none",
-            use_uploads=normalized_input_scope == "task_uploads" and has_uploads,
-            requires_uploads=normalized_input_scope == "task_uploads",
+            resolved_input_scope="task_uploads" if has_uploads else "none",
+            use_uploads=has_uploads,
+            requires_uploads=False,
             reason="mode_deep_agent",
         )
 
@@ -177,18 +173,6 @@ def route_intent(
             reason="mode_chat",
         )
 
-    if normalized_input_scope == "none":
-        return IntentDecision(
-            mode=mode,
-            input_scope=input_scope,
-            route="chat",
-            intent="chat",
-            resolved_input_scope="none",
-            use_uploads=False,
-            requires_uploads=False,
-            reason="input_scope_none",
-        )
-
     if normalized_mode == "document_analysis":
         return IntentDecision(
             mode=mode,
@@ -199,18 +183,6 @@ def route_intent(
             use_uploads=has_uploads,
             requires_uploads=True,
             reason="mode_document_analysis",
-        )
-
-    if normalized_input_scope == "task_uploads":
-        return IntentDecision(
-            mode=mode,
-            input_scope=input_scope,
-            route="document_analysis",
-            intent="forced_uploads",
-            resolved_input_scope="task_uploads" if has_uploads else "none",
-            use_uploads=has_uploads,
-            requires_uploads=True,
-            reason="input_scope_task_uploads",
         )
 
     if is_weather_request(message):
@@ -241,8 +213,8 @@ def route_intent(
         return IntentDecision(
             mode=mode,
             input_scope=input_scope,
-            route="document_analysis",
-            intent="continue_with_uploads",
+            route="deep_agent",
+            intent="deep_agent",
             resolved_input_scope="task_uploads",
             use_uploads=True,
             requires_uploads=True,
@@ -253,8 +225,8 @@ def route_intent(
         return IntentDecision(
             mode=mode,
             input_scope=input_scope,
-            route="document_analysis",
-            intent="document_analysis",
+            route="deep_agent" if has_uploads else "document_analysis",
+            intent="deep_agent" if has_uploads else "document_analysis",
             resolved_input_scope="task_uploads" if has_uploads else "none",
             use_uploads=has_uploads,
             requires_uploads=True,
@@ -298,9 +270,3 @@ def normalize_mode(mode: TaskMode) -> TaskMode:
     if mode == "bid_analysis":
         return "document_analysis"
     return mode
-
-
-def normalize_input_scope(input_scope: InputScope) -> InputScope:
-    if input_scope == "uploads":
-        return "task_uploads"
-    return input_scope

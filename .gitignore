@@ -21,8 +21,11 @@ dist/
 coverage/
 *.tsbuildinfo
 
+backend/storage/sessions/*
+!backend/storage/sessions/.gitkeep
+
+# Legacy local task data may still exist after the storage directory rename.
 backend/storage/tasks/*
-!backend/storage/tasks/.gitkeep
 
 .omx/
 .DS_Store

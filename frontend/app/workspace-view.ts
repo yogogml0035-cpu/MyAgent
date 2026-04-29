@@ -135,6 +135,19 @@ export function buildLogClipboardText(logs: ExecutionLog[]) {
     logs
       .map((log) => {
         const time = formatTime(log.createdAt);
+        if (log.agentActivity) {
+          const activity = log.agentActivity;
+          const details = [
+            activity.toolName ? `工具：${activity.toolName}` : "",
+            activity.parameterSummary ? `参数：${activity.parameterSummary}` : "",
+            activity.resultSummary ? `结果：${activity.resultSummary}` : "",
+            activity.subgraphPath.length > 0 ? `路径：${activity.subgraphPath.join(" / ")}` : "",
+            activity.relatedEventId ? `关联：${activity.relatedEventId}` : "",
+            activity.truncated ? "已截断" : "",
+          ].filter(Boolean);
+          const detailText = details.length > 0 ? ` ${details.join(" · ")}` : "";
+          return `${time} 执行进展 ${formatAgentActivityPhaseLabel(activity.phase)} ${formatAgentActivityStatusLabel(activity.status)}：${activity.title} ${activity.summary}${detailText}`;
+        }
         if (log.reasoning) {
           const refs =
             log.reasoning.evidenceRefs.length > 0
@@ -142,11 +155,64 @@ export function buildLogClipboardText(logs: ExecutionLog[]) {
               : "";
           return `${time} 思考摘要 ${formatReasoningPhaseLabel(log.reasoning.phase)} ${log.reasoning.agentId}：${log.reasoning.summary}${refs}`;
         }
+        if (log.fileAudit) {
+          const audit = log.fileAudit;
+          const details = [
+            audit.toolName ? `工具：${audit.toolName}` : "",
+            audit.source ? `来源：${audit.source}` : "",
+            typeof audit.bytes === "number" ? `字节：${audit.bytes}` : "",
+            audit.sha256 ? `SHA256：${audit.sha256}` : "",
+            audit.reason ? `原因：${audit.reason}` : "",
+            audit.promotedArtifactId ? `产物：${audit.promotedArtifactId}` : "",
+            audit.partial ? "部分写入" : "",
+          ].filter(Boolean);
+          const detailText = details.length > 0 ? ` ${details.join(" · ")}` : "";
+          return `${time} 文件审计 ${formatFileAuditOperationLabel(audit.operation)} ${formatFileAuditStatusLabel(audit.status)}：${audit.virtualPath}${detailText}`;
+        }
         const detail = log.detail ? ` ${log.detail}` : "";
         return `${time} ${formatLogLevelLabel(log.level)} ${log.title}${detail}`;
       })
       .join("\n") || "暂无日志"
   );
+}
+
+export function formatAgentActivityKindLabel(kind: NonNullable<ExecutionLog["agentActivity"]>["activityKind"]) {
+  switch (kind) {
+    case "lifecycle":
+      return "生命周期";
+    case "progress":
+      return "进展";
+  }
+}
+
+export function formatAgentActivityPhaseLabel(phase: NonNullable<ExecutionLog["agentActivity"]>["phase"]) {
+  switch (phase) {
+    case "planning":
+      return "规划";
+    case "reasoning":
+      return "推理";
+    case "tool_use":
+      return "工具调用";
+    case "file_operation":
+      return "文件操作";
+    case "finalizing":
+      return "收尾";
+  }
+}
+
+export function formatAgentActivityStatusLabel(status: NonNullable<ExecutionLog["agentActivity"]>["status"]) {
+  switch (status) {
+    case "started":
+      return "已开始";
+    case "running":
+      return "进行中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    case "skipped":
+      return "已跳过";
+  }
 }
 
 export function formatReasoningPhaseLabel(phase: NonNullable<ExecutionLog["reasoning"]>["phase"]) {
@@ -163,6 +229,40 @@ export function formatReasoningPhaseLabel(phase: NonNullable<ExecutionLog["reaso
       return "总结";
     case "risk":
       return "风险";
+  }
+}
+
+export function formatFileAuditOperationLabel(operation: string) {
+  switch (operation) {
+    case "list":
+      return "列目录";
+    case "read":
+      return "读文件";
+    case "write":
+      return "写文件";
+    case "edit":
+      return "编辑文件";
+    case "glob":
+      return "匹配文件";
+    case "grep":
+      return "检索文件";
+    default:
+      return operation;
+  }
+}
+
+export function formatFileAuditStatusLabel(status: string) {
+  switch (status) {
+    case "success":
+      return "成功";
+    case "denied":
+      return "被拒绝";
+    case "cancelled":
+      return "已取消";
+    case "failed":
+      return "失败";
+    default:
+      return status;
   }
 }
 

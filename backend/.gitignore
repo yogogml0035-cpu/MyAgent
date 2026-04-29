@@ -5,5 +5,8 @@ __pycache__/
 .ruff_cache/
 .coverage
 htmlcov/
+storage/sessions/*
+!storage/sessions/.gitkeep
+
+# Legacy local task data may still exist after the storage directory rename.
 storage/tasks/*
-!storage/tasks/.gitkeep

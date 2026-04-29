@@ -8,8 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .agent_activity import ActivitySink, DeepAgentActivityProjector
 from .runtime import CancellationController
-from .tools import AuditedWorkspaceTools
+from .tools import (
+    AuditedWorkspaceTools,
+    AuditOperation,
+    is_windows_absolute_path,
+)
 
 try:
     from deepagents import create_deep_agent as _imported_create_deep_agent
@@ -76,6 +81,7 @@ class FileUploadResponse:
 AgentFactory = Callable[..., Any]
 _DEFAULT_AGENT_FACTORY: AgentFactory | None = _imported_create_deep_agent
 DEEPAGENTS_INTERNAL_PREFIXES = ("large_tool_results", "conversation_history")
+DEEPAGENT_VIRTUAL_ROOTS = ("uploads", "records", "outputs")
 
 
 class AuditedDeepAgentBackend(ImportedBackendProtocol):
@@ -88,7 +94,7 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
 
     def ls(self, path: str) -> LsResult:
         try:
-            relative_path = self._relative_virtual_path(path)
+            relative_path = self._relative_path_for_tool(path, "list_dir", "list")
             names = self.file_tools.list_dir(relative_path)
             entries = [
                 self._file_info(self._join_relative(relative_path, name))
@@ -96,14 +102,14 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
             ]
             return LsResult(entries=entries)
         except Exception as exc:
-            return LsResult(error=str(exc))
+            return LsResult(error=self._safe_error(exc))
 
     async def als(self, path: str) -> LsResult:
         return await asyncio.to_thread(self.ls, path)
 
     def read(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         try:
-            relative_path = self._relative_virtual_path(file_path)
+            relative_path = self._relative_path_for_tool(file_path, "read_file", "read")
             content = self.file_tools.read_file(relative_path)
             selected = "\n".join(content.splitlines()[offset : offset + limit])
             return ReadResult(
@@ -113,7 +119,7 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
                 }
             )
         except Exception as exc:
-            return ReadResult(error=str(exc))
+            return ReadResult(error=self._safe_error(exc))
 
     async def aread(self, file_path: str, offset: int = 0, limit: int = 2000) -> ReadResult:
         return await asyncio.to_thread(self.read, file_path, offset, limit)
@@ -121,8 +127,9 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
     def grep(
         self, pattern: str, path: str | None = None, glob: str | None = None
     ) -> GrepResult:
-        relative_root = self._relative_virtual_path(path or "/")
+        relative_root: str | None = None
         try:
+            relative_root = self._relative_path_for_tool(path or "/", "grep", "grep")
             matches: list[dict[str, Any]] = []
             for file_path in self._iter_files(relative_root, glob):
                 relative_path = file_path.relative_to(self.file_tools.workspace_root).as_posix()
@@ -141,10 +148,11 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
             )
             return GrepResult(matches=matches)
         except Exception as exc:
-            self.file_tools.audit_file_operation(
-                "grep", "grep", relative_root, "failed", str(exc)
-            )
-            return GrepResult(error=str(exc))
+            if relative_root is not None:
+                self.file_tools.audit_file_operation(
+                    "grep", "grep", relative_root, "failed", str(exc)
+                )
+            return GrepResult(error=self._safe_error(exc))
 
     async def agrep(
         self, pattern: str, path: str | None = None, glob: str | None = None
@@ -152,8 +160,9 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
         return await asyncio.to_thread(self.grep, pattern, path, glob)
 
     def glob(self, pattern: str, path: str = "/") -> GlobResult:
-        relative_root = self._relative_virtual_path(path)
+        relative_root: str | None = None
         try:
+            relative_root = self._relative_path_for_tool(path, "glob", "glob")
             matches = [
                 self._file_info(file_path.relative_to(self.file_tools.workspace_root).as_posix())
                 for file_path in self._iter_files(relative_root, pattern)
@@ -168,24 +177,25 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
             )
             return GlobResult(matches=matches)
         except Exception as exc:
-            self.file_tools.audit_file_operation(
-                "glob", "glob", relative_root, "failed", str(exc)
-            )
-            return GlobResult(error=str(exc))
+            if relative_root is not None:
+                self.file_tools.audit_file_operation(
+                    "glob", "glob", relative_root, "failed", str(exc)
+                )
+            return GlobResult(error=self._safe_error(exc))
 
     async def aglob(self, pattern: str, path: str = "/") -> GlobResult:
         return await asyncio.to_thread(self.glob, pattern, path)
 
     def write(self, file_path: str, content: str) -> WriteResult:
         try:
-            relative_path = self._relative_virtual_path(file_path)
+            relative_path = self._relative_path_for_tool(file_path, "write_file", "write")
             path = self._workspace_path(relative_path)
             if path.exists():
                 return WriteResult(error=f"文件已存在：{file_path}")
             result = self.file_tools.write_file(relative_path, content)
             return WriteResult(path=self._virtual_path(str(result["relative_path"])))
         except Exception as exc:
-            return WriteResult(error=str(exc))
+            return WriteResult(error=self._safe_error(exc))
 
     async def awrite(self, file_path: str, content: str) -> WriteResult:
         return await asyncio.to_thread(self.write, file_path, content)
@@ -200,7 +210,7 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
         try:
             if old_string == new_string:
                 return EditResult(error="替换内容不能与原内容相同")
-            relative_path = self._relative_virtual_path(file_path)
+            relative_path = self._relative_path_for_tool(file_path, "edit_file", "write")
             original = self.file_tools.read_file(relative_path)
             occurrences = original.count(old_string)
             if occurrences == 0:
@@ -213,7 +223,7 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
             self.file_tools.write_file(relative_path, updated)
             return EditResult(path=file_path, occurrences=occurrences)
         except Exception as exc:
-            return EditResult(error=str(exc))
+            return EditResult(error=self._safe_error(exc))
 
     async def aedit(
         self,
@@ -260,14 +270,32 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
         return await asyncio.to_thread(self.download_files, paths)
 
     def _relative_virtual_path(self, raw_path: str) -> str:
-        normalized = raw_path.strip() or "/"
+        normalized = raw_path.strip().replace("\\", "/") or "/"
+        if is_windows_absolute_path(normalized):
+            raise PermissionError("路径超出任务工作区")
+        if normalized in {"/", "."}:
+            return "."
         if not normalized.startswith("/"):
-            normalized = f"/{normalized}"
+            return normalized
         candidate = normalized.lstrip("/")
+        first_segment = candidate.split("/", 1)[0]
         for prefix in DEEPAGENTS_INTERNAL_PREFIXES:
             if candidate == prefix or candidate.startswith(f"{prefix}/"):
                 return f"records/deepagents/{candidate}"
-        return candidate or "."
+        if first_segment in DEEPAGENT_VIRTUAL_ROOTS:
+            return candidate
+        raise PermissionError("路径超出任务工作区")
+
+    def _relative_path_for_tool(
+        self, raw_path: str, tool: str, operation: AuditOperation
+    ) -> str:
+        try:
+            return self._relative_virtual_path(raw_path)
+        except PermissionError as exc:
+            self.file_tools.audit_file_operation(
+                tool, operation, raw_path, "denied", str(exc)
+            )
+            raise
 
     def _join_relative(self, relative_path: str, name: str) -> str:
         if relative_path == ".":
@@ -318,6 +346,9 @@ class AuditedDeepAgentBackend(ImportedBackendProtocol):
             raise PermissionError("路径超出任务工作区")
         return path
 
+    def _safe_error(self, exc: Exception) -> str:
+        return self.file_tools.sanitize_reason(exc)
+
 
 class DeepAgentUnavailableError(RuntimeError):
     pass
@@ -344,9 +375,11 @@ class DeepAgentRuntime:
         file_tools: AuditedWorkspaceTools,
         *,
         agent_factory: AgentFactory | None = None,
+        activity_sink: ActivitySink | None = None,
     ) -> None:
         self.file_tools = file_tools
         self.agent_factory = agent_factory if agent_factory is not None else _DEFAULT_AGENT_FACTORY
+        self.activity_sink = activity_sink
 
     @property
     def is_available(self) -> bool:
@@ -386,19 +419,83 @@ class DeepAgentRuntime:
             backend=AuditedDeepAgentBackend(self.file_tools),
         )
         active_controller.raise_if_cancelled()
-        result = self._invoke_agent(agent, request)
-        active_controller.raise_if_cancelled()
-        return DeepAgentRunResult(
-            status="complete",
-            output_text=self._output_text(result),
-            metadata={"adapter": "deepagents", "result_type": type(result).__name__},
+        projector = DeepAgentActivityProjector(
+            task_id=request.task_id,
+            run_id=request.run_id,
+            sink=self.activity_sink,
         )
+        projector.emit_started()
+        try:
+            output_text, result_type, execution_mode = self._run_agent(
+                agent, request, active_controller, projector
+            )
+            active_controller.raise_if_cancelled()
+            projector.emit_completed()
+            return DeepAgentRunResult(
+                status="complete",
+                output_text=output_text,
+                metadata={
+                    "adapter": "deepagents",
+                    "result_type": result_type,
+                    "execution_mode": execution_mode,
+                },
+            )
+        except Exception:
+            projector.emit_failed()
+            raise
+
+    def _run_agent(
+        self,
+        agent: Any,
+        request: DeepAgentRunRequest,
+        controller: CancellationController,
+        projector: DeepAgentActivityProjector,
+    ) -> tuple[str, str, str]:
+        stream = getattr(agent, "stream", None)
+        if callable(stream):
+            stream_result = self._stream_agent(stream, request, controller, projector)
+            if stream_result is not None:
+                return stream_result
+        projector.emit_invoke_fallback()
+        result = self._invoke_agent(agent, request)
+        return self._output_text(result), type(result).__name__, "invoke"
+
+    def _stream_agent(
+        self,
+        stream: Callable[..., Any],
+        request: DeepAgentRunRequest,
+        controller: CancellationController,
+        projector: DeepAgentActivityProjector,
+    ) -> tuple[str, str, str] | None:
+        payload = self._agent_payload(request)
+        config = self._agent_config(request)
+        try:
+            chunks = stream(
+                payload,
+                config=config,
+                subgraphs=True,
+                version="v2",
+                stream_mode=["updates", "messages"],
+            )
+        except TypeError:
+            return None
+
+        consumed_chunk = False
+        try:
+            for chunk in chunks:
+                consumed_chunk = True
+                controller.raise_if_cancelled()
+                projector.observe_stream_chunk(chunk)
+        except TypeError:
+            if consumed_chunk:
+                raise
+            return None
+        output_text = projector.final_output_text or "DeepAgent 运行完成。"
+        return output_text, "stream", "stream"
 
     def _invoke_agent(self, agent: Any, request: DeepAgentRunRequest) -> Any:
-        payload = {
-            "messages": [{"role": "user", "content": request.message}],
-        }
-        config = {"configurable": {"thread_id": f"{request.task_id}:{request.run_id}"}}
+        payload = self._agent_payload(request)
+        config = self._agent_config(request)
         if hasattr(agent, "invoke"):
             try:
                 return agent.invoke(payload, config=config)
@@ -414,6 +511,16 @@ class DeepAgentRuntime:
         raise TypeError("DeepAgent factory 必须返回 callable、invoke 或 run 对象")
 
     @staticmethod
+    def _agent_payload(request: DeepAgentRunRequest) -> dict[str, Any]:
+        return {
+            "messages": [{"role": "user", "content": request.message}],
+        }
+
+    @staticmethod
+    def _agent_config(request: DeepAgentRunRequest) -> dict[str, Any]:
+        return {"configurable": {"thread_id": f"{request.task_id}:{request.run_id}"}}
+
+    @staticmethod
     def _output_text(result: Any) -> str:
         if isinstance(result, str):
             return result
@@ -427,6 +534,9 @@ class DeepAgentRuntime:
                 for message in reversed(messages):
                     if not isinstance(message, Mapping):
                         continue
+                    role = str(message.get("role") or message.get("type") or "").lower()
+                    if role and role not in {"assistant", "ai", "ai_message"}:
+                        continue
                     content = message.get("content")
                     if isinstance(content, str):
                         return content
@@ -436,8 +546,10 @@ class DeepAgentRuntime:
 def deep_agent_system_prompt() -> str:
     return (
         "你是 MyAgent 的任务内 DeepAgent。只能使用提供的文件工具访问当前运行工作区；"
-        "uploads/ 是本轮显式选择的只读上传快照，records/ 用于过程记录，outputs/ 用于"
-        "需要交付给用户的结果文件。不要尝试访问绝对路径、密钥、系统目录或任务工作区外部文件。"
+        "uploads/ 是本轮可用的只读上传快照，不是默认必须读取的内容；是否列出、检索或读取"
+        "这些文件由你根据用户任务自主决定。普通闲聊或无需文件依据的问题可以不读取 uploads/。"
+        "records/ 用于过程记录，outputs/ 用于需要交付给用户的结果文件。不要尝试访问绝对路径、"
+        "密钥、系统目录或任务工作区外部文件。"
     )
 
 
@@ -446,11 +558,12 @@ def deep_agent_subagents() -> list[dict[str, Any]]:
         {
             "name": "file-record-agent",
             "description": (
-                "在任务运行工作区内读取显式选择的上传快照，整理 records/ 过程记录，"
+                "在任务运行工作区内按需判断是否读取可用上传快照，整理 records/ 过程记录，"
                 "并将可交付结果写入 outputs/。"
             ),
             "system_prompt": (
-                "你只处理当前 run workspace 中的文件。读取 uploads/，写入 records/ 或 outputs/。"
+                "你只处理当前 run workspace 中的文件。uploads/ 是可选资料，只有任务需要时才读取；"
+                "写入 records/ 或 outputs/。"
             ),
             "tools": [],
         }

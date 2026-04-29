@@ -334,6 +334,48 @@ class TaskStorage:
             self._write_state(state)
             return self.get_task(task_id)
 
+    def update_task_if_status_and_append_event(
+        self,
+        task_id: str,
+        expected_statuses: set[TaskStatus],
+        *,
+        event_type: str,
+        event_message: str,
+        event_payload: dict[str, Any] | None = None,
+        event_level: Literal["info", "success", "warning", "error"] | None = None,
+        status: TaskStatus | None = None,
+        error: str | None = None,
+        needs_input: dict[str, Any] | None = None,
+        append_message: ChatMessage | None = None,
+        run_id: str | None = None,
+        artifact_names: list[str] | None = None,
+    ) -> TaskState | None:
+        with self._lock:
+            state = self._read_state(task_id, synthesize_legacy=True)
+            if state.status not in expected_statuses:
+                return None
+            if run_id and state.active_run_id and state.active_run_id != run_id:
+                return None
+            self._apply_task_update(
+                state,
+                status=status,
+                error=error,
+                needs_input=needs_input,
+                append_message=append_message,
+                run_id=run_id,
+                artifact_names=artifact_names,
+            )
+            self._append_event_unlocked(
+                task_id,
+                event_type,
+                event_message,
+                event_payload or {},
+                run_id=run_id,
+                level=event_level,
+            )
+            self._write_state(state)
+            return self.get_task(task_id)
+
     def save_uploads(
         self,
         task_id: str,
@@ -455,21 +497,40 @@ class TaskStorage:
         level: Literal["info", "success", "warning", "error"] | None = None,
     ) -> EventRecord:
         with self._lock:
-            if run_id:
-                validate_run_id(run_id)
-            event = EventRecord(
-                id=uuid.uuid4().hex,
-                type=event_type,
-                message=message,
-                created_at=utc_now(),
-                payload=payload or {},
+            return self._append_event_unlocked(
+                task_id,
+                event_type,
+                message,
+                payload or {},
                 run_id=run_id,
                 level=level,
             )
-            events_path = self.task_dir(task_id) / "logs" / "events.jsonl"
-            with events_path.open("a", encoding="utf-8") as handle:
-                handle.write(json.dumps(event.model_dump(), ensure_ascii=False) + "\n")
-            return event
+
+    def _append_event_unlocked(
+        self,
+        task_id: str,
+        event_type: str,
+        message: str,
+        payload: dict[str, Any],
+        *,
+        run_id: str | None = None,
+        level: Literal["info", "success", "warning", "error"] | None = None,
+    ) -> EventRecord:
+        if run_id:
+            validate_run_id(run_id)
+        event = EventRecord(
+            id=uuid.uuid4().hex,
+            type=event_type,
+            message=message,
+            created_at=utc_now(),
+            payload=payload,
+            run_id=run_id,
+            level=level,
+        )
+        events_path = self.task_dir(task_id) / "logs" / "events.jsonl"
+        with events_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event.model_dump(), ensure_ascii=False) + "\n")
+        return event
 
     def append_file_tool_audit(
         self, task_id: str, run_id: str | None, record: Mapping[str, Any]

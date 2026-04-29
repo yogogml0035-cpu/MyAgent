@@ -25,6 +25,8 @@ export type ExecutionLog = {
   level?: "info" | "success" | "warning" | "error";
   createdAt?: string;
   runId?: string | null;
+  agentActivity?: AgentActivityTrace;
+  fileAudit?: FileToolAuditTrace;
   reasoning?: ReasoningTrace;
 };
 
@@ -37,6 +39,45 @@ export type ReasoningTrace = {
   summary: string;
   confidence?: ReasoningConfidence;
   evidenceRefs: string[];
+};
+
+export type AgentActivityKind = "lifecycle" | "progress";
+export type AgentActivityPhase =
+  | "planning"
+  | "reasoning"
+  | "tool_use"
+  | "file_operation"
+  | "finalizing";
+export type AgentActivityStatus = "started" | "running" | "completed" | "failed" | "skipped";
+
+export type AgentActivityTrace = {
+  schemaVersion: 1;
+  source: "deepagents";
+  activityKind: AgentActivityKind;
+  phase: AgentActivityPhase;
+  status: AgentActivityStatus;
+  title: string;
+  summary: string;
+  sourceEventId?: string;
+  toolName?: string;
+  parameterSummary?: string;
+  resultSummary?: string;
+  subgraphPath: string[];
+  relatedEventId?: string;
+  truncated: boolean;
+};
+
+export type FileToolAuditTrace = {
+  toolName?: string;
+  operation: string;
+  status: string;
+  virtualPath: string;
+  source?: string;
+  bytes?: number;
+  sha256?: string;
+  reason?: string;
+  promotedArtifactId?: string;
+  partial?: boolean;
 };
 
 export type Artifact = {
@@ -59,19 +100,12 @@ export type ModelOption = {
 };
 
 export type MessageMode = "auto" | "chat" | "search" | "document_analysis" | "deep_agent";
-export type MessageInputScope = "auto" | "none" | "task_uploads";
-
-export type MessageInputScopeOption = {
-  value: MessageInputScope;
-  label: string;
-};
 
 export type MessageRequestPayload = {
   content: string;
   message: string;
   model: string;
   mode: MessageMode;
-  input_scope: MessageInputScope;
 };
 
 export type TaskRunRecord = {
@@ -138,13 +172,6 @@ type BrowserLocation = {
 const DEFAULT_API_BASE_URL = "http://localhost:8001";
 const DEFAULT_API_PORT = "8001";
 const DEFAULT_MESSAGE_MODE: MessageMode = "auto";
-const DEFAULT_MESSAGE_INPUT_SCOPE: MessageInputScope = "auto";
-
-export const MESSAGE_INPUT_SCOPE_OPTIONS: MessageInputScopeOption[] = [
-  { value: "auto", label: "自动" },
-  { value: "none", label: "不用文件" },
-  { value: "task_uploads", label: "使用文件" },
-];
 
 function formatUrlHostname(hostname: string) {
   return hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
@@ -170,14 +197,13 @@ export function resolveApiBaseUrl(configuredApiBaseUrl?: string, location?: Brow
 export function buildMessageRequestPayload(
   message: string,
   model: string,
-  options: { mode?: MessageMode; inputScope?: MessageInputScope } = {},
+  options: { mode?: MessageMode } = {},
 ): MessageRequestPayload {
   return {
     content: message,
     message,
     model,
     mode: options.mode ?? DEFAULT_MESSAGE_MODE,
-    input_scope: options.inputScope ?? DEFAULT_MESSAGE_INPUT_SCOPE,
   };
 }
 
@@ -211,8 +237,66 @@ function readReasoningConfidence(value: unknown): ReasoningConfidence | undefine
     : undefined;
 }
 
+function readAgentActivityKind(value: unknown): AgentActivityKind | undefined {
+  const kind = readString(value);
+  return kind === "lifecycle" || kind === "progress" ? kind : undefined;
+}
+
+function readAgentActivityPhase(value: unknown): AgentActivityPhase | undefined {
+  const phase = readString(value);
+  return phase === "planning" ||
+    phase === "reasoning" ||
+    phase === "tool_use" ||
+    phase === "file_operation" ||
+    phase === "finalizing"
+    ? phase
+    : undefined;
+}
+
+function readAgentActivityStatus(value: unknown): AgentActivityStatus | undefined {
+  const status = readString(value);
+  return status === "started" ||
+    status === "running" ||
+    status === "completed" ||
+    status === "failed" ||
+    status === "skipped"
+    ? status
+    : undefined;
+}
+
 function readNumber(value: unknown, fallback = 0) {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function readOptionalNumber(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readOptionalBoolean(value: unknown) {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function truncateDisplayText(value: string, maxChars: number) {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function readBoundedString(value: unknown, maxChars: number) {
+  const text = readString(value).trim();
+  return text ? truncateDisplayText(text, maxChars) : undefined;
+}
+
+function readBoundedStringList(value: unknown, maxItems: number, maxChars: number) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => truncateDisplayText(entry.trim(), maxChars))
+    .filter(Boolean)
+    .slice(0, maxItems);
 }
 
 function formatValue(value: unknown) {
@@ -394,15 +478,81 @@ function normalizeReasoningTrace(type: string | undefined, payload: Record<strin
   };
 }
 
+function normalizeAgentActivity(type: string | undefined, payload: Record<string, unknown>) {
+  if (type !== "deep_agent_activity") {
+    return undefined;
+  }
+
+  const schemaVersion = payload.schema_version ?? payload.schemaVersion;
+  const source = readString(payload.source);
+  const activityKind = readAgentActivityKind(payload.activity_kind ?? payload.activityKind);
+  const phase = readAgentActivityPhase(payload.phase);
+  const status = readAgentActivityStatus(payload.status);
+  const title = readBoundedString(payload.title, 120);
+  const summary = readBoundedString(payload.summary, 1000);
+
+  if (schemaVersion !== 1 || source !== "deepagents" || !activityKind || !phase || !status || !title || !summary) {
+    return undefined;
+  }
+
+  return {
+    schemaVersion: 1 as const,
+    source: "deepagents" as const,
+    activityKind,
+    phase,
+    status,
+    title,
+    summary,
+    sourceEventId: readBoundedString(payload.source_event_id ?? payload.sourceEventId, 160),
+    toolName: readBoundedString(payload.tool_name ?? payload.toolName, 80),
+    parameterSummary: readBoundedString(payload.parameter_summary ?? payload.parameterSummary, 240),
+    resultSummary: readBoundedString(payload.result_summary ?? payload.resultSummary, 360),
+    subgraphPath: readBoundedStringList(payload.subgraph_path ?? payload.subgraphPath, 8, 80),
+    relatedEventId: readBoundedString(payload.related_event_id ?? payload.relatedEventId, 160),
+    truncated: readOptionalBoolean(payload.truncated) ?? false,
+  };
+}
+
+function normalizeFileToolAudit(type: string | undefined, payload: Record<string, unknown>) {
+  if (type !== "file_tool_audit") {
+    return undefined;
+  }
+
+  const operation = readBoundedString(payload.op ?? payload.operation, 80);
+  const status = readBoundedString(payload.status, 80);
+  const virtualPath = readBoundedString(
+    payload.virtual_path ?? payload.relative_path ?? payload.requested_path,
+    240,
+  );
+
+  if (!operation || !status || !virtualPath) {
+    return undefined;
+  }
+
+  return {
+    toolName: readBoundedString(payload.tool_name ?? payload.tool, 80),
+    operation,
+    status,
+    virtualPath,
+    source: readBoundedString(payload.source, 80),
+    bytes: readOptionalNumber(payload.bytes),
+    sha256: readBoundedString(payload.sha256, 80),
+    reason: readBoundedString(payload.reason, 240),
+    promotedArtifactId: readBoundedString(payload.promoted_artifact_id ?? payload.promotedArtifactId, 160),
+    partial: readOptionalBoolean(payload.partial),
+  };
+}
+
 function normalizeMessage(value: unknown, index: number): ChatMessage {
   const record = isRecord(value) ? value : {};
   const role = readString(record.role, "assistant");
+  const normalizedRole = role === "user" || role === "system" ? role : "assistant";
   const level = readLevel(record.level);
   const rawContent = readString(record.content ?? record.text ?? record.message, "");
   return {
     id: readString(record.id, `message-${index}`),
-    role: role === "user" || role === "system" ? role : "assistant",
-    content: translateKnownDisplayText(rawContent),
+    role: normalizedRole,
+    content: normalizedRole === "user" ? rawContent : translateKnownDisplayText(rawContent),
     createdAt: readOptionalString(record.created_at ?? record.createdAt),
     runId: maybeRunId(record),
     level: level === "success" ? undefined : level,
@@ -425,6 +575,8 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
     level,
     createdAt: readOptionalString(record.created_at ?? record.createdAt),
     runId: maybeRunId(record),
+    agentActivity: normalizeAgentActivity(type, payload),
+    fileAudit: normalizeFileToolAudit(type, payload),
     reasoning: normalizeReasoningTrace(type, payload),
   };
 }
