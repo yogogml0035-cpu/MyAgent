@@ -48,7 +48,7 @@ Use it when changing task APIs, task state transitions, runner behavior, event l
 - User message cards expose a copy action whose clipboard text is exactly `message.content`. Assistant copy support remains on the final-answer card; execution-log copy/export uses the full safe run log set, including rows hidden by compact default rendering.
 - Reasoning summaries render inside the same run-grouped progress card as operation logs, with a distinct `思考摘要` label. The frontend does not create a separate reasoning/history card.
 - Backend task errors, needs-input notices, missing provider-key warnings, local upload warnings, copy failures, and artifact-open failures should stay in the conversation stream as robot-authored assistant notices, not detached banners.
-- Report artifacts render as independent result/download cards and must open/download through token-aware blob fetching. Prefer run-scoped artifact URLs when a `run_id` is available.
+- Generated run artifacts render as independent result/download cards, including non-report Markdown/JSON outputs as well as HTML reports. They must open/download through token-aware blob fetching. Prefer run-scoped artifact URLs when a `run_id` is available.
 - The frontend may map known fixed English backend legacy strings to Chinese through an explicit whitelist. Do not add broad automatic translation for user text, filenames, URLs, uploaded content, or model replies.
 - Provider keys such as `DEEPSEEK_API_KEY` and `TAVILY_API_KEY` are backend-only. Browser-visible `NEXT_PUBLIC_*` values must not contain provider keys, customer text, or private credentials.
 - Missing `DEEPSEEK_API_KEY` for simple chat is a provider-configuration warning, not a hard frontend error. Document-analysis fallback behavior should remain available.
@@ -138,6 +138,7 @@ Output: backend MYAGENT_CORS_ORIGINS includes http://<LAN_IP>:3001, backend acce
 - Top-level artifact URLs resolve to the latest completed run containing that artifact name, then fall back to legacy top-level files.
 - Frontend message submission sends `mode` only for normal first-party runs. The composer intentionally does not expose Auto/Do not use files/Use files choices; file relevance is decided by backend routing and, for DeepAgent runs, by the model's audited file-tool calls.
 - Frontend run activity grouping suppresses setup-only `task_created` and `file_uploaded` fallback history when real run cards exist, while preserving unmatched warning/error logs.
+- Frontend run activity grouping must include every backend-provided run artifact name or artifact record; filtering to report-like or HTML-only names hides valid generated files.
 - Frontend normalizes `deep_agent_activity` into `ExecutionLog.agentActivity` only when `schema_version`, enum fields, and required safe text fields are valid. Malformed activity payloads fall back to normal log rendering and must not expose arbitrary payload JSON in DOM or copied logs.
 - Frontend normalizes `reasoning_trace` into `ExecutionLog.reasoning` only when the payload is valid. Malformed reasoning payloads fall back to normal log rendering and must not expose arbitrary payload JSON in DOM or copied logs.
 - Frontend run cards show at most three info-level reasoning summaries by default; warning/error logs always remain visible. The expand/collapse control discloses the hidden reasoning count, and copied logs include all reasoning summaries.
@@ -175,8 +176,8 @@ Output: backend MYAGENT_CORS_ORIGINS includes http://<LAN_IP>:3001, backend acce
 - Do not render backend task errors, needs-input notices, or frontend workspace warnings as full-width detached banners.
 - Do not turn the workspace into a marketing landing page when applying the warm editorial visual system; keep the first screen usable as the task composer and history workspace.
 - Do not reintroduce the old cool-blue/slate visual theme for primary actions, selected states, or run chrome unless the frontend visual-token contract is intentionally replaced.
-- Do not flatten multi-run logs and reports into one undifferentiated report area.
-- Do not place report artifact actions only inside a log card footer.
+- Do not flatten multi-run logs and artifacts into one undifferentiated result area.
+- Do not place artifact actions only inside a log card footer.
 - Do not let the sticky composer obscure the newest assistant output after logs or artifacts are inserted.
 - Do not pass `AuditedWorkspaceTools` instances, task directories, or absolute paths directly into DeepAgent code; pass only the callables returned by the adapter.
 - Do not pass raw DeepAgent output filenames directly into artifact storage; promote them through the artifact-safe naming boundary so ordinary model-created names with spaces or punctuation cannot fail an otherwise successful run.

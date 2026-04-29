@@ -251,7 +251,7 @@ test("formatTaskStatus keeps run badges localized", () => {
   assert.equal(formatTaskStatus("unknown"), "历史");
 });
 
-test("buildRunActivityGroups groups logs and reports by run chronologically", () => {
+test("buildRunActivityGroups groups logs and artifacts by run chronologically", () => {
   const groups = buildRunActivityGroups(
     [
       {
@@ -295,7 +295,7 @@ test("buildRunActivityGroups groups logs and reports by run chronologically", ()
 
   assert.deepEqual(groups.map((group) => group.runId), ["run-1", "run-2"]);
   assert.deepEqual(groups[0].logs.map((log) => log.id), ["event-1a", "event-1b"]);
-  assert.equal(groups[0].reportArtifacts[0].runId, "run-1");
+  assert.equal(groups[0].artifacts[0].runId, "run-1");
 });
 
 test("buildRunActivityGroups keeps reasoning traces chronologically with operation logs", () => {
@@ -515,26 +515,51 @@ test("buildRunActivityGroups keeps non-upload orphan logs as neutral history", (
   assert.deepEqual(groups.at(-1)?.logs.map((log) => log.id), ["orphan-warning"]);
 });
 
-test("buildRunActivityGroups dedupes unscoped report artifacts by rendered run", () => {
+test("buildRunActivityGroups keeps fallback non-report artifacts visible", () => {
   const groups = buildRunActivityGroups(
     [
       {
         id: "run-1",
         status: "complete",
         startedAt: "2026-04-27T08:00:00.000Z",
-        artifactNames: ["report.html"],
+        artifactNames: [],
       },
     ],
     [],
-    [{ id: "legacy-report", name: "report.html" }],
+    [{ id: "missing-run:final-summary.md", name: "final-summary.md", runId: "missing-run" }],
+  );
+
+  assert.deepEqual(groups.map((group) => group.runId), ["legacy"]);
+  assert.deepEqual(groups[0].artifacts.map((artifact) => artifact.name), ["final-summary.md"]);
+  assert.equal(groups[0].artifacts[0].runId, "legacy");
+});
+
+test("buildRunActivityGroups dedupes unscoped artifacts by rendered run", () => {
+  const groups = buildRunActivityGroups(
+    [
+      {
+        id: "run-1",
+        status: "complete",
+        startedAt: "2026-04-27T08:00:00.000Z",
+        artifactNames: ["final-summary.md", "report.html"],
+      },
+    ],
+    [],
+    [
+      { id: "legacy-summary", name: "final-summary.md" },
+      { id: "legacy-report", name: "report.html" },
+    ],
   );
 
   assert.deepEqual(groups.map((group) => group.runId), ["run-1"]);
-  assert.equal(groups[0].reportArtifacts.length, 1);
-  assert.equal(groups[0].reportArtifacts[0].runId, "run-1");
+  assert.deepEqual(groups[0].artifacts.map((artifact) => artifact.name), [
+    "final-summary.md",
+    "report.html",
+  ]);
+  assert.equal(groups[0].artifacts[0].runId, "run-1");
 });
 
-test("buildRunActivityGroups keeps same report names separate across runs", () => {
+test("buildRunActivityGroups keeps same artifact names separate across runs", () => {
   const groups = buildRunActivityGroups(
     [
       {
@@ -558,9 +583,9 @@ test("buildRunActivityGroups keeps same report names separate across runs", () =
   );
 
   assert.deepEqual(groups.map((group) => group.runId), ["run-1", "run-2"]);
-  assert.deepEqual(groups.map((group) => group.reportArtifacts.length), [1, 1]);
-  assert.equal(groups[0].reportArtifacts[0].runId, "run-1");
-  assert.equal(groups[1].reportArtifacts[0].runId, "run-2");
+  assert.deepEqual(groups.map((group) => group.artifacts.length), [1, 1]);
+  assert.equal(groups[0].artifacts[0].runId, "run-1");
+  assert.equal(groups[1].artifacts[0].runId, "run-2");
 });
 
 test("isWarningChatMessage recognizes explicit and legacy provider warnings", () => {
@@ -618,14 +643,14 @@ test("buildConversationStreamItems places run activity before the assistant repl
       title: "第 1 轮",
       status: "complete" as const,
       logs: [{ id: "event-1", title: "第一轮", runId: "run-1" }],
-      reportArtifacts: [],
+      artifacts: [],
     },
     {
       runId: "run-2",
       title: "第 2 轮",
       status: "running" as const,
       logs: [{ id: "event-2", title: "第二轮", runId: "run-2" }],
-      reportArtifacts: [],
+      artifacts: [],
     },
   ];
 
@@ -656,14 +681,23 @@ test("buildConversationStreamItems places artifact cards after assistant replies
         title: "第 1 轮",
         status: "complete" as const,
         logs: [{ id: "event-1", title: "完成", runId: "run-1" }],
-        reportArtifacts: [{ id: "run-1:report.html", name: "report.html", runId: "run-1" }],
+        artifacts: [
+          { id: "run-1:final-summary.md", name: "final-summary.md", runId: "run-1" },
+          { id: "run-1:evidence.json", name: "evidence.json", runId: "run-1" },
+        ],
       },
     ],
   );
 
   assert.deepEqual(
     items.map((item) => item.id),
-    ["message:m1", "run:run-1", "message:m2", "artifact:run-1:report.html"],
+    [
+      "message:m1",
+      "run:run-1",
+      "message:m2",
+      "artifact:run-1:final-summary.md",
+      "artifact:run-1:evidence.json",
+    ],
   );
 });
 
@@ -676,7 +710,7 @@ test("buildConversationStreamItems keeps artifact cards after run logs without a
         title: "第 1 轮",
         status: "running" as const,
         logs: [{ id: "event-1", title: "写入报告", runId: "run-1" }],
-        reportArtifacts: [{ id: "run-1:report.html", name: "report.html", runId: "run-1" }],
+        artifacts: [{ id: "run-1:report.html", name: "report.html", runId: "run-1" }],
       },
     ],
   );

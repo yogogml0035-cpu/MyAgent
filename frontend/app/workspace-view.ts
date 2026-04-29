@@ -22,7 +22,7 @@ export type RunActivityGroup = {
   startedAt?: string;
   completedAt?: string;
   logs: ExecutionLog[];
-  reportArtifacts: Artifact[];
+  artifacts: Artifact[];
 };
 
 export type VisibleLogPartition = {
@@ -416,11 +416,6 @@ export function formatRunLogStatus(status: TaskStatus) {
   }
 }
 
-export function isReportArtifact(artifact: Artifact) {
-  const marker = `${artifact.name} ${artifact.kind ?? ""} ${artifact.path ?? ""} ${artifact.url ?? ""}`.toLowerCase();
-  return marker.includes("report") || marker.includes(".html");
-}
-
 function runTimeValue(run: TaskRunRecord) {
   return run.startedAt ?? run.completedAt ?? "";
 }
@@ -491,7 +486,6 @@ export function buildRunActivityGroups(
     );
     const artifactMap = new Map<string, Artifact>();
     [...run.artifactNames.map((name) => artifactFromRunName(run.id, name)), ...runArtifacts]
-      .filter(isReportArtifact)
       .forEach((artifact) => {
         const key = artifactKeyForRun(run.id, artifact);
         if (!artifactMap.has(key)) {
@@ -508,7 +502,7 @@ export function buildRunActivityGroups(
       logs: logs
         .filter((log) => log.runId === run.id || (runs.length === 1 && !log.runId))
         .sort(byCreatedAt),
-      reportArtifacts: Array.from(artifactMap.values()),
+      artifacts: Array.from(artifactMap.values()),
     };
   });
 
@@ -520,23 +514,20 @@ export function buildRunActivityGroups(
     (artifact) =>
       (!artifact.runId && runs.length !== 1) || (artifact.runId && !knownRunIds.has(artifact.runId)),
   );
-  const fallbackReportArtifacts = fallbackArtifacts.filter(isReportArtifact);
   const visibleFallbackLogs =
     runs.length > 0 ? fallbackLogs.filter((log) => !isSetupFallbackLog(log)) : fallbackLogs;
 
-  if (visibleFallbackLogs.length > 0 || fallbackReportArtifacts.length > 0) {
+  if (visibleFallbackLogs.length > 0 || fallbackArtifacts.length > 0) {
     groups.push({
       runId: "legacy",
       title: runs.length > 0 ? "历史日志" : "第 1 轮",
       status: "unknown",
       logs: visibleFallbackLogs.sort(byCreatedAt),
-      reportArtifacts: fallbackReportArtifacts.map((artifact) =>
-        artifactForRenderedRun("legacy", artifact),
-      ),
+      artifacts: fallbackArtifacts.map((artifact) => artifactForRenderedRun("legacy", artifact)),
     });
   }
 
-  return groups.filter((group) => group.logs.length > 0 || group.reportArtifacts.length > 0);
+  return groups.filter((group) => group.logs.length > 0 || group.artifacts.length > 0);
 }
 
 function groupTimeValue(group: RunActivityGroup) {
@@ -572,7 +563,7 @@ export function buildConversationStreamItems(
   }
 
   function pushArtifactItems(group: RunActivityGroup) {
-    group.reportArtifacts.forEach((artifact) => {
+    group.artifacts.forEach((artifact) => {
       items.push({
         id: `artifact:${group.runId}:${artifact.name}`,
         kind: "artifact",
