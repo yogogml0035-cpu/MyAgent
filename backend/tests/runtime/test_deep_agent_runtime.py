@@ -204,6 +204,60 @@ def test_deep_agent_available_uploads_are_not_read_until_agent_chooses(
     assert str(task_workspace) not in serialized_events
 
 
+def test_deep_agent_promotes_outputs_with_safe_unique_artifact_names(
+    tmp_path: Path,
+) -> None:
+    storage, task_id, run_id = make_running_task(tmp_path)
+    task_workspace = storage.task_dir(task_id)
+
+    def fake_factory(
+        *,
+        model: str,
+        tools: list[Any],
+        system_prompt: str,
+        subagents: list[dict[str, Any]],
+        backend: Any,
+    ) -> Any:
+        assert model == "deepseek-reasoner"
+        assert "DeepAgent" in system_prompt
+        assert subagents[0]["name"] == "file-record-agent"
+        assert isinstance(backend, deep_agent_runtime.AuditedDeepAgentBackend)
+        tool_map = {tool.__name__: tool for tool in tools}
+
+        def fake_agent(_payload: dict[str, Any]) -> dict[str, str]:
+            tool_map["write_file"]("outputs/final summary.md", "space")
+            tool_map["write_file"]("outputs/final#summary.md", "hash")
+            tool_map["write_file"]("outputs/结果 报告.md", "cn")
+            return {"content": "DeepAgent 已生成多个输出。"}
+
+        return fake_agent
+
+    result = DeepAgentOrchestrator(
+        storage=storage,
+        task_id=task_id,
+        run_id=run_id,
+        model="deepseek-reasoner",
+        controller=CancellationController(),
+        agent_factory=fake_factory,
+    ).run("生成带有复杂文件名的输出")
+
+    expected_artifacts = [
+        "deep-agent-final_summary.md",
+        "deep-agent-2-final_summary.md",
+        "deep-agent-结果_报告.md",
+    ]
+    artifact_dir = task_workspace / "artifacts" / "runs" / run_id
+    state = storage.get_task(task_id, include_events=False)
+    run_record = next(run for run in state.runs if run.id == run_id)
+
+    assert result.status == "complete"
+    assert result.metadata["promoted_artifacts"] == expected_artifacts
+    assert sorted(run_record.artifact_names) == sorted(expected_artifacts)
+    assert (artifact_dir / "deep-agent-final_summary.md").read_text(encoding="utf-8") == "space"
+    assert (artifact_dir / "deep-agent-2-final_summary.md").read_text(encoding="utf-8") == "hash"
+    assert (artifact_dir / "deep-agent-结果_报告.md").read_text(encoding="utf-8") == "cn"
+
+
 def test_deep_agent_runtime_streams_with_required_options_and_activity_events(
     tmp_path: Path,
 ) -> None:

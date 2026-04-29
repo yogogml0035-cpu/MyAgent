@@ -10,7 +10,7 @@ from .deep_agent_runtime import DeepAgentRunRequest, DeepAgentRunResult, DeepAge
 from .permissions import PermissionPolicy
 from .reasoning_trace import ReasoningConfidence, ReasoningPhase
 from .runtime import CancellationController
-from .storage import TaskStorage
+from .storage import TaskStorage, safe_filename
 from .tools import AuditedWorkspaceTools, safe_audit_path
 
 
@@ -222,11 +222,12 @@ class DeepAgentOrchestrator:
         if not output_root.exists():
             return []
         promoted: list[str] = []
+        used_names: set[str] = set()
         for path in sorted(output_root.iterdir()):
             self.controller.raise_if_cancelled()
             if not path.is_file():
                 continue
-            artifact_name = f"deep-agent-{path.name}"
+            artifact_name = self._promoted_artifact_name(path.name, used_names)
             self.storage.write_run_text(
                 self.task_id,
                 self.run_id,
@@ -236,3 +237,18 @@ class DeepAgentOrchestrator:
             self.storage.record_run_artifact(self.task_id, self.run_id, artifact_name)
             promoted.append(artifact_name)
         return promoted
+
+    @staticmethod
+    def _promoted_artifact_name(source_name: str, used_names: set[str]) -> str:
+        candidate = safe_filename(f"deep-agent-{source_name}")
+        if candidate not in used_names:
+            used_names.add(candidate)
+            return candidate
+
+        counter = 2
+        while True:
+            candidate = safe_filename(f"deep-agent-{counter}-{source_name}")
+            if candidate not in used_names:
+                used_names.add(candidate)
+                return candidate
+            counter += 1
