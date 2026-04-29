@@ -353,6 +353,12 @@ test("workspace CSS uses the reference robot sender avatar treatment", () => {
   assert.match(cssSource, /\.messageBotIcon\s*\{[\s\S]*?color: #2563eb;/);
 });
 
+test("empty workspace hero wordmark is text-only", () => {
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.equal(cssSource.includes(".heroMark::before"), false);
+});
+
 test("formatTaskStatus keeps run badges localized", () => {
   assert.equal(formatTaskStatus("running"), "运行中");
   assert.equal(formatTaskStatus("complete"), "已完成");

@@ -29,6 +29,12 @@ from .schemas import (
 
 ArtifactType: TypeAlias = Literal["html", "markdown", "json", "text"]
 UploadSourceFormat: TypeAlias = Literal["markdown", "json"]
+EventAppendSpec: TypeAlias = tuple[
+    str,
+    str,
+    dict[str, Any],
+    Literal["info", "success", "warning", "error"] | None,
+]
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 MAX_FILENAME_BYTES = 180
 LEGACY_RUN_ID = "legacy"
@@ -334,15 +340,12 @@ class TaskStorage:
             self._write_state(state)
             return self.get_task(task_id)
 
-    def update_task_if_status_and_append_event(
+    def update_task_if_status_and_append_events(
         self,
         task_id: str,
         expected_statuses: set[TaskStatus],
         *,
-        event_type: str,
-        event_message: str,
-        event_payload: dict[str, Any] | None = None,
-        event_level: Literal["info", "success", "warning", "error"] | None = None,
+        events: Iterable[EventAppendSpec],
         status: TaskStatus | None = None,
         error: str | None = None,
         needs_input: dict[str, Any] | None = None,
@@ -365,16 +368,45 @@ class TaskStorage:
                 run_id=run_id,
                 artifact_names=artifact_names,
             )
-            self._append_event_unlocked(
-                task_id,
-                event_type,
-                event_message,
-                event_payload or {},
-                run_id=run_id,
-                level=event_level,
-            )
+            for event_type, event_message, event_payload, event_level in events:
+                self._append_event_unlocked(
+                    task_id,
+                    event_type,
+                    event_message,
+                    event_payload,
+                    run_id=run_id,
+                    level=event_level,
+                )
             self._write_state(state)
             return self.get_task(task_id)
+
+    def update_task_if_status_and_append_event(
+        self,
+        task_id: str,
+        expected_statuses: set[TaskStatus],
+        *,
+        event_type: str,
+        event_message: str,
+        event_payload: dict[str, Any] | None = None,
+        event_level: Literal["info", "success", "warning", "error"] | None = None,
+        status: TaskStatus | None = None,
+        error: str | None = None,
+        needs_input: dict[str, Any] | None = None,
+        append_message: ChatMessage | None = None,
+        run_id: str | None = None,
+        artifact_names: list[str] | None = None,
+    ) -> TaskState | None:
+        return self.update_task_if_status_and_append_events(
+            task_id,
+            expected_statuses,
+            events=[(event_type, event_message, event_payload or {}, event_level)],
+            status=status,
+            error=error,
+            needs_input=needs_input,
+            append_message=append_message,
+            run_id=run_id,
+            artifact_names=artifact_names,
+        )
 
     def save_uploads(
         self,

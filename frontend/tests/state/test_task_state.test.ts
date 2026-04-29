@@ -268,6 +268,39 @@ test("normalizeTaskState preserves valid reasoning trace metadata", () => {
   });
 });
 
+test("normalizeTaskState preserves terminal task-run reasoning summaries", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "reasoning-terminal",
+          type: "reasoning_trace",
+          message: "task-run 已记录思考摘要。",
+          run_id: "run-1",
+          payload: {
+            agent_id: "task-run",
+            phase: "risk",
+            summary: "轻量搜索已结束但存在限制：模型合成=未使用，安全来源数 0。",
+            confidence: "medium",
+            evidence_refs: ["missing_tavily_key"],
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.logs[0].reasoning, {
+    agentId: "task-run",
+    phase: "risk",
+    summary: "轻量搜索已结束但存在限制：模型合成=未使用，安全来源数 0。",
+    confidence: "medium",
+    evidenceRefs: ["missing_tavily_key"],
+  });
+});
+
 test("normalizeTaskState preserves valid deep agent activity metadata", () => {
   const longTitle = "T".repeat(130);
   const longSummary = "S".repeat(1010);

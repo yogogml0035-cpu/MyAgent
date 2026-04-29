@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from typing import Any, cast
 
+import httpx
 import pytest
 
 from app.agent_activity import build_deep_agent_activity_payload
+from app.model_provider import DeepSeekProvider
 from app.reasoning_trace import build_reasoning_trace_payload
 from app.storage import TaskStorage
 
@@ -148,3 +150,24 @@ def test_task_storage_appends_fixed_reasoning_trace_event(tmp_path) -> None:
     assert event.run_id == run_id
     assert event.payload["phase"] == "plan"
     assert event.payload["evidence_refs"] == ["uploads/a.md"]
+
+
+def test_deepseek_extract_content_ignores_reasoning_content_canary() -> None:
+    response = httpx.Response(
+        200,
+        json={
+            "choices": [
+                {
+                    "message": {
+                        "reasoning_content": "RAW_REASONING_CONTENT_CANARY_SHOULD_NOT_APPEAR",
+                        "content": "安全最终回答。",
+                    }
+                }
+            ]
+        },
+    )
+
+    content = DeepSeekProvider._extract_content(response)
+
+    assert content == "安全最终回答。"
+    assert "RAW_REASONING_CONTENT_CANARY_SHOULD_NOT_APPEAR" not in content

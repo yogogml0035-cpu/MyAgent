@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, Thread
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from .agent_profiles import (
     AgentProfile,
@@ -19,11 +19,16 @@ from .intent import InputScope, TaskMode, route_intent
 from .model_provider import ModelProvider, is_model_configuration_warning
 from .orchestrator import DeepAgentOrchestrator
 from .permissions import PermissionPolicy
-from .reasoning_trace import sanitize_reasoning_text
+from .reasoning_trace import (
+    ReasoningConfidence,
+    ReasoningPhase,
+    build_reasoning_trace_payload,
+    sanitize_reasoning_text,
+)
 from .runtime import CancellationController
 from .schemas import ChatMessage, TaskStatus
 from .settings import Settings
-from .storage import TaskStorage, source_format_for_upload
+from .storage import EventAppendSpec, TaskStorage, source_format_for_upload
 from .tools import WorkspaceTools
 
 STARTABLE_STATUSES: set[TaskStatus] = {
@@ -41,8 +46,10 @@ SEARCH_TITLE_CHARS = 140
 SEARCH_URL_CHARS = 360
 SEARCH_SYNTHESIS_ANSWER_CHARS = 4000
 ORCHESTRATION_TENDER_MARKERS = ("tender", "招标", "采购", "需求书")
+RUN_REASONING_AGENT_ID = "task-run"
 
 Emit = Callable[..., None]
+TerminalReasoning: TypeAlias = tuple[ReasoningPhase, str, ReasoningConfidence, list[str]]
 
 
 @dataclass(frozen=True)
@@ -180,8 +187,21 @@ class TaskRunner:
         self.storage.append_event(
             task_id, "cancel_requested", "已请求取消任务。", {}, run_id=run_id
         )
-        updated = self.storage.update_task_if_status(
-            task_id, RUNNING_STATUSES, status="cancelled", run_id=run_id
+        reasoning_events: list[EventAppendSpec] = []
+        if run_id:
+            reasoning_events = self._run_reasoning_event_specs(
+                task_id,
+                run_id,
+                phase="risk",
+                summary="任务已取消，已保留当前可用的安全运行记录。",
+                confidence="medium",
+            )
+        updated = self.storage.update_task_if_status_and_append_events(
+            task_id,
+            RUNNING_STATUSES,
+            events=reasoning_events,
+            status="cancelled",
+            run_id=run_id,
         )
         if updated is None:
             self.storage.append_event(
@@ -309,6 +329,11 @@ class TaskRunner:
                     run_id,
                     reply,
                     level="warning" if warning_reply else None,
+                    terminal_reasoning=self._simple_terminal_reasoning(
+                        route=decision.route,
+                        result=simple_result,
+                        warning_reply=warning_reply,
+                    ),
                     completion_event_type=(
                         "chat_completed" if decision.route == "chat" else "search_completed"
                     ),
@@ -351,6 +376,21 @@ class TaskRunner:
                         deep_agent_result.output_text,
                         level="warning" if deep_agent_warning else None,
                         artifact_names=[str(name) for name in artifact_names],
+                        terminal_reasoning=(
+                            (
+                                "risk",
+                                "DeepAgent 已完成但返回运行提醒；详情仅记录安全元数据。",
+                                "medium",
+                                [str(name) for name in artifact_names],
+                            )
+                            if deep_agent_warning
+                            else (
+                                "final_summary",
+                                f"DeepAgent 已完成本轮任务并提升 {len(artifact_names)} 个输出产物。",
+                                "medium" if artifact_names else "low",
+                                [str(name) for name in artifact_names],
+                            )
+                        ),
                         completion_event_type="deep_agent_completed",
                         completion_event_message="DeepAgent 运行已完成。",
                         completion_event_payload=deep_agent_result.metadata,
@@ -386,7 +426,16 @@ class TaskRunner:
                         )
                     else:
                         self._complete_with_assistant_message(
-                            task_id, run_id, reply, level="warning"
+                            task_id,
+                            run_id,
+                            reply,
+                            level="warning",
+                            terminal_reasoning=(
+                                "risk",
+                                "DeepAgent 运行库不可用，本轮未启动 DeepAgent 执行。",
+                                "medium",
+                                [],
+                            ),
                         )
                         return
                 else:
@@ -425,6 +474,14 @@ class TaskRunner:
                 run_id,
                 assistant_text,
                 artifact_names=bid_result.get("artifacts"),
+                terminal_reasoning=(
+                    "final_summary",
+                    (
+                        "文档分析已完成，已生成结构化证据和本轮报告产物。"
+                    ),
+                    "medium",
+                    [str(name) for name in bid_result.get("artifacts") or []],
+                ),
                 completion_event_type="task_completed",
                 completion_event_message="任务已完成。",
                 completion_event_payload=bid_result,
@@ -432,29 +489,166 @@ class TaskRunner:
             if not completed and controller.is_cancelled():
                 raise CancelledError()
         except CancelledError:
+            self._append_run_reasoning_trace_if_absent(
+                task_id,
+                run_id,
+                phase="risk",
+                summary="任务已取消，已保留当前可用的安全运行记录。",
+                confidence="medium",
+            )
             emit("task_cancelled", "任务已取消，已保留中间产物。", {})
             self.storage.update_task_if_status(
                 task_id, RUNNING_STATUSES, status="cancelled", run_id=run_id
             )
         except NeedsInputError as exc:
             payload = {"message": str(exc), **exc.payload}
-            emit("needs_input", str(exc), payload)
-            self.storage.update_task_if_status(
+            self.storage.update_task_if_status_and_append_events(
                 task_id,
                 RUNNING_STATUSES,
+                events=[
+                    *self._run_reasoning_event_specs(
+                        task_id,
+                        run_id,
+                        phase="next_step",
+                        summary=(
+                            "当前请求需要补充输入后才能继续执行；"
+                            "请按提示上传或提供所需材料。"
+                        ),
+                        confidence="high",
+                        evidence_refs=[
+                            str(payload.get("required_file_type") or "required_input")
+                        ],
+                    ),
+                    ("needs_input", str(exc), payload, None),
+                ],
                 status="needs_input",
                 needs_input=payload,
                 run_id=run_id,
             )
         except Exception as exc:
-            emit("task_failed", "任务执行失败。", {"error": str(exc)})
-            self.storage.update_task_if_status(
-                task_id, RUNNING_STATUSES, status="failed", error=str(exc), run_id=run_id
+            safe_error = bounded_safe_text(str(exc), 240)
+            self.storage.update_task_if_status_and_append_events(
+                task_id,
+                RUNNING_STATUSES,
+                status="failed",
+                error=safe_error,
+                run_id=run_id,
+                events=[
+                    *self._run_reasoning_event_specs(
+                        task_id,
+                        run_id,
+                        phase="risk",
+                        summary=f"任务执行失败，已停止本轮运行：{safe_error}",
+                        confidence="medium",
+                    ),
+                    ("task_failed", "任务执行失败。", {"error": safe_error}, None),
+                ],
             )
         finally:
             with self._lock:
                 self._controllers.pop(task_id, None)
                 self._threads.pop(task_id, None)
+
+    def _simple_terminal_reasoning(
+        self,
+        *,
+        route: Literal["chat", "search"],
+        result: SimpleMessageResult,
+        warning_reply: bool,
+    ) -> TerminalReasoning:
+        payload = result.completion_payload or {}
+        used_model = payload.get("used_model")
+        warning_code = result.warning_code or payload.get("warning_code")
+        if route == "chat":
+            if warning_reply:
+                return (
+                    "risk",
+                    "简单对话已返回配置提醒，实时模型回复未完成；本轮未读取上传文件。",
+                    "medium",
+                    [str(warning_code or "missing_provider_key")],
+                )
+            return (
+                "final_summary",
+                "简单对话已完成模型回复；本轮未调用搜索或文档分析工具。",
+                "medium",
+                [],
+            )
+
+        sources = payload.get("sources") if isinstance(payload, dict) else None
+        source_titles = safe_search_source_titles(sources)
+        source_count = payload.get("source_count")
+        resolved_source_count = source_count if isinstance(source_count, int) else len(source_titles)
+        if warning_reply or used_model is False or resolved_source_count == 0:
+            return (
+                "risk",
+                (
+                    "轻量搜索已结束但存在限制："
+                    f"模型合成={'未使用' if used_model is False else '已使用'}，"
+                    f"安全来源数 {resolved_source_count}；本轮未读取上传文件。"
+                ),
+                "medium",
+                [str(warning_code)] if warning_code else source_titles,
+            )
+        return (
+            "final_summary",
+            (
+                f"轻量搜索已基于 {resolved_source_count} 个安全来源完成模型合成；"
+                "本轮未读取上传文件。"
+            ),
+            "medium",
+            source_titles,
+        )
+
+    def _has_reasoning_trace(self, task_id: str, run_id: str, phase: ReasoningPhase) -> bool:
+        for event in self.storage.read_events(task_id):
+            if event.type != "reasoning_trace" or event.run_id != run_id:
+                continue
+            if event.payload.get("phase") == phase:
+                return True
+        return False
+
+    def _run_reasoning_event_specs(
+        self,
+        task_id: str,
+        run_id: str,
+        *,
+        phase: ReasoningPhase,
+        summary: str,
+        confidence: ReasoningConfidence,
+        evidence_refs: list[str] | None = None,
+    ) -> list[EventAppendSpec]:
+        if self._has_reasoning_trace(task_id, run_id, phase):
+            return []
+        payload = build_reasoning_trace_payload(
+            agent_id=RUN_REASONING_AGENT_ID,
+            phase=phase,
+            summary=summary,
+            confidence=confidence,
+            evidence_refs=evidence_refs or [],
+        )
+        return [("reasoning_trace", f"{payload['agent_id']} 已记录思考摘要。", payload, None)]
+
+    def _append_run_reasoning_trace_if_absent(
+        self,
+        task_id: str,
+        run_id: str,
+        *,
+        phase: ReasoningPhase,
+        summary: str,
+        confidence: ReasoningConfidence,
+        evidence_refs: list[str] | None = None,
+    ) -> None:
+        if self._has_reasoning_trace(task_id, run_id, phase):
+            return
+        self.storage.append_reasoning_trace(
+            task_id,
+            run_id,
+            agent_id=RUN_REASONING_AGENT_ID,
+            phase=phase,
+            summary=summary,
+            confidence=confidence,
+            evidence_refs=evidence_refs or [],
+        )
 
     def _run_simple_message(
         self,
@@ -616,15 +810,38 @@ class TaskRunner:
         *,
         level: Literal["info", "warning", "error"] | None = None,
         artifact_names: list[str] | None = None,
+        terminal_reasoning: TerminalReasoning | None = None,
         completion_event_type: str | None = None,
         completion_event_message: str = "",
         completion_event_payload: dict[str, Any] | None = None,
         completion_event_level: Literal["info", "success", "warning", "error"] | None = None,
     ) -> bool:
+        events: list[EventAppendSpec] = []
+        if terminal_reasoning is not None:
+            phase, summary, confidence, evidence_refs = terminal_reasoning
+            events.extend(
+                self._run_reasoning_event_specs(
+                    task_id,
+                    run_id,
+                    phase=phase,
+                    summary=summary,
+                    confidence=confidence,
+                    evidence_refs=evidence_refs,
+                )
+            )
         if completion_event_type:
-            updated = self.storage.update_task_if_status_and_append_event(
+            events.append(
+                (
+                    completion_event_type,
+                    completion_event_message,
+                    completion_event_payload or {},
+                    completion_event_level,
+                )
+            )
+            updated = self.storage.update_task_if_status_and_append_events(
                 task_id,
                 RUNNING_STATUSES,
+                events=events,
                 status="complete",
                 append_message=ChatMessage(
                     role="assistant",
@@ -635,10 +852,23 @@ class TaskRunner:
                 ),
                 run_id=run_id,
                 artifact_names=artifact_names,
-                event_type=completion_event_type,
-                event_message=completion_event_message,
-                event_payload=completion_event_payload,
-                event_level=completion_event_level,
+            )
+            return updated is not None
+        if events:
+            updated = self.storage.update_task_if_status_and_append_events(
+                task_id,
+                RUNNING_STATUSES,
+                events=events,
+                status="complete",
+                append_message=ChatMessage(
+                    role="assistant",
+                    content=content,
+                    created_at=utc_now(),
+                    run_id=run_id,
+                    level=level,
+                ),
+                run_id=run_id,
+                artifact_names=artifact_names,
             )
             return updated is not None
         updated = self.storage.update_task_if_status(
@@ -777,6 +1007,21 @@ def estimate_bidder_count(upload_names: list[str]) -> int:
 def is_likely_tender_filename(name: str) -> bool:
     folded = name.casefold()
     return any(marker in folded for marker in ORCHESTRATION_TENDER_MARKERS)
+
+
+def safe_search_source_titles(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    titles: list[str] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        title = bounded_safe_text(item.get("title") or "", SEARCH_TITLE_CHARS)
+        if title:
+            titles.append(title)
+        if len(titles) >= SEARCH_SOURCE_LIMIT:
+            break
+    return titles
 
 
 def bounded_safe_text(value: object, max_chars: int) -> str:

@@ -93,6 +93,33 @@ def tool_names(tools: list[Any]) -> set[str]:
     return {tool.__name__ for tool in tools}
 
 
+def reasoning_events_for_run(
+    state: dict[str, Any],
+    run_id: str,
+    *,
+    phase: str | None = None,
+) -> list[dict[str, Any]]:
+    events = [
+        event
+        for event in state["events"]
+        if event["type"] == "reasoning_trace" and event.get("run_id") == run_id
+    ]
+    if phase is not None:
+        events = [event for event in events if event["payload"].get("phase") == phase]
+    return events
+
+
+def assert_run_has_reasoning(
+    state: dict[str, Any],
+    *,
+    phase: str | None = None,
+) -> list[dict[str, Any]]:
+    run_id = state["runs"][0]["id"]
+    events = reasoning_events_for_run(state, run_id, phase=phase)
+    assert events
+    return events
+
+
 def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     created = client.post("/api/tasks", json={"model": "deepseek-reasoner"}).json()
@@ -134,6 +161,11 @@ def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> Non
     assert {event["run_id"] for event in reasoning_events} == {state["runs"][0]["id"]}
     reasoning_phases = {event["payload"]["phase"] for event in reasoning_events}
     assert {"plan", "observe", "decide", "final_summary"}.issubset(reasoning_phases)
+    assert not any(
+        event["payload"].get("agent_id") == "task-run"
+        and event["payload"].get("phase") == "final_summary"
+        for event in reasoning_events
+    )
     assert any(event["type"] == "task_completed" for event in state["events"])
     assert any(
         event["type"] == "plan_created" and event["message"] == "已生成执行计划。"
@@ -463,6 +495,15 @@ def test_search_synthesizes_final_answer_after_tool_result(tmp_path: Path) -> No
     assert positions["search_tool_call"] < positions["search_tool_result"]
     assert positions["search_tool_result"] < positions["search_synthesis_completed"]
     assert positions["search_synthesis_completed"] < positions["search_completed"]
+    final_reasoning = reasoning_events_for_run(state, run_id, phase="final_summary")
+    assert final_reasoning
+    assert (
+        positions["search_synthesis_completed"]
+        < run_event_types.index("reasoning_trace")
+        < positions["search_completed"]
+    )
+    assert "2 个安全来源" in final_reasoning[-1]["payload"]["summary"]
+    assert final_reasoning[-1]["payload"]["agent_id"] == "task-run"
     synthesis_events = [
         event for event in state["events"] if event["type"] == "search_synthesis_completed"
     ]
@@ -508,6 +549,8 @@ def test_search_missing_provider_uses_bounded_source_summary(tmp_path: Path) -> 
     assert "上海今日阴到多云" in final_message["content"]
     assert "RAW_PROVIDER_FALLBACK_CANARY" not in final_message["content"]
     assert "RAW_PROVIDER_FALLBACK_CANARY" not in serialized
+    risk_events = assert_run_has_reasoning(state, phase="risk")
+    assert "模型合成=未使用" in risk_events[-1]["payload"]["summary"]
     assert synthesis_event["payload"]["used_model"] is False
     assert synthesis_event["payload"]["warning_code"] == "missing_provider_key"
 
@@ -543,8 +586,44 @@ def test_search_model_failure_uses_bounded_source_summary(tmp_path: Path) -> Non
     assert state["messages"][-1]["level"] == "warning"
     assert "模型合成暂不可用" in state["messages"][-1]["content"]
     assert "上海今日小雨转多云" in state["messages"][-1]["content"]
+    risk_events = assert_run_has_reasoning(state, phase="risk")
+    assert risk_events[-1]["payload"]["evidence_refs"] == ["model_synthesis_failed"]
     assert synthesis_event["payload"]["used_model"] is False
     assert synthesis_event["payload"]["warning_code"] == "model_synthesis_failed"
+
+
+def test_search_without_tavily_key_has_risk_reasoning_trace(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": "查一下上海天气", "model": "deepseek-reasoner"},
+    )
+    state = wait_for_terminal_status(client, task_id)
+
+    risk_events = assert_run_has_reasoning(state, phase="risk")
+    assert state["status"] == "complete"
+    assert state["messages"][-1]["level"] == "warning"
+    assert "联网搜索未启用" in state["messages"][-1]["content"]
+    assert "missing_tavily_key" in risk_events[-1]["payload"]["evidence_refs"]
+
+
+def test_search_without_results_has_risk_reasoning_trace(tmp_path: Path) -> None:
+    client = make_client(tmp_path, tavily_api_key="test-tavily-key")
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    with patch("app.tools.httpx.post", return_value=StubHTTPResponse({"results": []})):
+        client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={"message": "查一下上海天气", "model": "deepseek-reasoner"},
+        )
+        state = wait_for_terminal_status(client, task_id)
+
+    risk_events = assert_run_has_reasoning(state, phase="risk")
+    assert state["status"] == "complete"
+    assert "没有检索到可用结果" in state["messages"][-1]["content"]
+    assert "安全来源数 0" in risk_events[-1]["payload"]["summary"]
 
 
 def test_legacy_input_scope_none_no_longer_overrides_model_owned_file_routing(
@@ -821,6 +900,10 @@ def test_explicit_deep_agent_mode_uses_audited_runtime_without_document_workflow
         "observe",
         "final_summary",
     }
+    assert not any(
+        payload.get("agent_id") == "task-run" and payload.get("phase") == "final_summary"
+        for payload in deep_reasoning
+    )
     assert any(payload.get("source_event_id") for payload in deep_reasoning)
     assert any(event["type"] == "deep_agent_completed" for event in state["events"])
     assert not any(event["type"] == "plan_created" for event in state["events"])
@@ -950,6 +1033,40 @@ def test_runtime_invalid_json_storage_drift_fails_with_filename(tmp_path: Path) 
 
     assert state["status"] == "failed"
     assert state["error"] == "JSON 文件 beta.json 无效：内容不是合法 JSON"
+    risk_events = assert_run_has_reasoning(state, phase="risk")
+    assert "JSON 文件 beta.json 无效" in risk_events[-1]["payload"]["summary"]
+
+
+def test_failed_run_public_error_is_sanitized(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    private_path = f"{tmp_path}/secret.txt"
+    raw_error = (
+        f"provider failed at {private_path} with Authorization: Bearer AUTH_HEADER_CANARY_789"
+    )
+
+    with patch("app.model_provider.ProviderRouter.chat", side_effect=ValueError(raw_error)):
+        client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={"message": "你好，请简单介绍你能做什么", "model": "deepseek-reasoner"},
+        )
+        state = wait_for_terminal_status(client, task_id)
+
+    failed_event = next(event for event in state["events"] if event["type"] == "task_failed")
+    serialized_public_failure = json.dumps(
+        {
+            "error": state["error"],
+            "event": failed_event,
+            "reasoning": reasoning_events_for_run(state, state["runs"][0]["id"], phase="risk"),
+        },
+        ensure_ascii=False,
+    )
+
+    assert state["status"] == "failed"
+    assert "AUTH_HEADER_CANARY_789" not in serialized_public_failure
+    assert str(tmp_path) not in serialized_public_failure
+    assert "Authorization:<redacted>" in serialized_public_failure
+    assert "<absolute-path>/secret.txt" in serialized_public_failure
 
 
 def test_upload_while_task_is_running_returns_conflict_without_persisting(
@@ -1737,6 +1854,9 @@ def test_message_without_uploads_requests_input(tmp_path: Path) -> None:
     assert state["runs"][0]["status"] == "needs_input"
     assert state["runs"][0]["needs_input"]["required_file_type"] == "markdown_or_json"
     assert state["messages"][0]["run_id"] == state["runs"][0]["id"]
+    next_step_events = assert_run_has_reasoning(state, phase="next_step")
+    assert next_step_events[-1]["payload"]["agent_id"] == "task-run"
+    assert "补充输入" in next_step_events[-1]["payload"]["summary"]
 
 
 def test_simple_chat_uses_deepseek_extension_point(tmp_path: Path) -> None:
@@ -1756,6 +1876,24 @@ def test_simple_chat_uses_deepseek_extension_point(tmp_path: Path) -> None:
     assert warning_events[-1]["level"] == "warning"
     assert warning_events[-1]["message"] == "模型服务配置提醒。"
     assert warning_events[-1]["payload"]["code"] == "missing_provider_key"
+    risk_events = assert_run_has_reasoning(state, phase="risk")
+    assert "实时模型回复未完成" in risk_events[-1]["payload"]["summary"]
+
+
+def test_simple_chat_success_has_final_reasoning_trace(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    with patch("app.model_provider.ProviderRouter.chat", return_value="你好，我可以协助处理任务。"):
+        client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={"message": "你好，请简单介绍你能做什么", "model": "deepseek-reasoner"},
+        )
+        state = wait_for_terminal_status(client, task_id)
+
+    final_events = assert_run_has_reasoning(state, phase="final_summary")
+    assert state["status"] == "complete"
+    assert "已完成模型回复" in final_events[-1]["payload"]["summary"]
 
 
 def test_messages_and_events_from_new_runs_carry_run_id(tmp_path: Path) -> None:
@@ -2007,10 +2145,16 @@ def test_simple_chat_cancel_does_not_overwrite_cancelled_state(tmp_path: Path) -
         time.sleep(0.2)
         cancelled = client.post(f"/api/tasks/{task_id}/cancel")
         assert cancelled.json()["status"] == "cancelled"
-        time.sleep(0.4)
-        state = client.get(f"/api/tasks/{task_id}").json()
+        run_id = cancelled.json()["runs"][0]["id"]
+        immediate_risk_events = reasoning_events_for_run(
+            cancelled.json(), run_id, phase="risk"
+        )
+        assert immediate_risk_events
+        state = wait_for_terminal_status(client, task_id)
 
     assert state["status"] == "cancelled"
+    risk_events = assert_run_has_reasoning(state, phase="risk")
+    assert "任务已取消" in risk_events[-1]["payload"]["summary"]
 
 
 def test_cancel_racing_with_completion_preserves_complete_state(tmp_path: Path) -> None:
@@ -2020,7 +2164,7 @@ def test_cancel_racing_with_completion_preserves_complete_state(tmp_path: Path) 
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
     complete_event = Event()
     release_event = Event()
-    original_complete_update = storage.update_task_if_status_and_append_event
+    original_complete_update = storage.update_task_if_status_and_append_events
 
     def delayed_complete_update(
         event_task_id: str,
@@ -2028,14 +2172,15 @@ def test_cancel_racing_with_completion_preserves_complete_state(tmp_path: Path) 
         **kwargs,
     ):
         result = original_complete_update(event_task_id, *args, **kwargs)
-        if event_task_id == task_id and kwargs.get("event_type") == "chat_completed":
+        event_types = [event[0] for event in kwargs.get("events", [])]
+        if event_task_id == task_id and "chat_completed" in event_types:
             complete_event.set()
             release_event.wait(timeout=3)
         return result
 
     with patch.object(
         storage,
-        "update_task_if_status_and_append_event",
+        "update_task_if_status_and_append_events",
         side_effect=delayed_complete_update,
     ):
         response = client.post(
@@ -2052,6 +2197,8 @@ def test_cancel_racing_with_completion_preserves_complete_state(tmp_path: Path) 
     assert cancelled.json()["status"] == "complete"
     assert state["status"] == "complete"
     assert state["messages"][-1]["role"] == "assistant"
+    risk_events = assert_run_has_reasoning(state, phase="risk")
+    assert "实时模型回复未完成" in risk_events[-1]["payload"]["summary"]
 
 
 def test_cancel_complete_task_preserves_terminal_state(tmp_path: Path) -> None:
