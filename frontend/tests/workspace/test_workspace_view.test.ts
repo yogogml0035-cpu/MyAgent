@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
@@ -12,6 +13,7 @@ import {
   formatFileSize,
   formatLogLevelLabel,
   formatMessagePanelStatus,
+  formatMessagePanelTitle,
   formatReasoningPhaseLabel,
   formatRunLogStatus,
   formatTaskStatus,
@@ -102,6 +104,10 @@ test("buildLogClipboardText includes deep agent activity and file audit summarie
         status: "started",
         title: "工具调用准备",
         summary: "本轮准备调用 list_dir 检查上传快照。",
+        iterationIndex: 1,
+        agentId: "main-agent",
+        parentAgentId: "root",
+        taskLabel: "输入分类",
         toolName: "list_dir",
         parameterSummary: "relative_path=uploads",
         resultSummary: "工具返回 3 个文件名。",
@@ -129,6 +135,10 @@ test("buildLogClipboardText includes deep agent activity and file audit summarie
   ]);
 
   assert.match(text, /执行进展 工具调用 已开始：工具调用准备 本轮准备调用 list_dir 检查上传快照。/);
+  assert.match(text, /轮次：1/);
+  assert.match(text, /代理：main-agent/);
+  assert.match(text, /父代理：root/);
+  assert.match(text, /任务：输入分类/);
   assert.match(text, /工具：list_dir/);
   assert.match(text, /参数：relative_path=uploads/);
   assert.match(text, /结果：工具返回 3 个文件名。/);
@@ -139,6 +149,74 @@ test("buildLogClipboardText includes deep agent activity and file audit summarie
   assert.match(text, /来源：upload_snapshot/);
   assert.match(text, /字节：241/);
   assert.match(text, /SHA256：abc123/);
+});
+
+test("buildLogClipboardText includes bounded search tool parameters and results", () => {
+  const text = buildLogClipboardText([
+    {
+      id: "search-call",
+      type: "search_tool_call",
+      title: "已调用联网搜索工具。",
+      level: "info",
+      createdAt: "2026-04-29T01:00:00.000Z",
+      searchTrace: {
+        kind: "tool_call",
+        toolName: "tavily_search",
+        parameterSummary: "query=上海天气; max_results=5; use_uploads=false",
+        sources: [],
+      },
+    },
+    {
+      id: "search-result",
+      type: "search_tool_result",
+      title: "联网搜索工具已返回安全摘要。",
+      level: "info",
+      createdAt: "2026-04-29T01:00:01.000Z",
+      searchTrace: {
+        kind: "tool_result",
+        toolName: "tavily_search",
+        resultSummary: "结果数量：1",
+        sourceCount: 1,
+        sources: [{ title: "上海天气", url: "https://weather.example/shanghai" }],
+      },
+    },
+  ]);
+
+  assert.match(text, /搜索日志 工具调用：已调用联网搜索工具。/);
+  assert.match(text, /工具：tavily_search/);
+  assert.match(text, /参数：query=上海天气; max_results=5; use_uploads=false/);
+  assert.match(text, /搜索日志 工具结果：联网搜索工具已返回安全摘要。/);
+  assert.match(text, /结果：结果数量：1/);
+  assert.match(text, /来源：上海天气/);
+});
+
+test("buildLogClipboardText includes safe orchestration profile labels", () => {
+  const text = buildLogClipboardText([
+    {
+      id: "orchestration-1",
+      type: "orchestration_decision",
+      title: "已记录本轮编排策略。",
+      level: "info",
+      orchestration: {
+        schemaVersion: 1,
+        strategy: "multi_agent",
+        reasonCode: "multi_document_bid_comparison",
+        chosenProfileId: "bid_multi_agent",
+        chosenProfileLabel: "招投标多 Agent 分析",
+        plannedSubagents: ["document-classification-agent", "report-writing-agent"],
+        messageClass: "bid_analysis",
+        route: "deep_agent",
+        bidderCount: 3,
+        decisionSummary: "选择多 Agent Profile。",
+      },
+    },
+  ]);
+
+  assert.match(text, /编排策略 multi_agent：已记录本轮编排策略。/);
+  assert.match(text, /Profile：招投标多 Agent 分析/);
+  assert.match(text, /ID：bid_multi_agent/);
+  assert.match(text, /子 Agent：document-classification-agent、report-writing-agent/);
+  assert.match(text, /选择多 Agent Profile。/);
 });
 
 test("buildLogClipboardText ignores arbitrary malformed payload fields", () => {
@@ -242,6 +320,37 @@ test("shouldSubmitComposerKey submits Enter but not Shift+Enter or IME Enter", (
   assert.equal(shouldSubmitComposerKey({ key: "Enter", isComposing: true }), false);
   assert.equal(shouldSubmitComposerKey({ key: "Enter", nativeIsComposing: true }), false);
   assert.equal(shouldSubmitComposerKey({ key: "a" }), false);
+});
+
+test("workspace CSS aligns composer panel with the assistant message card column", () => {
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.equal(cssSource.includes("--conversation-width: 940px;"), true);
+  assert.equal(cssSource.includes("--message-marker-space: 42px;"), true);
+  assert.match(
+    cssSource,
+    /\.conversationStream\s*\{[\s\S]*?width: min\(var\(--conversation-width\), calc\(100% - 64px\)\);/,
+  );
+  assert.match(
+    cssSource,
+    /\.composerShell\s*\{[\s\S]*?width: min\(var\(--conversation-width\), calc\(100% - 64px\)\);/,
+  );
+  assert.match(cssSource, /\.composerPanel\s*\{[\s\S]*?margin-left: var\(--message-marker-space\);/);
+  assert.match(cssSource, /\.isEmpty \.composerPanel\s*\{[\s\S]*?margin-left: 0;/);
+});
+
+test("workspace CSS uses the reference robot sender avatar treatment", () => {
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.match(
+    cssSource,
+    /\.agentMarker\s*\{[\s\S]*?width: 32px;[\s\S]*?height: 32px;[\s\S]*?border-radius: var\(--radius-xs\);[\s\S]*?background: #dbeafe;[\s\S]*?color: #2563eb;/,
+  );
+  assert.match(
+    cssSource,
+    /\.robotAvatarIcon\s*\{[\s\S]*?width: 20px;[\s\S]*?height: 20px;/,
+  );
+  assert.match(cssSource, /\.messageBotIcon\s*\{[\s\S]*?color: #2563eb;/);
 });
 
 test("formatTaskStatus keeps run badges localized", () => {
@@ -438,6 +547,46 @@ test("buildRunActivityGroups suppresses setup-only orphan history after runs exi
   assert.deepEqual(groups[0].logs.map((log) => log.id), ["event-1"]);
 });
 
+test("buildRunActivityGroups keeps search runs clear of stale upload fixture logs", () => {
+  const groups = buildRunActivityGroups(
+    [
+      {
+        id: "run-search",
+        status: "complete",
+        startedAt: "2026-04-29T01:00:00.000Z",
+        artifactNames: [],
+      },
+    ],
+    [
+      {
+        id: "upload-old",
+        type: "file_uploaded",
+        title: "已上传 stale.json",
+        createdAt: "2026-04-29T00:59:00.000Z",
+      },
+      {
+        id: "search-call",
+        type: "search_tool_call",
+        title: "搜索工具调用",
+        runId: "run-search",
+        createdAt: "2026-04-29T01:01:00.000Z",
+      },
+      {
+        id: "weather-result",
+        type: "search_tool_result",
+        title: "天气结果摘要",
+        runId: "run-search",
+        createdAt: "2026-04-29T01:02:00.000Z",
+      },
+    ],
+    [],
+  );
+
+  assert.deepEqual(groups.map((group) => group.runId), ["run-search"]);
+  assert.deepEqual(groups[0].logs.map((log) => log.id), ["search-call", "weather-result"]);
+  assert.equal(JSON.stringify(groups).includes("stale.json"), false);
+});
+
 test("buildRunActivityGroups keeps unmatched warnings while suppressing setup fallback logs", () => {
   const groups = buildRunActivityGroups(
     [
@@ -621,12 +770,16 @@ test("message panel helpers map assistant notices to TenderWord-like card states
 
   assert.equal(getMessagePanelTone(errorMessage), "error");
   assert.equal(formatMessagePanelStatus(errorMessage), "生成失败");
+  assert.equal(formatMessagePanelTitle(errorMessage), "AI 生成内容");
   assert.equal(getMessagePanelTone(warningMessage), "warning");
   assert.equal(formatMessagePanelStatus(warningMessage), "配置提醒");
+  assert.equal(formatMessagePanelTitle(warningMessage), "AI 生成内容");
   assert.equal(getMessagePanelTone(systemMessage), "system");
   assert.equal(formatMessagePanelStatus(systemMessage), "系统消息");
+  assert.equal(formatMessagePanelTitle(systemMessage), "系统消息");
   assert.equal(getMessagePanelTone(okMessage), "default");
   assert.equal(formatMessagePanelStatus(okMessage), "已完成");
+  assert.equal(formatMessagePanelTitle(okMessage), "最终答案");
 });
 
 test("formatRunLogStatus uses log-card labels for terminal states", () => {
@@ -669,7 +822,7 @@ test("buildConversationStreamItems places run activity before the assistant repl
   );
 });
 
-test("buildConversationStreamItems places artifact cards after assistant replies", () => {
+test("buildConversationStreamItems orders user, logs, final answer, then artifacts", () => {
   const items = buildConversationStreamItems(
     [
       { id: "m1", role: "user", content: "分析", runId: "run-1" },

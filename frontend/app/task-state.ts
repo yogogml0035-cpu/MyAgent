@@ -28,6 +28,8 @@ export type ExecutionLog = {
   agentActivity?: AgentActivityTrace;
   fileAudit?: FileToolAuditTrace;
   reasoning?: ReasoningTrace;
+  searchTrace?: SearchTrace;
+  orchestration?: OrchestrationTrace;
 };
 
 export type ReasoningPhase = "plan" | "observe" | "decide" | "next_step" | "final_summary" | "risk";
@@ -58,6 +60,10 @@ export type AgentActivityTrace = {
   status: AgentActivityStatus;
   title: string;
   summary: string;
+  iterationIndex?: number;
+  agentId?: string;
+  parentAgentId?: string;
+  taskLabel?: string;
   sourceEventId?: string;
   toolName?: string;
   parameterSummary?: string;
@@ -78,6 +84,39 @@ export type FileToolAuditTrace = {
   reason?: string;
   promotedArtifactId?: string;
   partial?: boolean;
+};
+
+export type SearchTraceKind = "tool_call" | "tool_result" | "synthesis";
+
+export type SearchSourceTrace = {
+  title: string;
+  url?: string;
+  snippet?: string;
+};
+
+export type SearchTrace = {
+  kind: SearchTraceKind;
+  toolName?: string;
+  parameterSummary?: string;
+  resultSummary?: string;
+  resultCount?: number;
+  sourceCount?: number;
+  sources: SearchSourceTrace[];
+  usedModel?: boolean;
+  warningCode?: string;
+};
+
+export type OrchestrationTrace = {
+  schemaVersion: 1;
+  strategy: "single_agent" | "multi_agent";
+  reasonCode?: string;
+  chosenProfileId?: string;
+  chosenProfileLabel?: string;
+  plannedSubagents: string[];
+  messageClass?: string;
+  route?: string;
+  bidderCount?: number;
+  decisionSummary?: string;
 };
 
 export type Artifact = {
@@ -270,6 +309,14 @@ function readNumber(value: unknown, fallback = 0) {
 
 function readOptionalNumber(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function readOptionalBoundedInteger(value: unknown, min: number, max: number) {
+  const number = readOptionalNumber(value);
+  if (number === undefined || !Number.isInteger(number) || number < min || number > max) {
+    return undefined;
+  }
+  return number;
 }
 
 function readOptionalBoolean(value: unknown) {
@@ -503,6 +550,14 @@ function normalizeAgentActivity(type: string | undefined, payload: Record<string
     status,
     title,
     summary,
+    iterationIndex: readOptionalBoundedInteger(
+      payload.iteration_index ?? payload.iterationIndex,
+      0,
+      9999,
+    ),
+    agentId: readBoundedString(payload.agent_id ?? payload.agentId, 120),
+    parentAgentId: readBoundedString(payload.parent_agent_id ?? payload.parentAgentId, 120),
+    taskLabel: readBoundedString(payload.task_label ?? payload.taskLabel, 160),
     sourceEventId: readBoundedString(payload.source_event_id ?? payload.sourceEventId, 160),
     toolName: readBoundedString(payload.tool_name ?? payload.toolName, 80),
     parameterSummary: readBoundedString(payload.parameter_summary ?? payload.parameterSummary, 240),
@@ -543,6 +598,115 @@ function normalizeFileToolAudit(type: string | undefined, payload: Record<string
   };
 }
 
+function normalizeSearchSources(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .filter(isRecord)
+    .map((source) => ({
+      title: readBoundedString(source.title, 120) ?? "未命名来源",
+      url: readBoundedString(source.url, 240),
+      snippet: readBoundedString(source.snippet, 260),
+    }))
+    .slice(0, 5);
+}
+
+function normalizeSearchParameterSummary(value: unknown) {
+  if (!isRecord(value)) {
+    return readBoundedString(value, 240);
+  }
+  const query = readBoundedString(value.query, 160);
+  const maxResults = readOptionalNumber(value.max_results ?? value.maxResults);
+  const useUploads = readOptionalBoolean(value.use_uploads ?? value.useUploads);
+  const parts = [
+    query ? `query=${query}` : "",
+    typeof maxResults === "number" ? `max_results=${maxResults}` : "",
+    typeof useUploads === "boolean" ? `use_uploads=${useUploads}` : "",
+  ].filter(Boolean);
+  return parts.length > 0 ? parts.join("; ") : undefined;
+}
+
+function normalizeSearchTrace(type: string | undefined, payload: Record<string, unknown>) {
+  if (type !== "search_tool_call" && type !== "search_tool_result" && type !== "search_synthesis_completed") {
+    return undefined;
+  }
+  const sources = normalizeSearchSources(payload.sources);
+  const warningCode = readBoundedString(payload.warning_code ?? payload.warningCode, 80);
+  if (type === "search_tool_call") {
+    return {
+      kind: "tool_call" as const,
+      toolName: readBoundedString(payload.tool_name ?? payload.toolName, 80),
+      parameterSummary: normalizeSearchParameterSummary(payload.parameter_summary ?? payload.parameterSummary),
+      sources,
+      warningCode,
+    };
+  }
+  if (type === "search_tool_result") {
+    const resultCount = readOptionalNumber(payload.result_count ?? payload.resultCount);
+    return {
+      kind: "tool_result" as const,
+      toolName: readBoundedString(payload.tool_name ?? payload.toolName, 80),
+      resultSummary:
+        typeof resultCount === "number"
+          ? `结果数量：${resultCount}`
+          : readBoundedString(payload.result_summary ?? payload.resultSummary, 240),
+      resultCount,
+      sourceCount: sources.length,
+      sources,
+      warningCode,
+    };
+  }
+  const sourceCount = readOptionalNumber(payload.source_count ?? payload.sourceCount);
+  const usedModel = readOptionalBoolean(payload.used_model ?? payload.usedModel);
+  return {
+    kind: "synthesis" as const,
+    resultSummary: [
+      typeof usedModel === "boolean" ? `模型合成：${usedModel ? "已使用" : "未使用"}` : "",
+      typeof sourceCount === "number" ? `来源数：${sourceCount}` : "",
+    ].filter(Boolean).join("；") || undefined,
+    sourceCount,
+    sources,
+    usedModel,
+    warningCode,
+  };
+}
+
+function normalizeOrchestrationTrace(type: string | undefined, payload: Record<string, unknown>) {
+  if (type !== "orchestration_decision") {
+    return undefined;
+  }
+  const schemaVersion = payload.schema_version ?? payload.schemaVersion;
+  const strategy = readString(payload.strategy);
+  const normalizedStrategy: OrchestrationTrace["strategy"] | undefined =
+    strategy === "single_agent" || strategy === "multi_agent" ? strategy : undefined;
+  if (schemaVersion !== 1 || !normalizedStrategy) {
+    return undefined;
+  }
+  return {
+    schemaVersion: 1 as const,
+    strategy: normalizedStrategy,
+    reasonCode: readBoundedString(payload.reason_code ?? payload.reasonCode, 120),
+    chosenProfileId: readBoundedString(payload.chosen_profile_id ?? payload.chosenProfileId, 80),
+    chosenProfileLabel: readBoundedString(
+      payload.chosen_profile_label ?? payload.chosenProfileLabel,
+      120,
+    ),
+    plannedSubagents: readBoundedStringList(
+      payload.planned_subagents ?? payload.plannedSubagents,
+      8,
+      80,
+    ),
+    messageClass: readBoundedString(payload.message_class ?? payload.messageClass, 80),
+    route: readBoundedString(payload.route, 80),
+    bidderCount: readOptionalBoundedInteger(payload.bidder_count ?? payload.bidderCount, 0, 9999),
+    decisionSummary: readBoundedString(
+      payload.decision_summary ?? payload.decisionSummary,
+      360,
+    ),
+  };
+}
+
 function normalizeMessage(value: unknown, index: number): ChatMessage {
   const record = isRecord(value) ? value : {};
   const role = readString(record.role, "assistant");
@@ -578,6 +742,8 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
     agentActivity: normalizeAgentActivity(type, payload),
     fileAudit: normalizeFileToolAudit(type, payload),
     reasoning: normalizeReasoningTrace(type, payload),
+    searchTrace: normalizeSearchTrace(type, payload),
+    orchestration: normalizeOrchestrationTrace(type, payload),
   };
 }
 

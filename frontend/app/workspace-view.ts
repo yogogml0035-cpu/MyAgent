@@ -138,6 +138,10 @@ export function buildLogClipboardText(logs: ExecutionLog[]) {
         if (log.agentActivity) {
           const activity = log.agentActivity;
           const details = [
+            typeof activity.iterationIndex === "number" ? `轮次：${activity.iterationIndex}` : "",
+            activity.agentId ? `代理：${activity.agentId}` : "",
+            activity.parentAgentId ? `父代理：${activity.parentAgentId}` : "",
+            activity.taskLabel ? `任务：${activity.taskLabel}` : "",
             activity.toolName ? `工具：${activity.toolName}` : "",
             activity.parameterSummary ? `参数：${activity.parameterSummary}` : "",
             activity.resultSummary ? `结果：${activity.resultSummary}` : "",
@@ -168,6 +172,43 @@ export function buildLogClipboardText(logs: ExecutionLog[]) {
           ].filter(Boolean);
           const detailText = details.length > 0 ? ` ${details.join(" · ")}` : "";
           return `${time} 文件审计 ${formatFileAuditOperationLabel(audit.operation)} ${formatFileAuditStatusLabel(audit.status)}：${audit.virtualPath}${detailText}`;
+        }
+        if (log.searchTrace) {
+          const search = log.searchTrace;
+          const details = [
+            search.toolName ? `工具：${search.toolName}` : "",
+            search.parameterSummary ? `参数：${search.parameterSummary}` : "",
+            search.resultSummary ? `结果：${search.resultSummary}` : "",
+            typeof search.sourceCount === "number" ? `来源数：${search.sourceCount}` : "",
+            typeof search.usedModel === "boolean" ? `模型：${search.usedModel ? "已使用" : "未使用"}` : "",
+            search.warningCode ? `提醒：${search.warningCode}` : "",
+          ].filter(Boolean);
+          const sourceText =
+            search.sources.length > 0
+              ? ` 来源：${search.sources.map((source) => source.title).join("、")}`
+              : "";
+          const detailText = details.length > 0 ? ` ${details.join(" · ")}` : "";
+          return `${time} 搜索日志 ${formatSearchTraceKindLabel(search.kind)}：${log.title}${detailText}${sourceText}`;
+        }
+        if (log.orchestration) {
+          const orchestration = log.orchestration;
+          const details = [
+            orchestration.chosenProfileLabel
+              ? `Profile：${orchestration.chosenProfileLabel}`
+              : "",
+            orchestration.chosenProfileId ? `ID：${orchestration.chosenProfileId}` : "",
+            orchestration.reasonCode ? `原因：${orchestration.reasonCode}` : "",
+            orchestration.messageClass ? `消息类型：${orchestration.messageClass}` : "",
+            typeof orchestration.bidderCount === "number"
+              ? `投标人数：${orchestration.bidderCount}`
+              : "",
+            orchestration.plannedSubagents.length > 0
+              ? `子 Agent：${orchestration.plannedSubagents.join("、")}`
+              : "",
+          ].filter(Boolean);
+          const detailText = details.length > 0 ? ` ${details.join(" · ")}` : "";
+          const summary = orchestration.decisionSummary ? ` ${orchestration.decisionSummary}` : "";
+          return `${time} 编排策略 ${orchestration.strategy}：${log.title}${detailText}${summary}`;
         }
         const detail = log.detail ? ` ${log.detail}` : "";
         return `${time} ${formatLogLevelLabel(log.level)} ${log.title}${detail}`;
@@ -314,6 +355,17 @@ export function formatLogLevelLabel(level: ExecutionLog["level"] = "info") {
   }
 }
 
+export function formatSearchTraceKindLabel(kind: NonNullable<ExecutionLog["searchTrace"]>["kind"]) {
+  switch (kind) {
+    case "tool_call":
+      return "工具调用";
+    case "tool_result":
+      return "工具结果";
+    case "synthesis":
+      return "结果合成";
+  }
+}
+
 export function buildConversationHistoryItems(
   summaries: TaskSummary[],
   activeTaskId: string,
@@ -393,6 +445,17 @@ export function formatMessagePanelStatus(message: ChatMessage) {
     return "系统消息";
   }
   return "已完成";
+}
+
+export function formatMessagePanelTitle(message: ChatMessage) {
+  if (message.role === "system") {
+    return "系统消息";
+  }
+  const tone = getMessagePanelTone(message);
+  if (tone === "default") {
+    return "最终答案";
+  }
+  return "AI 生成内容";
 }
 
 export function formatRunLogStatus(status: TaskStatus) {
@@ -500,7 +563,11 @@ export function buildRunActivityGroups(
       startedAt: run.startedAt,
       completedAt: run.completedAt,
       logs: logs
-        .filter((log) => log.runId === run.id || (runs.length === 1 && !log.runId))
+        .filter(
+          (log) =>
+            log.runId === run.id ||
+            (runs.length === 1 && !log.runId && !isSetupFallbackLog(log)),
+        )
         .sort(byCreatedAt),
       artifacts: Array.from(artifactMap.values()),
     };

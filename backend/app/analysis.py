@@ -82,6 +82,7 @@ CATEGORY_LABELS = {
     "requirement_deviations": "共同偏离招标要求",
     "metadata_clues": "时间、作者或 OCR 元数据线索",
     "common_deviations": "重复异常响应模式",
+    "pair_comparison_coverage": "投标人组合覆盖",
 }
 
 SEVERITY_LABELS = {"high": "高", "medium": "中", "low": "低"}
@@ -218,7 +219,11 @@ def run_bid_analysis(
                     {"category": category, "findings": len(report["evidence"])},
                 )
 
-    evidence = normalize_evidence(reports)
+    evidence = normalize_evidence(reports, bidder_docs)
+    validate_bid_evidence_records(
+        evidence,
+        required_pairs=bidder_pairs([doc.bidder_name or doc.filename for doc in bidder_docs]),
+    )
     storage.write_run_json(task_id, run_id, "evidence.json", evidence)
     summary = render_summary(classified, evidence)
     storage.write_run_text(task_id, run_id, "final-summary.md", summary)
@@ -477,7 +482,7 @@ class SubAgentWorker:
                 {
                     "agent_id": self.spec.agent_id,
                     "category": self.spec.category,
-                    "prompt": self.spec.prompt,
+                    "prompt_summary": f"{self.spec.label} 结构化证据子任务",
                 },
             )
             self._emit_reasoning_trace(
@@ -1108,29 +1113,291 @@ def make_evidence(
     locations: list[dict[str, Any]],
     details: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    pair = normalize_pair(bidders[:2]) if len(bidders) == 2 else []
+    requirement_reference = None
+    if details and isinstance(details.get("requirement"), str):
+        requirement_reference = str(details["requirement"])[:240]
     return {
         "category": category,
         "category_label": CATEGORY_LABELS[category],
         "severity": severity,
         "bidders": bidders,
+        "pair": pair,
         "title": title,
         "description": description,
         "locations": locations,
         "details": details or {},
+        "requirement_reference": requirement_reference,
+        "confidence": confidence_for_severity(severity),
+        "source_agent": "deterministic-inspector",
+        "rationale_summary": description[:280],
     }
 
 
-def normalize_evidence(reports: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    evidence: list[dict[str, Any]] = []
-    counter = 1
+def normalize_evidence(
+    reports: list[dict[str, Any]],
+    bidder_docs: list[MarkdownDocument] | None = None,
+) -> list[dict[str, Any]]:
+    normalized_items: list[dict[str, Any]] = []
     severity_rank = {"high": 0, "medium": 1, "low": 2}
-    for report in sorted(reports, key=lambda item: item["category"]):
-        for item in report["evidence"]:
-            normalized = dict(item)
-            normalized["id"] = f"E-{counter:03d}"
-            counter += 1
-            evidence.append(normalized)
-    return sorted(evidence, key=lambda item: (severity_rank.get(item["severity"], 9), item["id"]))
+    bidder_names = (
+        [doc.bidder_name or doc.filename for doc in bidder_docs]
+        if bidder_docs is not None
+        else infer_bidders_from_reports(reports)
+    )
+    required_pairs = bidder_pairs(bidder_names)
+    pairs_with_findings: set[tuple[str, str]] = set()
+    for report in sorted(reports, key=lambda item: str(item.get("category") or "")):
+        source_agent = str(report.get("agent_id") or report.get("source_agent") or "unknown")
+        for item in report.get("evidence", []):
+            if not isinstance(item, dict):
+                continue
+            pairs = evidence_pairs(item)
+            for pair in pairs:
+                normalized = normalize_evidence_item(item, source_agent=source_agent, pair=pair)
+                normalized_items.append(normalized)
+                pairs_with_findings.add(tuple(normalized["pair"]))
+
+    for pair in required_pairs:
+        if tuple(pair) in pairs_with_findings:
+            continue
+        normalized_items.append(no_finding_evidence(pair))
+
+    sorted_items = sorted(
+        normalized_items,
+        key=lambda item: (
+            severity_rank.get(str(item.get("severity")), 9),
+            str(item.get("category") or ""),
+            str(item.get("title") or ""),
+            tuple(item.get("pair") or []),
+        ),
+    )
+    for counter, item in enumerate(sorted_items, start=1):
+        item["id"] = f"E-{counter:03d}"
+    return sorted_items
+
+
+def normalize_evidence_item(
+    item: dict[str, Any],
+    *,
+    source_agent: str,
+    pair: list[str],
+) -> dict[str, Any]:
+    category = str(item.get("category") or "common_deviations")
+    if category not in CATEGORY_LABELS:
+        category = "common_deviations"
+    severity = str(item.get("severity") or "low")
+    if severity not in SEVERITY_LABELS:
+        severity = "low"
+    title = safe_evidence_text(item.get("title") or CATEGORY_LABELS[category], 160)
+    description = safe_evidence_text(item.get("description") or title, 500)
+    locations = normalize_locations(item.get("locations"))
+    requirement_reference = item.get("requirement_reference")
+    raw_details = item.get("details")
+    details: dict[str, Any] = raw_details if isinstance(raw_details, dict) else {}
+    if requirement_reference is None and isinstance(details.get("requirement"), str):
+        requirement_reference = details["requirement"]
+    confidence = normalize_confidence(item.get("confidence"), severity)
+    rationale_summary = safe_evidence_text(
+        item.get("rationale_summary") or description,
+        280,
+    )
+    return {
+        "category": category,
+        "category_label": CATEGORY_LABELS[category],
+        "severity": severity,
+        "bidders": list(pair),
+        "pair": normalize_pair(pair),
+        "title": title,
+        "description": description,
+        "locations": locations,
+        "details": details,
+        "requirement_reference": (
+            safe_evidence_text(requirement_reference, 240)
+            if requirement_reference is not None
+            else None
+        ),
+        "confidence": confidence,
+        "source_agent": safe_evidence_text(source_agent or "unknown", 120) or "unknown",
+        "rationale_summary": rationale_summary,
+    }
+
+
+def no_finding_evidence(pair: list[str]) -> dict[str, Any]:
+    normalized_pair = normalize_pair(pair)
+    return {
+        "category": "pair_comparison_coverage",
+        "category_label": CATEGORY_LABELS["pair_comparison_coverage"],
+        "severity": "low",
+        "bidders": list(normalized_pair),
+        "pair": list(normalized_pair),
+        "title": "未发现可记录疑点",
+        "description": (
+            "在本轮自动检查范围内，未发现该投标人组合达到记录阈值的围串标疑点。"
+        ),
+        "locations": [],
+        "details": {"finding": False},
+        "requirement_reference": None,
+        "confidence": 0.3,
+        "source_agent": "deterministic-normalizer",
+        "rationale_summary": "已完成该投标人组合覆盖检查，未形成结构化疑点证据。",
+    }
+
+
+def evidence_pairs(item: dict[str, Any]) -> list[list[str]]:
+    pair = normalize_pair_list(item.get("pair"))
+    if pair:
+        return [pair]
+    bidders = normalize_string_list(item.get("bidders"))
+    if len(bidders) < 2:
+        return []
+    return bidder_pairs(bidders)
+
+
+def bidder_pairs(names: list[str]) -> list[list[str]]:
+    deduped = []
+    for name in names:
+        clean = safe_evidence_text(name, 120)
+        if clean and clean not in deduped:
+            deduped.append(clean)
+    return [normalize_pair([left, right]) for left, right in itertools.combinations(deduped, 2)]
+
+
+def infer_bidders_from_reports(reports: list[dict[str, Any]]) -> list[str]:
+    names: list[str] = []
+    for report in reports:
+        for item in report.get("evidence", []):
+            if not isinstance(item, dict):
+                continue
+            for bidder in normalize_string_list(item.get("bidders")):
+                if bidder not in names:
+                    names.append(bidder)
+    return names
+
+
+def normalize_pair_list(value: Any) -> list[str]:
+    values = normalize_string_list(value)
+    if len(values) != 2:
+        return []
+    return normalize_pair(values)
+
+
+def normalize_pair(values: list[str]) -> list[str]:
+    cleaned = [safe_evidence_text(value, 120) for value in values]
+    cleaned = [value for value in cleaned if value]
+    if len(cleaned) != 2:
+        return []
+    return sorted(cleaned)
+
+
+def normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    cleaned: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        text = safe_evidence_text(item, 120)
+        if text and text not in cleaned:
+            cleaned.append(text)
+    return cleaned
+
+
+def normalize_locations(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    locations: list[dict[str, Any]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        filename = safe_evidence_text(item.get("file"), 160)
+        if not filename:
+            continue
+        line = item.get("line")
+        normalized: dict[str, Any] = {
+            "file": filename,
+            "line": line if isinstance(line, int) and line >= 1 else None,
+            "heading": safe_evidence_text(item.get("heading"), 160) or None,
+            "snippet": safe_evidence_text(item.get("snippet"), 260),
+        }
+        locations.append(normalized)
+        if len(locations) >= 20:
+            break
+    return locations
+
+
+def safe_evidence_text(value: Any, max_chars: int) -> str:
+    text = str(value or "").strip()
+    if len(text) > max_chars:
+        return text[: max_chars - 1].rstrip() + "…"
+    return text
+
+
+def normalize_confidence(value: Any, severity: str) -> float:
+    if isinstance(value, (int, float)):
+        return round(min(1.0, max(0.0, float(value))), 2)
+    return confidence_for_severity(severity)
+
+
+def confidence_for_severity(severity: str) -> float:
+    return {"high": 0.85, "medium": 0.65, "low": 0.45}.get(severity, 0.4)
+
+
+def validate_bid_evidence_records(
+    records: Any,
+    *,
+    required_pairs: list[list[str]] | None = None,
+) -> None:
+    if not isinstance(records, list):
+        raise ValueError("evidence.json 必须是数组")
+    seen_pairs: set[tuple[str, str]] = set()
+    required_keys = {
+        "category",
+        "severity",
+        "title",
+        "description",
+        "bidders",
+        "pair",
+        "locations",
+        "requirement_reference",
+        "confidence",
+        "source_agent",
+        "rationale_summary",
+    }
+    for index, item in enumerate(records, start=1):
+        if not isinstance(item, dict):
+            raise ValueError(f"evidence.json 第 {index} 条不是对象")
+        missing = required_keys.difference(item)
+        if missing:
+            raise ValueError(f"evidence.json 第 {index} 条缺少字段：{', '.join(sorted(missing))}")
+        pair = normalize_pair_list(item["pair"])
+        if not pair:
+            raise ValueError(f"evidence.json 第 {index} 条 pair 必须包含两个投标人")
+        bidders = normalize_string_list(item["bidders"])
+        if set(pair).difference(bidders):
+            raise ValueError(f"evidence.json 第 {index} 条 bidders 必须包含 pair 成员")
+        if not isinstance(item["locations"], list):
+            raise ValueError(f"evidence.json 第 {index} 条 locations 必须是数组")
+        confidence = item["confidence"]
+        if not isinstance(confidence, (int, float)) or not 0 <= float(confidence) <= 1:
+            raise ValueError(f"evidence.json 第 {index} 条 confidence 必须在 0 到 1 之间")
+        for key in ("category", "severity", "title", "description", "source_agent", "rationale_summary"):
+            if not isinstance(item[key], str):
+                raise ValueError(f"evidence.json 第 {index} 条 {key} 必须是字符串")
+        if item["requirement_reference"] is not None and not isinstance(
+            item["requirement_reference"], str
+        ):
+            raise ValueError(f"evidence.json 第 {index} 条 requirement_reference 必须是字符串或 null")
+        seen_pairs.add((pair[0], pair[1]))
+    if required_pairs:
+        normalized_required_pairs = {
+            (pair[0], pair[1])
+            for pair in (normalize_pair(pair) for pair in required_pairs)
+            if len(pair) == 2
+        }
+        missing_pairs = normalized_required_pairs - seen_pairs
+        if missing_pairs:
+            raise ValueError("evidence.json 缺少投标人组合覆盖记录")
 
 
 def dedupe_docs(docs: list[MarkdownDocument]) -> list[MarkdownDocument]:

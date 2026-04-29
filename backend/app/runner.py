@@ -1,16 +1,25 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, Thread
 from typing import Any, Literal
 
+from .agent_profiles import (
+    AgentProfile,
+    agent_profile_manifest,
+    profile_decision_summary,
+    select_agent_profile,
+)
 from .analysis import CancelledError, NeedsInputError, run_bid_analysis
 from .deep_agent_runtime import DeepAgentUnavailableError
 from .intent import InputScope, TaskMode, route_intent
 from .model_provider import ModelProvider, is_model_configuration_warning
 from .orchestrator import DeepAgentOrchestrator
 from .permissions import PermissionPolicy
+from .reasoning_trace import sanitize_reasoning_text
 from .runtime import CancellationController
 from .schemas import ChatMessage, TaskStatus
 from .settings import Settings
@@ -26,6 +35,54 @@ STARTABLE_STATUSES: set[TaskStatus] = {
     "interrupted",
 }
 RUNNING_STATUSES: set[TaskStatus] = {"running"}
+SEARCH_SOURCE_LIMIT = 5
+SEARCH_SNIPPET_CHARS = 320
+SEARCH_TITLE_CHARS = 140
+SEARCH_URL_CHARS = 360
+SEARCH_SYNTHESIS_ANSWER_CHARS = 4000
+ORCHESTRATION_TENDER_MARKERS = ("tender", "招标", "采购", "需求书")
+
+Emit = Callable[..., None]
+
+
+@dataclass(frozen=True)
+class SearchSourceSummary:
+    title: str
+    url: str
+    snippet: str
+
+    def to_payload(self) -> dict[str, str]:
+        return {
+            "title": self.title,
+            "url": self.url,
+            "snippet": self.snippet,
+        }
+
+
+@dataclass(frozen=True)
+class SearchSynthesisResult:
+    answer: str
+    sources: list[SearchSourceSummary]
+    used_model: bool
+    warning_code: str | None = None
+
+    @property
+    def event_payload(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "used_model": self.used_model,
+            "source_count": len(self.sources),
+            "sources": [source.to_payload() for source in self.sources],
+        }
+        if self.warning_code:
+            payload["warning_code"] = self.warning_code
+        return payload
+
+
+@dataclass(frozen=True)
+class SimpleMessageResult:
+    answer: str
+    warning_code: str | None = None
+    completion_payload: dict[str, Any] | None = None
 
 
 class TaskRunner:
@@ -171,6 +228,14 @@ class TaskRunner:
             )
             selected_uploads = uploads if decision.use_uploads else []
             selected_upload_names = {path.name for path in selected_uploads}
+            selected_upload_name_list = [path.name for path in selected_uploads]
+            bidder_count = estimate_bidder_count(selected_upload_name_list)
+            agent_profile = select_agent_profile(
+                decision=decision,
+                selected_upload_names=selected_upload_name_list,
+                bidder_count=bidder_count,
+                message=message,
+            )
             input_manifest = [
                 item
                 for item in available_input_manifest
@@ -185,7 +250,8 @@ class TaskRunner:
                 "input_scope": decision.input_scope_manifest(),
                 "inputs": input_manifest,
                 "available_uploads": available_input_manifest,
-                "selected_uploads": [path.name for path in selected_uploads],
+                "selected_uploads": selected_upload_name_list,
+                "agent_profile": agent_profile_manifest(agent_profile),
             }
             self.storage.write_run_manifest(task_id, run_id, run_manifest)
             emit(
@@ -196,16 +262,32 @@ class TaskRunner:
                     "intent": decision.intent,
                     "route": decision.route,
                     "input_scope": decision.resolved_input_scope,
+                    "chosen_profile_id": agent_profile.id if agent_profile else None,
                 },
             )
+            emit(
+                "orchestration_decision",
+                "已记录本轮编排策略。",
+                build_orchestration_decision_payload(
+                    route=decision.route,
+                    reason=decision.reason,
+                    selected_upload_names=selected_upload_name_list,
+                    message=message,
+                    agent_profile=agent_profile,
+                    bidder_count=bidder_count,
+                ),
+            )
             if decision.route == "chat" or decision.route == "search":
-                reply, warning_code = self._run_simple_message(
+                simple_result = self._run_simple_message(
                     task_id,
                     message,
                     model,
                     decision.route,
                     controller,
+                    emit,
                 )
+                reply = simple_result.answer
+                warning_code = simple_result.warning_code
                 warning_reply = warning_code is not None or is_model_configuration_warning(reply)
                 if warning_reply:
                     warning_event_type = (
@@ -235,7 +317,10 @@ class TaskRunner:
                         if decision.route == "chat"
                         else "轻量搜索回复已完成。"
                     ),
-                    completion_event_payload={"model": model},
+                    completion_event_payload={
+                        "model": model,
+                        **(simple_result.completion_payload or {}),
+                    },
                 ):
                     pass
                 elif controller.is_cancelled():
@@ -244,6 +329,8 @@ class TaskRunner:
 
             if decision.route == "deep_agent":
                 try:
+                    if agent_profile is None:
+                        raise RuntimeError("DeepAgent 路由缺少 Agent Profile")
                     orchestrator = DeepAgentOrchestrator(
                         storage=self.storage,
                         task_id=task_id,
@@ -251,19 +338,23 @@ class TaskRunner:
                         model=model,
                         controller=controller,
                         uploads=selected_uploads,
+                        agent_profile=agent_profile,
                     )
                     deep_agent_result = orchestrator.run(message)
                     artifact_names = deep_agent_result.metadata.get("promoted_artifacts")
                     if not isinstance(artifact_names, list):
                         artifact_names = []
+                    deep_agent_warning = bool(deep_agent_result.metadata.get("warning_code"))
                     if self._complete_with_assistant_message(
                         task_id,
                         run_id,
                         deep_agent_result.output_text,
+                        level="warning" if deep_agent_warning else None,
                         artifact_names=[str(name) for name in artifact_names],
                         completion_event_type="deep_agent_completed",
                         completion_event_message="DeepAgent 运行已完成。",
                         completion_event_payload=deep_agent_result.metadata,
+                        completion_event_level="warning" if deep_agent_warning else None,
                     ):
                         pass
                     elif controller.is_cancelled():
@@ -280,6 +371,7 @@ class TaskRunner:
                         fallback_manifest = {
                             **run_manifest,
                             "intent": fallback_document_intent_manifest(decision.reason),
+                            "agent_profile": agent_profile_manifest(agent_profile),
                             "deep_agent_fallback": {
                                 "reason": "missing_deepagents_dependency",
                                 "message": "DeepAgent 运行库不可用，已使用确定性文档分析兼容路径。",
@@ -371,7 +463,8 @@ class TaskRunner:
         model: str,
         route: Literal["chat", "search"],
         controller: CancellationController,
-    ) -> tuple[str, str | None]:
+        emit: Emit,
+    ) -> SimpleMessageResult:
         if route == "search":
             workspace_tools = WorkspaceTools(
                 self.storage.task_dir(task_id),
@@ -379,15 +472,51 @@ class TaskRunner:
                 self.settings.tavily_api_key,
                 controller,
             )
+            emit(
+                "search_tool_call",
+                "已调用联网搜索工具。",
+                {
+                    "tool_name": "tavily_search",
+                    "parameter_summary": {
+                        "query": bounded_safe_text(message, 240),
+                        "max_results": SEARCH_SOURCE_LIMIT,
+                        "use_uploads": False,
+                    },
+                },
+            )
             result = workspace_tools.tavily_search(message)
             warning = result.get("warning")
-            if isinstance(warning, str) and warning:
-                return (
-                    "联网搜索未启用：后端未配置 TAVILY_API_KEY。"
-                    "本轮已按轻量搜索请求处理，没有读取历史上传文件，也没有启动文档分析。",
-                    "missing_tavily_key",
-                )
-            return render_search_reply(result), None
+            sources = summarize_search_sources(result)
+            warning_code = "missing_tavily_key" if isinstance(warning, str) and warning else None
+            emit(
+                "search_tool_result",
+                "联网搜索工具已返回安全摘要。",
+                {
+                    "tool_name": "tavily_search",
+                    "result_count": len(sources),
+                    "sources": [source.to_payload() for source in sources],
+                    **({"warning_code": warning_code} if warning_code else {}),
+                },
+                level="warning" if warning_code else None,
+            )
+            synthesis = self._synthesize_search_result(
+                message=message,
+                model=model,
+                sources=sources,
+                warning_code=warning_code,
+                controller=controller,
+            )
+            emit(
+                "search_synthesis_completed",
+                "已根据搜索结果生成最终回答。",
+                synthesis.event_payload,
+                level="warning" if synthesis.warning_code else "success",
+            )
+            return SimpleMessageResult(
+                answer=synthesis.answer,
+                warning_code=synthesis.warning_code,
+                completion_payload=synthesis.event_payload,
+            )
 
         try:
             reply = self.model_provider.chat(message, model, controller)
@@ -398,7 +527,86 @@ class TaskRunner:
         if controller.is_cancelled():
             raise CancelledError()
         warning_code = "missing_provider_key" if is_model_configuration_warning(reply) else None
-        return reply, warning_code
+        return SimpleMessageResult(
+            answer=reply,
+            warning_code=warning_code,
+            completion_payload={"used_model": warning_code is None},
+        )
+
+    def _synthesize_search_result(
+        self,
+        *,
+        message: str,
+        model: str,
+        sources: list[SearchSourceSummary],
+        warning_code: str | None,
+        controller: CancellationController,
+    ) -> SearchSynthesisResult:
+        if warning_code == "missing_tavily_key":
+            return SearchSynthesisResult(
+                answer=(
+                    "联网搜索未启用：后端未配置 TAVILY_API_KEY。"
+                    "本轮已按轻量搜索请求处理，没有读取历史上传文件，也没有启动文档分析。"
+                ),
+                sources=[],
+                used_model=False,
+                warning_code=warning_code,
+            )
+        if not sources:
+            return SearchSynthesisResult(
+                answer=(
+                    "没有检索到可用结果。本轮没有读取历史上传文件，也没有启动文档分析。"
+                ),
+                sources=[],
+                used_model=False,
+            )
+
+        prompt = build_search_synthesis_prompt(message, sources)
+        try:
+            answer = self.model_provider.chat(prompt, model, controller)
+        except Exception as exc:
+            if controller.is_cancelled():
+                raise CancelledError() from exc
+            return SearchSynthesisResult(
+                answer=render_search_fallback_answer(
+                    message,
+                    sources,
+                    "模型合成暂不可用：本轮已保留联网检索摘要，但未能调用模型生成完整回答。",
+                ),
+                sources=sources,
+                used_model=False,
+                warning_code="model_synthesis_failed",
+            )
+        if controller.is_cancelled():
+            raise CancelledError()
+        if is_model_configuration_warning(answer):
+            return SearchSynthesisResult(
+                answer=render_search_fallback_answer(
+                    message,
+                    sources,
+                    "模型合成未启用：后端未配置 DEEPSEEK_API_KEY。",
+                ),
+                sources=sources,
+                used_model=False,
+                warning_code="missing_provider_key",
+            )
+        answer = bounded_safe_text(answer, SEARCH_SYNTHESIS_ANSWER_CHARS)
+        if not answer:
+            return SearchSynthesisResult(
+                answer=render_search_fallback_answer(
+                    message,
+                    sources,
+                    "模型没有返回可用内容，以下为联网检索的安全摘要。",
+                ),
+                sources=sources,
+                used_model=False,
+                warning_code="empty_model_response",
+            )
+        return SearchSynthesisResult(
+            answer=append_search_references(answer, sources),
+            sources=sources,
+            used_model=True,
+        )
 
     def _complete_with_assistant_message(
         self,
@@ -493,22 +701,166 @@ def fallback_document_intent_manifest(reason: str) -> dict[str, object]:
     }
 
 
-def render_search_reply(result: dict[str, Any]) -> str:
-    items = result.get("results")
-    if not isinstance(items, list) or not items:
-        return "没有检索到可用结果。本轮没有读取历史上传文件，也没有启动文档分析。"
+def build_orchestration_decision_payload(
+    *,
+    route: str,
+    reason: str,
+    selected_upload_names: list[str],
+    message: str,
+    agent_profile: AgentProfile | None = None,
+    bidder_count: int | None = None,
+) -> dict[str, Any]:
+    resolved_bidder_count = (
+        bidder_count if bidder_count is not None else estimate_bidder_count(selected_upload_names)
+    )
+    uses_complex_files = route in {"deep_agent", "document_analysis"} and resolved_bidder_count >= 2
+    strategy = agent_profile.strategy if agent_profile is not None else (
+        "multi_agent" if uses_complex_files else "single_agent"
+    )
+    planned_subagents = (
+        agent_profile.planned_subagents
+        if agent_profile is not None
+        else [
+            "document-classification",
+            "requirement-matching",
+            "bidder-pair-comparison",
+            "evidence-normalization",
+            "report-writing",
+        ]
+        if uses_complex_files
+        else []
+    )
+    if route == "search":
+        reason_code = "simple_search_no_uploads"
+        decision_summary = profile_decision_summary(agent_profile, resolved_bidder_count, route)
+    elif uses_complex_files:
+        reason_code = agent_profile.reason_code if agent_profile is not None else "multi_document_bid_comparison"
+        decision_summary = profile_decision_summary(agent_profile, resolved_bidder_count, route)
+    elif route == "deep_agent":
+        reason_code = agent_profile.reason_code if agent_profile is not None else "file_aware_single_agent"
+        decision_summary = profile_decision_summary(agent_profile, resolved_bidder_count, route)
+    else:
+        reason_code = "simple_chat"
+        decision_summary = profile_decision_summary(agent_profile, resolved_bidder_count, route)
+    return {
+        "schema_version": 1,
+        "strategy": strategy,
+        "reason_code": reason_code,
+        "input_count": len(selected_upload_names),
+        "bidder_count": resolved_bidder_count,
+        "planned_subagents": planned_subagents,
+        "decision_summary": sanitize_reasoning_text(decision_summary, max_chars=360),
+        "route": route,
+        "route_reason": sanitize_reasoning_text(reason, max_chars=120),
+        "message_class": classify_message_for_decision(message),
+        "chosen_profile_id": agent_profile.id if agent_profile is not None else None,
+        "chosen_profile_label": agent_profile.label if agent_profile is not None else None,
+    }
 
-    lines = ["已完成轻量联网检索，本轮没有读取历史上传文件。"]
-    for index, item in enumerate(items[:5], start=1):
+
+def classify_message_for_decision(message: str) -> str:
+    folded = message.casefold()
+    if any(token in folded for token in ("天气", "搜索", "查一下", "检索", "search")):
+        return "search_or_lookup"
+    if any(token in folded for token in ("串标", "围标", "投标", "招标", "bid")):
+        return "bid_or_document_analysis"
+    return "general"
+
+
+def estimate_bidder_count(upload_names: list[str]) -> int:
+    if not upload_names:
+        return 0
+    tender_count = sum(1 for name in upload_names if is_likely_tender_filename(name))
+    return max(0, len(upload_names) - tender_count)
+
+
+def is_likely_tender_filename(name: str) -> bool:
+    folded = name.casefold()
+    return any(marker in folded for marker in ORCHESTRATION_TENDER_MARKERS)
+
+
+def bounded_safe_text(value: object, max_chars: int) -> str:
+    return sanitize_reasoning_text(str(value or ""), max_chars=max_chars)
+
+
+def summarize_search_sources(result: dict[str, Any]) -> list[SearchSourceSummary]:
+    items = result.get("results")
+    if not isinstance(items, list):
+        return []
+    sources: list[SearchSourceSummary] = []
+    for item in items:
         if not isinstance(item, dict):
             continue
-        title = str(item.get("title") or "未命名结果")
-        url = str(item.get("url") or "")
-        content = str(item.get("content") or item.get("snippet") or "").strip()
-        summary = f"{index}. {title}"
-        if url:
-            summary += f" - {url}"
-        if content:
-            summary += f"\n   {content[:240]}"
-        lines.append(summary)
+        title = bounded_safe_text(item.get("title") or "未命名结果", SEARCH_TITLE_CHARS)
+        url = bounded_safe_text(item.get("url") or "", SEARCH_URL_CHARS)
+        snippet = bounded_safe_text(
+            item.get("content") or item.get("snippet") or "",
+            SEARCH_SNIPPET_CHARS,
+        )
+        if not (title or url or snippet):
+            continue
+        sources.append(
+            SearchSourceSummary(
+                title=title or "未命名结果",
+                url=url,
+                snippet=snippet,
+            )
+        )
+        if len(sources) >= SEARCH_SOURCE_LIMIT:
+            break
+    return sources
+
+
+def build_search_synthesis_prompt(message: str, sources: list[SearchSourceSummary]) -> str:
+    source_lines = "\n".join(
+        (
+            f"- 标题：{source.title}\n"
+            f"  URL：{source.url or '无'}\n"
+            f"  摘要：{source.snippet or '无'}"
+        )
+        for source in sources
+    )
+    safe_message = bounded_safe_text(message, 500)
+    return (
+        "你是 MyAgent 的联网检索结果合成器。请用中文直接回答用户问题，"
+        "只依据下面的安全搜索摘要进行综合，不要输出原始 JSON，不要把工具结果逐条照抄为答案。"
+        "如果信息不足，请明确说明不确定性，并列出关键来源。\n\n"
+        f"用户问题：{safe_message}\n\n"
+        f"安全搜索摘要：\n{source_lines}\n\n"
+        "最终回答要求：先给结论，再给必要依据；保持简洁。"
+    )
+
+
+def render_search_fallback_answer(
+    message: str,
+    sources: list[SearchSourceSummary],
+    warning: str,
+) -> str:
+    lines = [
+        warning,
+        "以下是联网检索返回的安全摘要，本轮没有读取历史上传文件，也没有启动文档分析：",
+        "",
+        f"问题：{bounded_safe_text(message, 240)}",
+        "",
+        "检索摘要：",
+    ]
+    for source in sources:
+        source_line = f"- {source.title}"
+        if source.snippet:
+            source_line += f"：{source.snippet}"
+        if source.url:
+            source_line += f"（{source.url}）"
+        lines.append(source_line)
     return "\n".join(lines)
+
+
+def append_search_references(answer: str, sources: list[SearchSourceSummary]) -> str:
+    if not sources:
+        return answer
+    references = []
+    for source in sources:
+        label = source.title
+        if source.url:
+            label += f" - {source.url}"
+        references.append(f"- {label}")
+    return answer.rstrip() + "\n\n参考来源：\n" + "\n".join(references)

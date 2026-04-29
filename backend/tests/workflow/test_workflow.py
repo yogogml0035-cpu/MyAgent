@@ -15,12 +15,14 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 import app.deep_agent_runtime as deep_agent_runtime
+from app.agent_profiles import BID_MULTI_AGENT_PROFILE_ID, DEFAULT_AGENT_PROFILE_ID
 from app.analysis import (
     CancelledError,
     MarkdownDocument,
     classify_documents,
     inspect_quotation_similarity,
     inspect_template_traces,
+    normalize_evidence,
     similar_paragraph_pairs,
 )
 from app.main import create_app
@@ -37,6 +39,7 @@ def make_client(
     tmp_path: Path,
     *,
     access_token: str | None = None,
+    tavily_api_key: str | None = None,
     max_upload_files: int = 10,
     max_upload_file_bytes: int = 10 * 1024 * 1024,
     max_upload_request_bytes: int = 101 * 1024 * 1024,
@@ -48,7 +51,7 @@ def make_client(
         task_root=tmp_path / "sessions",
         deepseek_api_key=None,
         deepseek_base_url="https://api.deepseek.com",
-        tavily_api_key=None,
+        tavily_api_key=tavily_api_key,
         workspace_root=tmp_path / "sessions",
         access_token=access_token,
         cors_origins=cors_origins,
@@ -62,6 +65,17 @@ def make_client(
     return TestClient(create_app(settings))
 
 
+class StubHTTPResponse:
+    def __init__(self, data: dict[str, Any]):
+        self.data = data
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, Any]:
+        return self.data
+
+
 def wait_for_terminal_status(client: TestClient, task_id: str) -> dict:
     for _ in range(80):
         state = client.get(f"/api/tasks/{task_id}").json()
@@ -73,6 +87,10 @@ def wait_for_terminal_status(client: TestClient, task_id: str) -> dict:
             return client.get(f"/api/tasks/{task_id}").json()
         time.sleep(0.05)
     raise AssertionError("Task did not finish")
+
+
+def tool_names(tools: list[Any]) -> set[str]:
+    return {tool.__name__ for tool in tools}
 
 
 def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> None:
@@ -163,11 +181,60 @@ def test_markdown_bid_analysis_workflow_creates_artifacts(tmp_path: Path) -> Non
     }
     assert {item["source_format"] for item in input_manifest} == {"markdown"}
     assert sum(1 for item in input_manifest if item["role"] == "bidder") == 3
+    evidence = json.loads((task_dir / "artifacts" / "evidence.json").read_text(encoding="utf-8"))
+    required_evidence_keys = {
+        "category",
+        "severity",
+        "title",
+        "description",
+        "bidders",
+        "pair",
+        "locations",
+        "requirement_reference",
+        "confidence",
+        "source_agent",
+        "rationale_summary",
+    }
+    assert evidence
+    assert all(required_evidence_keys.issubset(item) for item in evidence)
+    assert all(len(item["pair"]) == 2 for item in evidence)
+    assert all(0 <= item["confidence"] <= 1 for item in evidence)
+    expected_pairs = {
+        tuple(sorted(("甲方建设有限公司", "乙方建设有限公司"))),
+        tuple(sorted(("甲方建设有限公司", "丙方建设有限公司"))),
+        tuple(sorted(("乙方建设有限公司", "丙方建设有限公司"))),
+    }
+    assert {tuple(item["pair"]) for item in evidence} >= expected_pairs
+    orchestration_events = [
+        event for event in state["events"] if event["type"] == "orchestration_decision"
+    ]
+    assert orchestration_events
+    assert orchestration_events[-1]["payload"]["strategy"] == "multi_agent"
+    assert orchestration_events[-1]["payload"]["bidder_count"] == 3
+    assert "execution_mode" not in orchestration_events[-1]["payload"]
 
     report = client.get(f"/api/tasks/{task_id}/artifacts/report.html")
     assert report.status_code == 200
     assert "投标人对比视图" in report.text
     assert 'data-severity="high"' in report.text or 'data-severity="medium"' in report.text
+
+
+def test_normalized_evidence_adds_no_finding_records_for_uncovered_pairs() -> None:
+    bidder_docs = [
+        MarkdownDocument("a.md", "bidder", "甲公司", "", []),
+        MarkdownDocument("b.md", "bidder", "乙公司", "", []),
+        MarkdownDocument("c.md", "bidder", "丙公司", "", []),
+    ]
+
+    evidence = normalize_evidence([], bidder_docs)
+
+    assert {tuple(item["pair"]) for item in evidence} == {
+        tuple(sorted(("甲公司", "乙公司"))),
+        tuple(sorted(("甲公司", "丙公司"))),
+        tuple(sorted(("乙公司", "丙公司"))),
+    }
+    assert all(item["category"] == "pair_comparison_coverage" for item in evidence)
+    assert all(item["source_agent"] == "deterministic-normalizer" for item in evidence)
 
 
 def test_reasoning_trace_does_not_expose_prompt_upload_content_or_private_paths(
@@ -343,7 +410,141 @@ def test_search_with_document_words_does_not_reuse_existing_uploads(tmp_path: Pa
     assert run_manifest["inputs"] == []
     assert any(event["type"] == "search_completed" for event in state["events"])
     assert not any(event["type"] == "plan_created" for event in state["events"])
+    assert not any(event["type"] == "file_tool_audit" for event in state["events"])
     assert not (task_dir / "plan.json").exists()
+
+
+def test_search_synthesizes_final_answer_after_tool_result(tmp_path: Path) -> None:
+    client = make_client(tmp_path, tavily_api_key="test-tavily-key")
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    tavily_payload = {
+        "results": [
+            {
+                "title": "上海天气实况",
+                "url": "https://weather.example/shanghai",
+                "content": "上海今天多云，午后有短时小雨，气温 18 到 23 摄氏度。",
+                "raw_content": "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR",
+            },
+            {
+                "title": "上海空气质量",
+                "url": "https://weather.example/air",
+                "content": "空气质量良，东北风 3 级。",
+            },
+        ]
+    }
+
+    with (
+        patch("app.tools.httpx.post", return_value=StubHTTPResponse(tavily_payload)),
+        patch(
+            "app.model_provider.ProviderRouter.chat",
+            return_value="上海今天以多云为主，午后可能有短时小雨，出门建议带伞。",
+        ) as provider_chat,
+    ):
+        response = client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={"message": "上海今天的天气怎么样？", "model": "deepseek-reasoner"},
+        )
+        state = wait_for_terminal_status(client, task_id)
+
+    run_id = state["runs"][0]["id"]
+    run_event_types = [
+        event["type"] for event in state["events"] if event.get("run_id") == run_id
+    ]
+    positions = {event_type: run_event_types.index(event_type) for event_type in run_event_types}
+    serialized_events = json.dumps(state["events"], ensure_ascii=False)
+
+    assert response.status_code == 200
+    assert state["status"] == "complete"
+    assert [message["role"] for message in state["messages"]] == ["user", "assistant"]
+    assert "上海今天以多云为主" in state["messages"][-1]["content"]
+    assert "参考来源" in state["messages"][-1]["content"]
+    assert "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR" not in state["messages"][-1]["content"]
+    assert "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR" not in serialized_events
+    assert positions["search_tool_call"] < positions["search_tool_result"]
+    assert positions["search_tool_result"] < positions["search_synthesis_completed"]
+    assert positions["search_synthesis_completed"] < positions["search_completed"]
+    synthesis_events = [
+        event for event in state["events"] if event["type"] == "search_synthesis_completed"
+    ]
+    assert synthesis_events[-1]["payload"]["used_model"] is True
+    assert synthesis_events[-1]["payload"]["source_count"] == 2
+    assert len(synthesis_events[-1]["payload"]["sources"]) <= 5
+    assert set(synthesis_events[-1]["payload"]["sources"][0]) == {"title", "url", "snippet"}
+    prompt = provider_chat.call_args.args[0]
+    assert "上海天气实况" in prompt
+    assert "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR" not in prompt
+
+
+def test_search_missing_provider_uses_bounded_source_summary(tmp_path: Path) -> None:
+    client = make_client(tmp_path, tavily_api_key="test-tavily-key")
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    tavily_payload = {
+        "results": [
+            {
+                "title": "上海天气",
+                "url": "https://weather.example/shanghai",
+                "content": "上海今日阴到多云，最高 22 摄氏度。",
+                "raw_content": "RAW_PROVIDER_FALLBACK_CANARY",
+            }
+        ]
+    }
+
+    with patch("app.tools.httpx.post", return_value=StubHTTPResponse(tavily_payload)):
+        client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={"message": "查一下上海天气", "model": "deepseek-reasoner"},
+        )
+        state = wait_for_terminal_status(client, task_id)
+
+    synthesis_event = next(
+        event for event in state["events"] if event["type"] == "search_synthesis_completed"
+    )
+    final_message = state["messages"][-1]
+    serialized = json.dumps(state["events"], ensure_ascii=False)
+
+    assert state["status"] == "complete"
+    assert final_message["level"] == "warning"
+    assert "模型合成未启用" in final_message["content"]
+    assert "上海今日阴到多云" in final_message["content"]
+    assert "RAW_PROVIDER_FALLBACK_CANARY" not in final_message["content"]
+    assert "RAW_PROVIDER_FALLBACK_CANARY" not in serialized
+    assert synthesis_event["payload"]["used_model"] is False
+    assert synthesis_event["payload"]["warning_code"] == "missing_provider_key"
+
+
+def test_search_model_failure_uses_bounded_source_summary(tmp_path: Path) -> None:
+    client = make_client(tmp_path, tavily_api_key="test-tavily-key")
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    tavily_payload = {
+        "results": [
+            {
+                "title": "上海天气",
+                "url": "https://weather.example/shanghai",
+                "content": "上海今日小雨转多云，最高 21 摄氏度。",
+            }
+        ]
+    }
+
+    with (
+        patch("app.tools.httpx.post", return_value=StubHTTPResponse(tavily_payload)),
+        patch("app.model_provider.ProviderRouter.chat", side_effect=ValueError("provider down")),
+    ):
+        client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={"message": "查一下上海天气", "model": "deepseek-reasoner"},
+        )
+        state = wait_for_terminal_status(client, task_id)
+
+    synthesis_event = next(
+        event for event in state["events"] if event["type"] == "search_synthesis_completed"
+    )
+
+    assert state["status"] == "complete"
+    assert state["messages"][-1]["level"] == "warning"
+    assert "模型合成暂不可用" in state["messages"][-1]["content"]
+    assert "上海今日小雨转多云" in state["messages"][-1]["content"]
+    assert synthesis_event["payload"]["used_model"] is False
+    assert synthesis_event["payload"]["warning_code"] == "model_synthesis_failed"
 
 
 def test_legacy_input_scope_none_no_longer_overrides_model_owned_file_routing(
@@ -464,6 +665,86 @@ def test_auto_file_aware_prompt_uses_deep_agent_available_uploads_without_forced
     assert not any(event["type"] == "deep_agent_fallback" for event in state["events"])
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "帮我检查是否有串标围标嫌疑",
+        "继续根据刚才这些文件检查串标",
+    ],
+)
+def test_auto_bid_prompt_selects_bid_multi_agent_profile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, message: str
+) -> None:
+    captured_subagents: list[str] = []
+    captured_subagent_tool_names: list[set[str]] = []
+
+    def fake_factory(
+        *,
+        model: str,
+        tools: list[Any],
+        system_prompt: str,
+        subagents: list[dict[str, Any]],
+        backend: Any,
+    ) -> Any:
+        assert model == "deepseek-reasoner"
+        assert "招投标多 Agent 分析" in system_prompt
+        assert isinstance(backend, deep_agent_runtime.AuditedDeepAgentBackend)
+        captured_subagents.extend(str(item["name"]) for item in subagents)
+        captured_subagent_tool_names.extend(tool_names(item["tools"]) for item in subagents)
+        tool_map = {tool.__name__: tool for tool in tools}
+
+        def fake_agent(payload: dict[str, Any], **_kwargs: Any) -> dict[str, str]:
+            assert payload["messages"][0]["content"] == message
+            tool_map["write_file"]("outputs/final-summary.md", "多 Agent 汇总")
+            return {"content": "已使用多 Agent Profile 完成分析。"}
+
+        return fake_agent
+
+    monkeypatch.setattr(deep_agent_runtime, "_DEFAULT_AGENT_FACTORY", fake_factory)
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    files = [
+        ("files", ("tender.md", TENDER_DOC.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-a.md", BIDDER_A.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-b.md", BIDDER_B.encode("utf-8"), "text/markdown")),
+    ]
+    assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
+
+    response = client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": message, "model": "deepseek-reasoner"},
+    )
+    state = wait_for_terminal_status(client, task_id)
+    task_dir = tmp_path / "sessions" / task_id
+    run_manifest = json.loads((task_dir / "run.json").read_text(encoding="utf-8"))
+    orchestration_payloads = [
+        event["payload"] for event in state["events"] if event["type"] == "orchestration_decision"
+    ]
+    completion_payloads = [
+        event["payload"] for event in state["events"] if event["type"] == "deep_agent_completed"
+    ]
+
+    assert response.status_code == 200
+    assert state["status"] == "complete"
+    assert captured_subagents == [
+        "document-classification-agent",
+        "requirement-matching-agent",
+        "bidder-pair-comparison-agent",
+        "evidence-normalization-agent",
+        "report-writing-agent",
+    ]
+    assert all(
+        names == {"list_dir", "read_file", "write_file"}
+        for names in captured_subagent_tool_names
+    )
+    assert run_manifest["agent_profile"]["id"] == BID_MULTI_AGENT_PROFILE_ID
+    assert orchestration_payloads[-1]["chosen_profile_id"] == BID_MULTI_AGENT_PROFILE_ID
+    assert orchestration_payloads[-1]["strategy"] == "multi_agent"
+    assert orchestration_payloads[-1]["planned_subagents"] == captured_subagents
+    assert completion_payloads[-1]["chosen_profile_id"] == BID_MULTI_AGENT_PROFILE_ID
+    assert completion_payloads[-1]["agent_profile"]["id"] == BID_MULTI_AGENT_PROFILE_ID
+
+
 def test_explicit_deep_agent_mode_uses_audited_runtime_without_document_workflow(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -514,6 +795,7 @@ def test_explicit_deep_agent_mode_uses_audited_runtime_without_document_workflow
     assert run_manifest["intent"]["route"] == "deep_agent"
     assert run_manifest["input_scope"] == {"requested": "auto", "resolved": "none"}
     assert run_manifest["selected_uploads"] == []
+    assert run_manifest["agent_profile"]["id"] == DEFAULT_AGENT_PROFILE_ID
     assert {artifact["name"] for artifact in state["artifacts"]} == {
         "deep-agent-summary.md"
     }

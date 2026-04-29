@@ -53,6 +53,9 @@ FIELD_LIMITS = {
     "source_event_id": 160,
     "related_event_id": 160,
     "subgraph_path": 80,
+    "agent_id": 120,
+    "parent_agent_id": 120,
+    "task_label": 160,
 }
 
 
@@ -69,6 +72,9 @@ def build_deep_agent_activity_payload(
     subgraph_path: Iterable[Any] | None = None,
     source_event_id: str | None = None,
     related_event_id: str | None = None,
+    agent_id: str | None = None,
+    parent_agent_id: str | None = None,
+    task_label: str | None = None,
 ) -> dict[str, Any]:
     normalized_kind = activity_kind.strip() if isinstance(activity_kind, str) else ""
     normalized_phase = phase.strip() if isinstance(phase, str) else ""
@@ -107,6 +113,9 @@ def build_deep_agent_activity_payload(
         "result_summary": result_summary,
         "source_event_id": source_event_id,
         "related_event_id": related_event_id,
+        "agent_id": agent_id,
+        "parent_agent_id": parent_agent_id,
+        "task_label": task_label,
     }
     for field, value in optional_fields.items():
         if value is None:
@@ -147,6 +156,9 @@ def validate_deep_agent_activity_payload(payload: Mapping[str, Any]) -> bool:
             else [],
             source_event_id=_optional_str(payload.get("source_event_id")),
             related_event_id=_optional_str(payload.get("related_event_id")),
+            agent_id=_optional_str(payload.get("agent_id")),
+            parent_agent_id=_optional_str(payload.get("parent_agent_id")),
+            task_label=_optional_str(payload.get("task_label")),
         )
     except ValueError:
         return False
@@ -271,6 +283,8 @@ class DeepAgentActivityProjector:
             subgraph_path=path,
             source_event_id=f"dg_evt_{self._counter}",
             related_event_id=related_event_id,
+            agent_id=_agent_id_from_path(path),
+            task_label=_task_label_from_path(path),
         )
         self.sink(payload)
 
@@ -468,6 +482,23 @@ def _path_items(value: Any) -> list[str]:
                 items.append(str(item))
         return items
     return []
+
+
+def _agent_id_from_path(path: Sequence[str]) -> str | None:
+    for item in reversed(path):
+        sanitized, _ = _sanitize_activity_text(item, max_chars=FIELD_LIMITS["agent_id"])
+        if sanitized and sanitized not in {"updates", "messages"}:
+            return sanitized
+    return None
+
+
+def _task_label_from_path(path: Sequence[str]) -> str | None:
+    agent_id = _agent_id_from_path(path)
+    if not agent_id:
+        return None
+    label = agent_id.removesuffix("-agent").replace("-", " ").strip()
+    sanitized, _ = _sanitize_activity_text(label, max_chars=FIELD_LIMITS["task_label"])
+    return sanitized or None
 
 
 def _extract_tool_calls(message: Any) -> list[Any]:

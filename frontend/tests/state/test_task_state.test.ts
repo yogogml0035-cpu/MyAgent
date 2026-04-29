@@ -141,19 +141,33 @@ test("buildMessageRequestPayload allows explicit mode overrides", () => {
 });
 
 test("first-party composer no longer renders a file-use segmented control", () => {
-  const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf-8");
+  const composerSource = readFileSync(
+    new URL("../../components/chat/ChatComposer.tsx", import.meta.url),
+    "utf-8",
+  );
 
-  assert.equal(pageSource.includes("scopeSegment"), false);
-  assert.equal(pageSource.includes("本轮是否使用已上传文件"), false);
-  assert.equal(pageSource.includes("不用文件"), false);
-  assert.equal(pageSource.includes("使用文件"), false);
+  assert.equal(composerSource.includes("scopeSegment"), false);
+  assert.equal(composerSource.includes("本轮是否使用已上传文件"), false);
+  assert.equal(composerSource.includes("不用文件"), false);
+  assert.equal(composerSource.includes("使用文件"), false);
 });
 
 test("user message cards expose a copy action for the exact message content", () => {
-  const pageSource = readFileSync(new URL("../../app/page.tsx", import.meta.url), "utf-8");
+  const conversationSource = readFileSync(
+    new URL("../../components/chat/TaskConversation.tsx", import.meta.url),
+    "utf-8",
+  );
+  const userTimeIndex = conversationSource.indexOf('className="userMessageTime"');
+  const userCopyIndex = conversationSource.indexOf("className={userCopyButtonClassName}");
 
-  assert.equal(pageSource.includes('aria-label="复制用户消息"'), true);
-  assert.equal(pageSource.includes("handleCopyText(message.content)"), true);
+  assert.equal(conversationSource.includes("复制用户消息"), true);
+  assert.equal(conversationSource.includes("onCopyText(message.content, undefined"), true);
+  assert.equal(conversationSource.includes("onCopyText(formatTime"), false);
+  assert.equal(conversationSource.includes("已复制用户消息"), true);
+  assert.equal(conversationSource.includes("copyButton-copied"), true);
+  assert.equal(userTimeIndex >= 0, true);
+  assert.equal(userCopyIndex >= 0, true);
+  assert.equal(userTimeIndex < userCopyIndex, true);
 });
 
 test("normalizeTaskState preserves user message content without display localization", () => {
@@ -165,7 +179,7 @@ test("normalizeTaskState preserves user message content without display localiza
         {
           id: "message-1",
           role: "user",
-          content: "Task completed",
+          content: "  Task completed\n原样复制  ",
         },
         {
           id: "message-2",
@@ -182,7 +196,7 @@ test("normalizeTaskState preserves user message content without display localiza
     "fallback",
   );
 
-  assert.equal(state.messages[0].content, "Task completed");
+  assert.equal(state.messages[0].content, "  Task completed\n原样复制  ");
   assert.equal(state.messages[1].content, "Uploaded input.json");
   assert.equal(state.messages[2].content, "任务已完成。");
 });
@@ -276,6 +290,10 @@ test("normalizeTaskState preserves valid deep agent activity metadata", () => {
             status: "started",
             title: longTitle,
             summary: longSummary,
+            iteration_index: 2,
+            agent_id: "main-agent",
+            parent_agent_id: "root",
+            task_label: "投标文件对比",
             tool_name: "list_dir",
             parameter_summary: "relative_path=uploads",
             result_summary: "工具返回 3 个文件名。",
@@ -283,6 +301,7 @@ test("normalizeTaskState preserves valid deep agent activity metadata", () => {
             related_event_id: "file-tool-audit-event-id",
             truncated: true,
             arbitrary_secret: "SHOULD_NOT_RENDER",
+            raw_provider_chunk: "SHOULD_NOT_RENDER",
           },
         },
       ],
@@ -295,6 +314,10 @@ test("normalizeTaskState preserves valid deep agent activity metadata", () => {
   assert.equal(state.logs[0].agentActivity?.activityKind, "lifecycle");
   assert.equal(state.logs[0].agentActivity?.phase, "tool_use");
   assert.equal(state.logs[0].agentActivity?.status, "started");
+  assert.equal(state.logs[0].agentActivity?.iterationIndex, 2);
+  assert.equal(state.logs[0].agentActivity?.agentId, "main-agent");
+  assert.equal(state.logs[0].agentActivity?.parentAgentId, "root");
+  assert.equal(state.logs[0].agentActivity?.taskLabel, "投标文件对比");
   assert.equal(state.logs[0].agentActivity?.toolName, "list_dir");
   assert.equal(state.logs[0].agentActivity?.parameterSummary, "relative_path=uploads");
   assert.equal(state.logs[0].agentActivity?.resultSummary, "工具返回 3 个文件名。");
@@ -304,6 +327,196 @@ test("normalizeTaskState preserves valid deep agent activity metadata", () => {
   assert.equal(state.logs[0].agentActivity?.title.length, 120);
   assert.equal(state.logs[0].agentActivity?.summary.length, 1000);
   assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+  assert.equal(JSON.stringify(state.logs).includes("raw_provider_chunk"), false);
+});
+
+test("normalizeTaskState bounds optional deep agent activity fields and ignores unknown fields", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "activity-1",
+          type: "deep_agent_activity",
+          message: "DeepAgent activity",
+          payload: {
+            schema_version: 1,
+            source: "deepagents",
+            activity_kind: "progress",
+            phase: "planning",
+            status: "running",
+            title: "规划任务",
+            summary: "准备分析输入。",
+            iteration_index: 10000,
+            agent_id: "a".repeat(140),
+            parent_agent_id: "root",
+            task_label: "t".repeat(180),
+            unknown_optional: "SHOULD_NOT_RENDER",
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].agentActivity?.iterationIndex, undefined);
+  assert.equal(state.logs[0].agentActivity?.agentId?.length, 120);
+  assert.equal(state.logs[0].agentActivity?.parentAgentId, "root");
+  assert.equal(state.logs[0].agentActivity?.taskLabel?.length, 160);
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+  assert.equal(JSON.stringify(state.logs).includes("unknown_optional"), false);
+});
+
+test("normalizeTaskState preserves bounded search trace metadata and ignores raw fields", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "search-call",
+          type: "search_tool_call",
+          message: "已调用联网搜索工具。",
+          payload: {
+            tool_name: "tavily_search",
+            parameter_summary: {
+              query: "上海今天的天气怎么样？",
+              max_results: 5,
+              use_uploads: false,
+              raw_prompt: "SHOULD_NOT_RENDER",
+            },
+          },
+        },
+        {
+          id: "search-result",
+          type: "search_tool_result",
+          message: "联网搜索工具已返回安全摘要。",
+          payload: {
+            tool_name: "tavily_search",
+            result_count: 1,
+            sources: [
+              {
+                title: "上海天气",
+                url: "https://weather.example/shanghai",
+                snippet: "多云，午后小雨。",
+                raw_content: "SHOULD_NOT_RENDER",
+              },
+            ],
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].searchTrace?.kind, "tool_call");
+  assert.equal(state.logs[0].searchTrace?.toolName, "tavily_search");
+  assert.equal(
+    state.logs[0].searchTrace?.parameterSummary,
+    "query=上海今天的天气怎么样？; max_results=5; use_uploads=false",
+  );
+  assert.equal(state.logs[1].searchTrace?.kind, "tool_result");
+  assert.equal(state.logs[1].searchTrace?.resultSummary, "结果数量：1");
+  assert.equal(state.logs[1].searchTrace?.sources[0]?.title, "上海天气");
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+  assert.equal(JSON.stringify(state.logs).includes("raw_content"), false);
+  assert.equal(JSON.stringify(state.logs).includes("raw_prompt"), false);
+});
+
+test("normalizeTaskState preserves bounded orchestration profile metadata", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "orchestration-1",
+          type: "orchestration_decision",
+          message: "已记录本轮编排策略。",
+          payload: {
+            schema_version: 1,
+            strategy: "multi_agent",
+            reason_code: "multi_document_bid_comparison",
+            chosen_profile_id: "bid_multi_agent",
+            chosen_profile_label: "招投标多 Agent 分析",
+            planned_subagents: [
+              "document-classification-agent",
+              "report-writing-agent",
+              { unsafe: true },
+            ],
+            message_class: "bid_analysis",
+            route: "deep_agent",
+            bidder_count: 3,
+            decision_summary: "选择多 Agent Profile。",
+            raw_prompt: "SHOULD_NOT_RENDER",
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].orchestration?.strategy, "multi_agent");
+  assert.equal(state.logs[0].orchestration?.chosenProfileId, "bid_multi_agent");
+  assert.equal(state.logs[0].orchestration?.chosenProfileLabel, "招投标多 Agent 分析");
+  assert.deepEqual(state.logs[0].orchestration?.plannedSubagents, [
+    "document-classification-agent",
+    "report-writing-agent",
+  ]);
+  assert.equal(state.logs[0].orchestration?.bidderCount, 3);
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+  assert.equal(JSON.stringify(state.logs).includes("raw_prompt"), false);
+});
+
+test("normalizeTaskState rejects malformed orchestration metadata", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "orchestration-bad",
+          type: "orchestration_decision",
+          message: "畸形编排策略。",
+          payload: {
+            schema_version: 1,
+            strategy: "dynamic_agent",
+            chosen_profile_id: "SHOULD_NOT_RENDER",
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].orchestration, undefined);
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+});
+
+test("normalizeTaskState ignores non-integer orchestration bidder counts", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "orchestration-float-bidder-count",
+          type: "orchestration_decision",
+          message: "已记录本轮编排策略。",
+          payload: {
+            schema_version: 1,
+            strategy: "multi_agent",
+            planned_subagents: [],
+            bidder_count: 3.5,
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].orchestration?.bidderCount, undefined);
 });
 
 test("normalizeTaskState rejects malformed deep agent activity payloads", () => {
@@ -316,6 +529,7 @@ test("normalizeTaskState rejects malformed deep agent activity payloads", () => 
           id: "activity-invalid-status",
           type: "deep_agent_activity",
           message: "畸形活动。",
+          detail: "安全标题详情。",
           payload: {
             schema_version: 1,
             source: "deepagents",
@@ -348,6 +562,8 @@ test("normalizeTaskState rejects malformed deep agent activity payloads", () => 
 
   assert.equal(state.logs[0].agentActivity, undefined);
   assert.equal(state.logs[1].agentActivity, undefined);
+  assert.equal(state.logs[0].title, "畸形活动。");
+  assert.equal(state.logs[0].detail, "安全标题详情。");
   assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
 });
 

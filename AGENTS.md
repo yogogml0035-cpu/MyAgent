@@ -5,17 +5,17 @@
 ## 仓库事实
 
 - 后端：`backend/`，FastAPI + `uv`，入口为 `backend/app/main.py`。
-- 前端：`frontend/`，Next.js app router，主界面在 `frontend/app/page.tsx`。
+- 前端：`frontend/`，Next.js app router，主界面由 `frontend/app/page.tsx` 挂载，聊天工作区组件在 `frontend/components/chat/`，任务状态编排在 `frontend/hooks/use-task-workspace.ts`，API 封装在 `frontend/lib/task-api.ts`。
 - 默认任务存储：`backend/storage/sessions/`。
 - 后端测试：`backend/tests/`，当前任务工作流集成套件在 `backend/tests/workflow/test_workflow.py`。
 - 前端测试：`frontend/tests/`，按 `state/`、`workspace/`、`upload/`、`model/` 分类，文件名必须以 `test_` 开头。
 - 长期知识包索引：`asset/README.md`。
-- 当前唯一长期主知识包：`asset/task_workspace_runtime_knowledge_pack.md`，覆盖任务运行、前端工作区、模型提供方、安全边界、上传限制、产物访问和测试布局。
+- 当前唯一长期主知识包：`asset/task_workspace_runtime_knowledge_pack.md`，覆盖任务运行、前端工作区、前端架构边界、机器人头像、模型提供方、安全边界、上传限制、产物访问和测试布局。
 
 ## 工作前必须读取
 
 - 涉及后端任务生命周期、API、存储、权限、模型或分析流程时，先读相关 `backend/app/` 代码和 `backend/tests/`。
-- 涉及前端表单、任务状态、URL 映射、产物打开或轮询时，先读 `frontend/app/page.tsx`、`frontend/app/task-state.ts` 和 `frontend/tests/`。
+- 涉及前端表单、任务状态、URL 映射、产物打开或轮询时，先读 `frontend/app/page.tsx`、`frontend/hooks/use-task-workspace.ts`、`frontend/lib/task-api.ts`、`frontend/app/task-state.ts` 和 `frontend/tests/`。
 - 涉及长期规则或已形成稳定主题边界时，先读 `asset/README.md`，再读索引中列出的相关知识包。
 - 搜索优先用 `rg` 或 `rg --files`。
 
@@ -60,9 +60,18 @@
 - 知识包必须只引用当前仍存在的代码、测试、命令和目录；禁止继续引用已删除文件、本地样本路径、worktree 操作说明或按日期展开的 patch 时间线。
 - 一次故障复盘只能沉淀为“触发条件 + 稳定边界 + 验证信号 + 回归风险”，不能把修复过程日志直接当长期知识。
 
+### 经验回写抽象准则
+
+- 修正完成后，只将未来会反复影响需求判断的通用经验写入 `asset/`；单次排障过程、临时脚本、具体调参记录或只服务某个文件的处理不进入长期知识。
+- 经验写入前先按 `asset/README.md` 路由到现有主包；只有形成独立稳定主题且无法并入现有主包时，才新增知识包并同步索引。
+- 经验应优先说明错误背后的原则或边界，而不是记录某次修改的具体值。具体数值、颜色、状态名、字段名只有已经成为稳定契约、输入输出样例或验证信号时才保留。
+- 经验应优先描述容易复发的模式，例如 API 状态转换、前端布局对齐、事件日志安全、产物访问或测试分类边界，而不是绑定某个页面、组件、函数或测试文件；必要路径只放在“关联代码路径”和“关联测试路径”中。
+- 写入前做可迁移性检查：去掉本次任务名、页面名、样例数据和具体数值后，这条经验仍能指导下一次同类决策，才值得沉淀到 `asset/`。
+- 只有影响跨主题、跨多次需求的协作边界、验证入口或知识包路由规则，才从主题知识包提升写入 `AGENTS.md`；普通主题经验留在对应知识包。
+
 ### 当前有效知识包
 
-- `asset/task_workspace_runtime_knowledge_pack.md`：任务 API、状态机、runner、事件日志、版本化产物、本地 JSON 存储、前端任务工作区、文件上传、消息提交、状态轮询、日志合并、产物打开、provider 密钥、环境变量、访问令牌、CORS、本地优先安全边界、上传/JSON 限制和测试布局。
+- `asset/task_workspace_runtime_knowledge_pack.md`：任务 API、状态机、runner、事件日志、版本化产物、本地 JSON 存储、前端任务工作区、前端组件/Hook/API 分层、文件上传、消息提交、状态轮询、日志合并、产物打开、机器人头像、provider 密钥、环境变量、访问令牌、CORS、本地优先安全边界、上传/JSON 限制和测试布局。
 - `asset/README.md` 是唯一有效索引；新增、删除或改名知识包时必须同步更新。
 
 ### 需求修改后的知识回写路由

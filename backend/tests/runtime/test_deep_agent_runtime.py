@@ -7,6 +7,15 @@ from typing import Any, cast
 import pytest
 
 import app.deep_agent_runtime as deep_agent_runtime
+from app.agent_profiles import (
+    BID_MULTI_AGENT_PROFILE_ID,
+    AgentProfile,
+    AgentProfileValidationError,
+    SubAgentSpec,
+    compile_subagents_for_deepagents,
+    get_agent_profile,
+    validate_agent_profile,
+)
 from app.orchestrator import DeepAgentOrchestrator
 from app.permissions import PermissionPolicy
 from app.runtime import CancellationController
@@ -26,6 +35,112 @@ def make_running_task(tmp_path: Path) -> tuple[TaskStorage, str, str]:
     )
     assert started is not None
     return storage, state.task_id, started[1]
+
+
+def write_bid_upload_fixtures(task_workspace: Path) -> list[Path]:
+    tender = task_workspace / "uploads" / "招标文件.md"
+    bidder_a = task_workspace / "uploads" / "甲公司.md"
+    bidder_b = task_workspace / "uploads" / "乙公司.md"
+    bidder_c = task_workspace / "uploads" / "丙公司.md"
+    tender.write_text("# 招标文件\n采购需求。", encoding="utf-8")
+    bidder_a.write_text("# 甲公司\n投标人：甲公司\n报价 100 万元。", encoding="utf-8")
+    bidder_b.write_text("# 乙公司\n投标人：乙公司\n报价 100 万元。", encoding="utf-8")
+    bidder_c.write_text("# 丙公司\n投标人：丙公司\n报价 120 万元。", encoding="utf-8")
+    return [tender, bidder_a, bidder_b, bidder_c]
+
+
+def fake_tool_registry() -> dict[str, Any]:
+    def list_dir(_relative_path: str = ".") -> list[str]:
+        return []
+
+    def read_file(_relative_path: str) -> str:
+        return ""
+
+    def write_file(_relative_path: str, _content: str) -> dict[str, Any]:
+        return {}
+
+    return {
+        "list_dir": list_dir,
+        "read_file": read_file,
+        "write_file": write_file,
+    }
+
+
+def tool_names(tools: list[Any]) -> set[str]:
+    return {tool.__name__ for tool in tools}
+
+
+def test_agent_profile_registry_validates_static_bid_profile() -> None:
+    profile = get_agent_profile(BID_MULTI_AGENT_PROFILE_ID)
+    compiled = compile_subagents_for_deepagents(profile, fake_tool_registry())
+
+    assert profile.strategy == "multi_agent"
+    assert profile.planned_subagents == [
+        "document-classification-agent",
+        "requirement-matching-agent",
+        "bidder-pair-comparison-agent",
+        "evidence-normalization-agent",
+        "report-writing-agent",
+    ]
+    assert [item["name"] for item in compiled] == profile.planned_subagents
+    assert all(
+        tool_names(item["tools"]) == {"list_dir", "read_file", "write_file"}
+        for item in compiled
+    )
+
+
+def test_agent_profile_validation_rejects_unsafe_specs() -> None:
+    base_subagent = SubAgentSpec(
+        name="safe-agent",
+        description="安全子 Agent",
+        system_prompt="只使用授权工具。",
+    )
+    duplicate_profile = AgentProfile(
+        id="unsafe-profile",
+        label="Unsafe",
+        strategy="multi_agent",
+        reason_code="unsafe",
+        system_prompt_fragment="unsafe",
+        subagents=(base_subagent, base_subagent),
+    )
+    unsafe_tool_profile = AgentProfile(
+        id="unsafe-tool-profile",
+        label="Unsafe",
+        strategy="single_agent",
+        reason_code="unsafe",
+        system_prompt_fragment="unsafe",
+        subagents=(
+            SubAgentSpec(
+                name="unsafe-agent",
+                description="尝试使用未授权工具",
+                system_prompt="不要执行。",
+                tool_aliases=("shell",),
+            ),
+        ),
+    )
+    unsafe_model_profile = AgentProfile(
+        id="unsafe-model-profile",
+        label="Unsafe",
+        strategy="single_agent",
+        reason_code="unsafe",
+        system_prompt_fragment="unsafe",
+        subagents=(
+            SubAgentSpec(
+                name="unsafe-model-agent",
+                description="尝试覆盖模型",
+                system_prompt="不要执行。",
+                model="unknown-model",
+            ),
+        ),
+        model_override_policy="allowlisted",
+    )
+
+    with pytest.raises(AgentProfileValidationError, match="重复"):
+        validate_agent_profile(duplicate_profile)
+    with pytest.raises(AgentProfileValidationError, match="未授权"):
+        validate_agent_profile(unsafe_tool_profile)
+    with pytest.raises(AgentProfileValidationError, match="未授权"):
+        validate_agent_profile(unsafe_model_profile)
 
 
 def test_deep_agent_mock_factory_gets_audited_file_tools_without_raw_filesystem(
@@ -53,6 +168,7 @@ def test_deep_agent_mock_factory_gets_audited_file_tools_without_raw_filesystem(
         tool_map = {tool.__name__: tool for tool in tools}
         assert set(tool_map) == {"list_dir", "read_file", "write_file"}
         assert all(not hasattr(tool, "__self__") for tool in tools)
+        assert tool_names(subagents[0]["tools"]) == set(tool_map)
 
         def fake_agent(payload: dict[str, Any]) -> dict[str, str]:
             assert payload["messages"][0]["content"] == "读取并写入文件"
@@ -171,6 +287,7 @@ def test_deep_agent_available_uploads_are_not_read_until_agent_chooses(
         assert "任务需要时才读取" in subagents[0]["system_prompt"]
         assert isinstance(backend, deep_agent_runtime.AuditedDeepAgentBackend)
         tool_map = {tool.__name__: tool for tool in tools}
+        assert tool_names(subagents[0]["tools"]) == set(tool_map)
 
         def fake_agent(_payload: dict[str, Any]) -> dict[str, str]:
             tool_map["write_file"]("outputs/notes.md", "did not inspect uploads")
@@ -223,6 +340,7 @@ def test_deep_agent_promotes_outputs_with_safe_unique_artifact_names(
         assert subagents[0]["name"] == "file-record-agent"
         assert isinstance(backend, deep_agent_runtime.AuditedDeepAgentBackend)
         tool_map = {tool.__name__: tool for tool in tools}
+        assert tool_names(subagents[0]["tools"]) == set(tool_map)
 
         def fake_agent(_payload: dict[str, Any]) -> dict[str, str]:
             tool_map["write_file"]("outputs/final summary.md", "space")
@@ -256,6 +374,185 @@ def test_deep_agent_promotes_outputs_with_safe_unique_artifact_names(
     assert (artifact_dir / "deep-agent-final_summary.md").read_text(encoding="utf-8") == "space"
     assert (artifact_dir / "deep-agent-2-final_summary.md").read_text(encoding="utf-8") == "hash"
     assert (artifact_dir / "deep-agent-结果_报告.md").read_text(encoding="utf-8") == "cn"
+
+
+def test_deep_agent_promotes_valid_bid_outputs_to_canonical_artifacts(
+    tmp_path: Path,
+) -> None:
+    storage, task_id, run_id = make_running_task(tmp_path)
+    task_workspace = storage.task_dir(task_id)
+    uploads = write_bid_upload_fixtures(task_workspace)
+
+    def fake_factory(
+        *,
+        tools: list[Any],
+        **_kwargs: Any,
+    ) -> Any:
+        tool_map = {tool.__name__: tool for tool in tools}
+
+        def fake_agent(_payload: dict[str, Any]) -> dict[str, str]:
+            evidence = [
+                {
+                    "category": "quotation_similarity",
+                    "severity": "medium",
+                    "title": "重复报价",
+                    "description": "甲公司与乙公司存在重复报价数值。",
+                    "bidders": ["甲公司", "乙公司"],
+                    "pair": ["甲公司", "乙公司"],
+                    "locations": [],
+                    "requirement_reference": None,
+                    "confidence": 0.72,
+                    "source_agent": "bidder-pair-comparison-agent",
+                    "rationale_summary": "报价清单出现重复数值。",
+                },
+                {
+                    "category": "pair_comparison_coverage",
+                    "severity": "low",
+                    "title": "未发现可记录疑点",
+                    "description": "未发现甲公司与丙公司的结构化疑点。",
+                    "bidders": ["甲公司", "丙公司"],
+                    "pair": ["甲公司", "丙公司"],
+                    "locations": [],
+                    "requirement_reference": None,
+                    "confidence": 0.3,
+                    "source_agent": "evidence-normalization-agent",
+                    "rationale_summary": "已覆盖该投标人组合。",
+                },
+                {
+                    "category": "pair_comparison_coverage",
+                    "severity": "low",
+                    "title": "未发现可记录疑点",
+                    "description": "未发现乙公司与丙公司的结构化疑点。",
+                    "bidders": ["乙公司", "丙公司"],
+                    "pair": ["乙公司", "丙公司"],
+                    "locations": [],
+                    "requirement_reference": None,
+                    "confidence": 0.3,
+                    "source_agent": "evidence-normalization-agent",
+                    "rationale_summary": "已覆盖该投标人组合。",
+                },
+            ]
+            tool_map["write_file"]("outputs/report.html", "<html><body>报告</body></html>")
+            tool_map["write_file"]("outputs/final-summary.md", "# 摘要\n已完成。")
+            tool_map["write_file"]("outputs/evidence.json", json.dumps(evidence, ensure_ascii=False))
+            tool_map["write_file"]("outputs/task-plan.md", "# 计划")
+            tool_map["write_file"]("outputs/notes.md", "internal note")
+            return {"content": "DeepAgent 已完成围串标分析。"}
+
+        return fake_agent
+
+    result = DeepAgentOrchestrator(
+        storage=storage,
+        task_id=task_id,
+        run_id=run_id,
+        model="deepseek-reasoner",
+        controller=CancellationController(),
+        uploads=uploads,
+        agent_factory=fake_factory,
+    ).run("帮我检查是否有串标围标嫌疑")
+
+    artifact_dir = task_workspace / "artifacts" / "runs" / run_id
+    state = storage.get_task(task_id, include_events=False)
+    run_record = next(run for run in state.runs if run.id == run_id)
+
+    assert set(result.metadata["promoted_artifacts"]) == {
+        "report.html",
+        "final-summary.md",
+        "evidence.json",
+        "task-plan.md",
+        "deep-agent-notes.md",
+    }
+    assert "deep-agent-report.html" not in result.metadata["promoted_artifacts"]
+    assert set(run_record.artifact_names) == set(result.metadata["promoted_artifacts"])
+    assert (artifact_dir / "report.html").exists()
+    assert (artifact_dir / "evidence.json").exists()
+
+
+def test_deep_agent_bid_outputs_without_evidence_use_prefixed_artifacts(
+    tmp_path: Path,
+) -> None:
+    storage, task_id, run_id = make_running_task(tmp_path)
+    task_workspace = storage.task_dir(task_id)
+
+    def fake_factory(*, tools: list[Any], **_kwargs: Any) -> Any:
+        tool_map = {tool.__name__: tool for tool in tools}
+
+        def fake_agent(_payload: dict[str, Any]) -> dict[str, str]:
+            tool_map["write_file"]("outputs/report.html", "<html><body>报告</body></html>")
+            tool_map["write_file"]("outputs/final-summary.md", "# 摘要\n缺少证据。")
+            tool_map["write_file"]("outputs/task-plan.md", "# 计划")
+            return {"content": "DeepAgent 已完成围串标分析。"}
+
+        return fake_agent
+
+    result = DeepAgentOrchestrator(
+        storage=storage,
+        task_id=task_id,
+        run_id=run_id,
+        model="deepseek-reasoner",
+        controller=CancellationController(),
+        agent_factory=fake_factory,
+    ).run("帮我检查是否有串标围标嫌疑")
+
+    artifact_dir = task_workspace / "artifacts" / "runs" / run_id
+
+    assert set(result.metadata["promoted_artifacts"]) == {
+        "deep-agent-report.html",
+        "deep-agent-final-summary.md",
+        "deep-agent-task-plan.md",
+    }
+    assert not (artifact_dir / "report.html").exists()
+    assert not (artifact_dir / "final-summary.md").exists()
+    assert not (artifact_dir / "task-plan.md").exists()
+    assert (artifact_dir / "deep-agent-report.html").exists()
+
+
+def test_deep_agent_bid_canonical_evidence_requires_all_uploaded_bidder_pairs(
+    tmp_path: Path,
+) -> None:
+    storage, task_id, run_id = make_running_task(tmp_path)
+    task_workspace = storage.task_dir(task_id)
+    uploads = write_bid_upload_fixtures(task_workspace)
+
+    def fake_factory(*, tools: list[Any], **_kwargs: Any) -> Any:
+        tool_map = {tool.__name__: tool for tool in tools}
+
+        def fake_agent(_payload: dict[str, Any]) -> dict[str, str]:
+            evidence = [
+                {
+                    "category": "quotation_similarity",
+                    "severity": "medium",
+                    "title": "重复报价",
+                    "description": "甲公司与乙公司存在重复报价数值。",
+                    "bidders": ["甲公司", "乙公司"],
+                    "pair": ["甲公司", "乙公司"],
+                    "locations": [],
+                    "requirement_reference": None,
+                    "confidence": 0.72,
+                    "source_agent": "bidder-pair-comparison-agent",
+                    "rationale_summary": "报价清单出现重复数值。",
+                }
+            ]
+            tool_map["write_file"]("outputs/report.html", "<html><body>报告</body></html>")
+            tool_map["write_file"]("outputs/evidence.json", json.dumps(evidence, ensure_ascii=False))
+            return {"content": "DeepAgent 已完成围串标分析。"}
+
+        return fake_agent
+
+    with pytest.raises(ValueError, match="缺少投标人组合覆盖记录"):
+        DeepAgentOrchestrator(
+            storage=storage,
+            task_id=task_id,
+            run_id=run_id,
+            model="deepseek-reasoner",
+            controller=CancellationController(),
+            uploads=uploads,
+            agent_factory=fake_factory,
+        ).run("帮我检查是否有串标围标嫌疑")
+
+    artifact_dir = task_workspace / "artifacts" / "runs" / run_id
+    assert not (artifact_dir / "report.html").exists()
+    assert not (artifact_dir / "evidence.json").exists()
 
 
 def test_deep_agent_runtime_streams_with_required_options_and_activity_events(
@@ -499,7 +796,7 @@ def test_deep_agent_runtime_tool_result_cannot_become_final_answer(
         )
     )
 
-    assert result.output_text == "DeepAgent 运行完成。"
+    assert result.output_text == deep_agent_runtime.DEEP_AGENT_NO_FINAL_MESSAGE
     assert "CUSTOMER_UPLOADED_BODY" not in json.dumps(activity_events, ensure_ascii=False)
 
 
