@@ -14,7 +14,12 @@ from pathlib import Path
 from typing import Any, Literal
 
 from .model_provider import ModelProvider
-from .reasoning_trace import ReasoningConfidence, ReasoningPhase, emit_reasoning_trace
+from .reasoning_trace import (
+    ReasoningConfidence,
+    ReasoningPhase,
+    build_safe_exception_payload,
+    emit_reasoning_trace,
+)
 from .runtime import CancellationController
 from .storage import TaskStorage, source_format_for_upload
 from .tools import WorkspaceTools
@@ -179,7 +184,7 @@ def run_bid_analysis(
                     emit(
                         "subagent_retry",
                         f"{CATEGORY_LABELS[category]} 分析失败，正在重试。",
-                        {"category": category, "error": str(exc)},
+                        {"category": category, **build_safe_exception_payload(exc)},
                     )
                     retry_spec = SubAgentSpec(
                         agent_id=f"{spec.agent_id}-retry",
@@ -601,7 +606,8 @@ class SubAgentWorker:
                 raise CancelledError() from exc
             fallback = (
                 "模型推理失败"
-                f"（{type(exc).__name__}: {exc}），已继续使用本地确定性证据提取。"
+                f"（{type(exc).__name__}: "
+                f"{build_safe_exception_payload(exc)['error']}），已继续使用本地确定性证据提取。"
             )
             self.emit(
                 "model_warning",
@@ -610,7 +616,7 @@ class SubAgentWorker:
                     "agent_id": self.spec.agent_id,
                     "model": self.model,
                     "category": self.spec.category,
-                    "error": str(exc),
+                    **build_safe_exception_payload(exc),
                 },
             )
             return fallback
@@ -678,7 +684,11 @@ class SubAgentWorker:
             self.emit(
                 "reasoning_warning",
                 f"{self.spec.agent_id} 思考摘要记录失败，已继续执行分析。",
-                {"agent_id": self.spec.agent_id, "category": self.spec.category, "error": str(exc)},
+                {
+                    "agent_id": self.spec.agent_id,
+                    "category": self.spec.category,
+                    **build_safe_exception_payload(exc),
+                },
             )
 
     def _observation_summary(self, evidence: list[dict[str, Any]]) -> str:

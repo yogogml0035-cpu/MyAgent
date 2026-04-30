@@ -7,7 +7,11 @@ import pytest
 
 from app.agent_activity import build_deep_agent_activity_payload
 from app.model_provider import DeepSeekProvider
-from app.reasoning_trace import build_reasoning_trace_payload, sanitize_reasoning_text
+from app.reasoning_trace import (
+    build_reasoning_trace_payload,
+    build_safe_exception_payload,
+    sanitize_reasoning_text,
+)
 from app.storage import TaskStorage
 
 
@@ -70,6 +74,26 @@ def test_reasoning_trace_payload_redacts_paths_secrets_and_canaries() -> None:
     assert "abcdefghijklmnop" not in serialized
     assert "<absolute-path>" in serialized
     assert "<redacted-canary>" in serialized
+
+
+def test_safe_exception_payload_redacts_paths_tokens_and_canaries() -> None:
+    exc = RuntimeError(
+        "provider failed at /mnt/d/AgentProject/MyAgent/backend/storage/sessions/task-a/"
+        "uploads/secret.md with Authorization: Bearer AUTH_HEADER_CANARY_789 "
+        "and SECRET_DOC_CANARY_123 plus C:\\Users\\0325\\secret.txt"
+    )
+
+    payload = build_safe_exception_payload(exc)
+    serialized = str(payload)
+
+    assert payload["error_type"] == "RuntimeError"
+    assert "AUTH_HEADER_CANARY_789" not in serialized
+    assert "SECRET_DOC_CANARY_123" not in serialized
+    assert "/mnt/d/AgentProject" not in serialized
+    assert "C:\\Users" not in serialized
+    assert "<redacted-canary>" in serialized
+    assert "<absolute-path>/secret.md" in serialized
+    assert "<absolute-path>/secret.txt" in serialized
 
 
 def test_reasoning_trace_sanitizer_preserves_web_urls_while_redacting_paths() -> None:

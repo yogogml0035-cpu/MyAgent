@@ -270,6 +270,74 @@ def test_deep_agent_mock_factory_gets_audited_file_tools_without_raw_filesystem(
     assert str(task_workspace) not in serialized_reasoning
 
 
+def test_deep_agent_activity_warning_uses_safe_exception_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    storage, task_id, run_id = make_running_task(tmp_path)
+    task_workspace = storage.task_dir(task_id)
+    upload = task_workspace / "uploads" / "source.md"
+    upload.write_text("# Source", encoding="utf-8")
+    raw_error = (
+        f"activity failed at {tmp_path}/private/customer.md with "
+        "Authorization: Bearer AUTH_HEADER_CANARY_789 and SECRET_DOC_CANARY_123"
+    )
+
+    def fake_factory(**_kwargs: Any) -> Any:
+        def fake_agent(_payload: dict[str, Any]) -> dict[str, str]:
+            return {"content": "done"}
+
+        return fake_agent
+
+    def raise_activity_error(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        raise RuntimeError(raw_error)
+
+    monkeypatch.setattr(
+        "app.orchestrator.activity_payload_from_file_audit",
+        raise_activity_error,
+    )
+    orchestrator = DeepAgentOrchestrator(
+        storage=storage,
+        task_id=task_id,
+        run_id=run_id,
+        model="deepseek-reasoner",
+        controller=CancellationController(),
+        uploads=[upload],
+        agent_factory=fake_factory,
+    )
+
+    orchestrator._append_audit(
+        {
+            "tool": "read_file",
+            "tool_name": "read_file",
+            "operation": "read",
+            "op": "read",
+            "requested_path": "uploads/source.md",
+            "virtual_path": "uploads/source.md",
+            "relative_path": "uploads/source.md",
+            "resolved_workspace_path": "uploads/source.md",
+            "status": "success",
+            "reason": "文件读取成功",
+            "bytes": 8,
+            "sha256": None,
+            "partial": False,
+            "source": "upload_snapshot",
+            "promoted_artifact_id": None,
+            "timestamp": None,
+        }
+    )
+
+    warning_event = next(
+        event for event in storage.read_events(task_id) if event.type == "deep_agent_activity_warning"
+    )
+    serialized_warning = json.dumps(warning_event.payload, ensure_ascii=False)
+    assert warning_event.payload["error_type"] == "RuntimeError"
+    assert "AUTH_HEADER_CANARY_789" not in serialized_warning
+    assert "SECRET_DOC_CANARY_123" not in serialized_warning
+    assert str(tmp_path) not in serialized_warning
+    assert "<redacted-canary>" in serialized_warning
+    assert "<absolute-path>/customer.md" in serialized_warning
+
+
 def test_deep_agent_available_uploads_are_not_read_until_agent_chooses(
     tmp_path: Path,
 ) -> None:
