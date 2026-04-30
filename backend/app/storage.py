@@ -816,15 +816,27 @@ class TaskStorage:
             return True
 
     def write_json(self, task_id: str, relative_path: str, data: Any) -> Path:
-        path = self.task_dir(task_id) / relative_path
+        path = self._task_relative_path(task_id, relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         return path
 
     def write_text(self, task_id: str, relative_path: str, text: str) -> Path:
-        path = self.task_dir(task_id) / relative_path
+        path = self._task_relative_path(task_id, relative_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+        return path
+
+    def _task_relative_path(self, task_id: str, relative_path: str) -> Path:
+        if not relative_path:
+            raise ValueError("任务相对路径不能为空")
+        candidate = Path(relative_path)
+        if candidate.is_absolute():
+            raise ValueError("任务相对路径不能是绝对路径")
+        task_dir = self.task_dir(task_id)
+        path = (task_dir / candidate).resolve()
+        if task_dir not in path.parents:
+            raise ValueError("任务相对路径超出任务目录")
         return path
 
     def write_run_manifest(self, task_id: str, run_id: str, data: Any) -> Path:

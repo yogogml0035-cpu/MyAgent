@@ -4,6 +4,7 @@ import json
 from hashlib import sha256
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.contracts import ArtifactRef, ResourceRef, build_artifact_ref, build_upload_resource_ref
@@ -133,6 +134,42 @@ def test_record_run_artifact_backfills_ref_for_existing_promoted_file(tmp_path) 
         f"myagent://sessions/{task_id}/runs/{run_id}/artifacts/final-summary.md"
     )
     assert str(tmp_path) not in json.dumps(refs, ensure_ascii=False)
+
+
+def test_task_storage_common_writes_reject_paths_outside_task_dir(tmp_path) -> None:
+    storage = TaskStorage(tmp_path / "sessions")
+    task_id = storage.create_task(None, "deepseek-reasoner").task_id
+
+    json_path = storage.write_json(task_id, "records/safe.json", {"ok": True})
+    text_path = storage.write_text(task_id, "artifacts/safe.txt", "ok")
+
+    assert json.loads(json_path.read_text(encoding="utf-8")) == {"ok": True}
+    assert text_path.read_text(encoding="utf-8") == "ok"
+
+    escaped_json = tmp_path / "sessions" / "escaped.json"
+    escaped_text = tmp_path / "sessions" / "escaped.txt"
+    with pytest.raises(ValueError, match="超出任务目录"):
+        storage.write_json(task_id, "../escaped.json", {"bad": True})
+    with pytest.raises(ValueError, match="超出任务目录"):
+        storage.write_text(task_id, "../escaped.txt", "bad")
+
+    assert not escaped_json.exists()
+    assert not escaped_text.exists()
+
+
+def test_task_storage_common_writes_reject_absolute_paths(tmp_path) -> None:
+    storage = TaskStorage(tmp_path / "sessions")
+    task_id = storage.create_task(None, "deepseek-reasoner").task_id
+    outside_json = tmp_path / "outside.json"
+    outside_text = tmp_path / "outside.txt"
+
+    with pytest.raises(ValueError, match="绝对路径"):
+        storage.write_json(task_id, str(outside_json), {"bad": True})
+    with pytest.raises(ValueError, match="绝对路径"):
+        storage.write_text(task_id, str(outside_text), "bad")
+
+    assert not outside_json.exists()
+    assert not outside_text.exists()
 
 
 def test_resource_contract_helpers_create_virtual_refs() -> None:
