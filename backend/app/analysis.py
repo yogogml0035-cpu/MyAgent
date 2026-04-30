@@ -742,9 +742,15 @@ class SubAgentWorker:
 
 def summarize_tool_result(result: Any) -> dict[str, Any]:
     if isinstance(result, list):
-        return {"type": "list", "count": len(result), "preview": result[:3]}
+        summary: dict[str, Any] = {"type": "list", "count": len(result)}
+        first_item = next((item for item in result if item is not None), None)
+        if first_item is not None:
+            summary["item_type"] = type(first_item).__name__
+            if isinstance(first_item, dict):
+                summary["item_keys"] = sorted(str(key) for key in first_item)[:8]
+        return summary
     if isinstance(result, str):
-        return {"type": "text", "chars": len(result), "preview": result[:160]}
+        return {"type": "text", "chars": len(result)}
     if isinstance(result, dict):
         return {"type": "object", "keys": sorted(result.keys())[:8]}
     return {"type": type(result).__name__}

@@ -315,6 +315,37 @@ def test_reasoning_trace_does_not_expose_prompt_upload_content_or_private_paths(
     assert str(tmp_path) not in serialized_reasoning
 
 
+def test_document_analysis_tool_results_do_not_persist_upload_body(
+    tmp_path: Path,
+) -> None:
+    client = make_client(tmp_path)
+    created = client.post("/api/tasks", json={"model": "deepseek-reasoner"}).json()
+    task_id = created["task_id"]
+    canary = "SECRET_DOC_CANARY_TOOL_RESULT_123"
+    files = [
+        ("files", ("tender.md", TENDER_DOC.encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-a.md", (BIDDER_A + f"\n{canary}").encode("utf-8"), "text/markdown")),
+        ("files", ("bidder-b.md", BIDDER_B.encode("utf-8"), "text/markdown")),
+    ]
+    assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
+
+    response = client.post(
+        f"/api/tasks/{task_id}/messages",
+        json={"message": "帮我检查是否有串标围标嫌疑", "model": "deepseek-reasoner"},
+    )
+    assert response.status_code == 200
+    state = wait_for_terminal_status(client, task_id)
+    tool_result_events = [event for event in state["events"] if event["type"] == "tool_result"]
+    serialized_events = json.dumps(state["events"], ensure_ascii=False)
+
+    assert state["status"] == "complete"
+    assert tool_result_events
+    assert canary not in serialized_events
+    for event in tool_result_events:
+        summary = event["payload"]["summary"]
+        assert "preview" not in summary
+
+
 def test_follow_up_task_run_preserves_existing_artifacts_and_reuses_uploads(
     tmp_path: Path,
 ) -> None:
