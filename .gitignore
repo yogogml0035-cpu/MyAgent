@@ -30,3 +30,5 @@ backend/storage/tasks/*
 
 .omx/
 .DS_Store
+
+audits/
