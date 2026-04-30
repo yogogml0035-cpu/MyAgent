@@ -21,6 +21,7 @@ PHASE_LABELS: dict[ReasoningPhase, str] = {
     "risk": "风险",
 }
 MAX_REASONING_SUMMARY_CHARS = 360
+MAX_EXCEPTION_SUMMARY_CHARS = 240
 MAX_EVIDENCE_REFS = 12
 MAX_EVIDENCE_REF_CHARS = 120
 URL_PLACEHOLDER_PREFIX = "\x00MYAGENTURLPLACEHOLDER_"
@@ -143,6 +144,16 @@ def sanitize_evidence_refs(values: Iterable[Any]) -> list[str]:
         if len(refs) >= MAX_EVIDENCE_REFS:
             break
     return refs
+
+
+def build_safe_exception_payload(
+    exc: BaseException,
+    *,
+    max_chars: int = MAX_EXCEPTION_SUMMARY_CHARS,
+) -> dict[str, str]:
+    error_type = re.sub(r"[^A-Za-z0-9_.-]+", "_", type(exc).__name__)[:120] or "Exception"
+    error = sanitize_reasoning_text(str(exc), max_chars=max_chars) or error_type
+    return {"error_type": error_type, "error": error}
 
 
 def sanitize_reasoning_text(value: str, *, max_chars: int = MAX_REASONING_SUMMARY_CHARS) -> str:

@@ -1810,7 +1810,12 @@ def test_model_reasoning_failure_does_not_block_deterministic_evidence(tmp_path:
     ]
     assert client.post(f"/api/tasks/{task_id}/files", files=files).status_code == 200
 
-    with patch("app.model_provider.ProviderRouter.reason", side_effect=RuntimeError("rate limit")):
+    raw_error = (
+        f"rate limit at {tmp_path}/private/customer.md with "
+        "Authorization: Bearer AUTH_HEADER_CANARY_789 and SECRET_DOC_CANARY_123"
+    )
+
+    with patch("app.model_provider.ProviderRouter.reason", side_effect=RuntimeError(raw_error)):
         client.post(
             f"/api/tasks/{task_id}/messages",
             json={"message": "帮我检查是否有串标围标嫌疑", "model": "deepseek-reasoner"},
@@ -1822,7 +1827,15 @@ def test_model_reasoning_failure_does_not_block_deterministic_evidence(tmp_path:
     )
     assert state["status"] == "complete", state.get("error")
     assert evidence
-    assert any(event["type"] == "model_warning" for event in state["events"])
+    warning_events = [event for event in state["events"] if event["type"] == "model_warning"]
+    assert warning_events
+    serialized_warning = json.dumps(warning_events, ensure_ascii=False)
+    assert "AUTH_HEADER_CANARY_789" not in serialized_warning
+    assert "SECRET_DOC_CANARY_123" not in serialized_warning
+    assert str(tmp_path) not in serialized_warning
+    assert warning_events[-1]["payload"]["error_type"] == "RuntimeError"
+    assert "<redacted-canary>" in serialized_warning
+    assert "<absolute-path>/customer.md" in serialized_warning
 
 
 def test_case_insensitive_template_trace_locations_are_recorded() -> None:

@@ -25,7 +25,7 @@ from .deep_agent_runtime import (
     DeepAgentRuntime,
 )
 from .permissions import PermissionPolicy
-from .reasoning_trace import ReasoningConfidence, ReasoningPhase
+from .reasoning_trace import ReasoningConfidence, ReasoningPhase, build_safe_exception_payload
 from .runtime import CancellationController
 from .storage import TaskStorage, safe_filename
 from .tools import AuditedWorkspaceTools, safe_audit_path
@@ -140,7 +140,7 @@ class DeepAgentOrchestrator:
                 self.task_id,
                 "deep_agent_activity_warning",
                 "DeepAgent 执行活动记录失败，已继续执行。",
-                {"error": str(exc)},
+                build_safe_exception_payload(exc),
                 run_id=self.run_id,
                 level="warning",
             )
@@ -161,7 +161,7 @@ class DeepAgentOrchestrator:
                 self.task_id,
                 "reasoning_warning",
                 "DeepAgent 思考摘要记录失败，已继续执行。",
-                {"agent_id": "deep-agent", "error": str(exc)},
+                {"agent_id": "deep-agent", **build_safe_exception_payload(exc)},
                 run_id=self.run_id,
                 level="warning",
             )
