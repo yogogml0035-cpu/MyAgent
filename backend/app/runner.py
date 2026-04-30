@@ -29,6 +29,7 @@ from .reasoning_trace import (
     ReasoningConfidence,
     ReasoningPhase,
     build_reasoning_trace_payload,
+    sanitize_public_web_url,
     sanitize_reasoning_text,
 )
 from .runtime import CancellationController
@@ -1131,6 +1132,10 @@ def bounded_safe_text(value: object, max_chars: int) -> str:
     return sanitize_reasoning_text(str(value or ""), max_chars=max_chars)
 
 
+def bounded_safe_url(value: object, max_chars: int) -> str:
+    return sanitize_public_web_url(value, max_chars=max_chars)
+
+
 def summarize_search_sources(result: dict[str, Any]) -> list[SearchSourceSummary]:
     items = result.get("results")
     if not isinstance(items, list):
@@ -1140,7 +1145,7 @@ def summarize_search_sources(result: dict[str, Any]) -> list[SearchSourceSummary
         if not isinstance(item, dict):
             continue
         title = bounded_safe_text(item.get("title") or "未命名结果", SEARCH_TITLE_CHARS)
-        url = bounded_safe_text(item.get("url") or "", SEARCH_URL_CHARS)
+        url = bounded_safe_url(item.get("url") or "", SEARCH_URL_CHARS)
         snippet = bounded_safe_text(
             item.get("content") or item.get("snippet") or "",
             SEARCH_SNIPPET_CHARS,

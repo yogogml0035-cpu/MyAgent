@@ -507,9 +507,27 @@ test("workspace CSS keeps live tool rows dense and copy feedback as a coral chec
   );
   assert.match(
     cssSource,
-    /\.copyButton-copied span::after\s*\{[\s\S]*?width: 4px;[\s\S]*?height: 9px;[\s\S]*?border-right: 1\.55px solid currentColor;[\s\S]*?border-bottom: 1\.55px solid currentColor;[\s\S]*?transform: rotate\(40deg\);/,
+    /\.copyButton::before\s*\{[\s\S]*?display: none;/,
   );
-  assert.match(cssSource, /\.copyButton-copied span::before\s*\{[\s\S]*?display: none;/);
+  assert.match(
+    cssSource,
+    /\.copyButton::after\s*\{[\s\S]*?position: absolute;[\s\S]*?left: 50%;[\s\S]*?top: 50%;[\s\S]*?width: 14px;[\s\S]*?height: 14px;[\s\S]*?background: currentColor;[\s\S]*?transform: translate\(-50%, -50%\);[\s\S]*?mask: url\("data:image\/svg\+xml,[\s\S]*?\) center \/ 14px 14px no-repeat;/,
+  );
+  assert.match(
+    cssSource,
+    /\.copyButton-copied::after\s*\{[\s\S]*?mask: url\("data:image\/svg\+xml,[\s\S]*?\) center \/ 14px 14px no-repeat;/,
+  );
+  assert.match(cssSource, /\.copyButton-copied::before\s*\{[\s\S]*?display: none;/);
+  assert.match(cssSource, /\.copyButton-copied span\s*\{[\s\S]*?opacity: 0;[\s\S]*?transform: none;/);
+  assert.match(
+    cssSource,
+    /\.copyButton\.userCopyButton\.copyButton-copied span\s*\{[\s\S]*?width: 14px;[\s\S]*?height: 14px;[\s\S]*?transform: none;/,
+  );
+  assert.match(
+    cssSource,
+    /\.copyButton-copied span::before,\s*\n\.copyButton-copied span::after\s*\{[\s\S]*?display: none;/,
+  );
+  assert.match(cssSource, /\.copyButton\.userCopyButton\.copyButton-copied span::before\s*\{[\s\S]*?display: none;/);
   assert.equal(cssSource.includes("color: #8bd899;"), false);
   assert.equal(cssSource.includes("box-shadow: 3px -3px 0"), false);
 });

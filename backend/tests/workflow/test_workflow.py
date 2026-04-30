@@ -28,6 +28,7 @@ from app.analysis import (
 from app.main import create_app
 from app.model_provider import DeepSeekProvider, ProviderRouter
 from app.permissions import PermissionPolicy
+from app.runner import summarize_search_sources
 from app.runtime import CancellationController, run_cancellable_command
 from app.schemas import MAX_MESSAGE_CHARS
 from app.settings import Settings, load_env_file, read_list_env
@@ -449,11 +450,15 @@ def test_search_with_document_words_does_not_reuse_existing_uploads(tmp_path: Pa
 def test_search_synthesizes_final_answer_after_tool_result(tmp_path: Path) -> None:
     client = make_client(tmp_path, tavily_api_key="test-tavily-key")
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
+    source_url = "http://www.weather.com.cn/weather15d/101121701.shtml"
+    model_markdown_url = "https://example.com/home/user/page"
+    unsafe_model_url = "http://%31%32%37.0.0.1/internal"
+    localhost_model_url = "http://localhost/internal"
     tavily_payload = {
         "results": [
             {
                 "title": "上海天气实况",
-                "url": "https://weather.example/shanghai",
+                "url": source_url,
                 "content": "上海今天多云，午后有短时小雨，气温 18 到 23 摄氏度。",
                 "raw_content": "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR",
             },
@@ -469,7 +474,14 @@ def test_search_synthesizes_final_answer_after_tool_result(tmp_path: Path) -> No
         patch("app.tools.httpx.post", return_value=StubHTTPResponse(tavily_payload)),
         patch(
             "app.model_provider.ProviderRouter.chat",
-            return_value="上海今天以多云为主，午后可能有短时小雨，出门建议带伞。",
+            return_value=(
+                "上海今天以多云为主，午后可能有短时小雨，出门建议带伞。\n\n"
+                f"关键来源：[上海天气实况]({source_url})；"
+                f"[路径形式来源]({model_markdown_url})；"
+                f"[本机来源]({unsafe_model_url})；[localhost]({localhost_model_url})；"
+                "www.localhost/admin；www.example.com/weather?token=secret；admin@example.com；"
+                "[引用式本机][local-ref]\n\n[local-ref]: http://localhost/ref"
+            ),
         ) as provider_chat,
     ):
         response = client.post(
@@ -489,9 +501,23 @@ def test_search_synthesizes_final_answer_after_tool_result(tmp_path: Path) -> No
     assert state["status"] == "complete"
     assert [message["role"] for message in state["messages"]] == ["user", "assistant"]
     assert "上海今天以多云为主" in state["messages"][-1]["content"]
+    assert source_url in state["messages"][-1]["content"]
+    assert model_markdown_url in state["messages"][-1]["content"]
+    assert unsafe_model_url not in state["messages"][-1]["content"]
+    assert localhost_model_url not in state["messages"][-1]["content"]
+    assert "http://localhost/ref" not in state["messages"][-1]["content"]
+    assert "www.localhost/admin" not in state["messages"][-1]["content"]
+    assert "www.example.com/weather?token=secret" not in state["messages"][-1]["content"]
+    assert "admin@example.com" not in state["messages"][-1]["content"]
+    assert "[local-ref]:" not in state["messages"][-1]["content"]
+    assert "<redacted-url>" in state["messages"][-1]["content"]
+    assert "(<redacted-url>)" not in state["messages"][-1]["content"]
+    assert "htt<absolute-path>" not in state["messages"][-1]["content"]
+    assert "https://example.com<absolute-path>" not in state["messages"][-1]["content"]
     assert "参考来源" not in state["messages"][-1]["content"]
     assert "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR" not in state["messages"][-1]["content"]
     assert "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR" not in serialized_events
+    assert "<absolute-path>" not in serialized_events
     assert positions["search_tool_call"] < positions["search_tool_result"]
     assert positions["search_tool_result"] < positions["answer_generation_started"]
     assert positions["answer_generation_started"] < positions["search_synthesis_completed"]
@@ -561,9 +587,191 @@ def test_search_synthesizes_final_answer_after_tool_result(tmp_path: Path) -> No
     assert synthesis_events[-1]["payload"]["live"]["stage"] == "completed"
     assert len(synthesis_events[-1]["payload"]["sources"]) <= 5
     assert set(synthesis_events[-1]["payload"]["sources"][0]) == {"title", "url", "snippet"}
+    assert synthesis_events[-1]["payload"]["sources"][0]["url"] == source_url
     prompt = provider_chat.call_args.args[0]
     assert "上海天气实况" in prompt
+    assert source_url in prompt
+    assert "htt<absolute-path>" not in prompt
     assert "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR" not in prompt
+
+
+def test_search_safe_url_summary_preserves_public_sources_and_drops_unsafe_links() -> None:
+    safe_url = "https://weather.example/shanghai?day=today"
+    safe_path_urls = [
+        "https://example.com/home/user/page",
+        "https://example.com/tmp/report",
+        "https://example.com/C:/file.txt",
+    ]
+    sources = summarize_search_sources(
+        {
+            "results": [
+                {
+                    "title": "公共天气来源",
+                    "url": safe_url,
+                    "content": "公开天气摘要。",
+                },
+                {
+                    "title": "本机来源",
+                    "url": "http://localhost/internal",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "回环地址",
+                    "url": "http://127.0.0.1/secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "IPv6 回环",
+                    "url": "http://[::1]/secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "未指定地址",
+                    "url": "http://0.0.0.0/secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "整数回环地址",
+                    "url": "http://2130706433/secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "缩写回环地址",
+                    "url": "http://127.1/secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "十六进制回环地址",
+                    "url": "http://0x7f.0.0.1/secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "单标签内网名",
+                    "url": "http://intranet/secret",
+                    "content": "不应保留链接。",
+                },
+            ]
+        }
+    )
+    unsafe_sources = summarize_search_sources(
+        {
+            "results": [
+                {
+                    "title": "本地文件",
+                    "url": "file:///C:/secret.txt",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "带凭据",
+                    "url": "https://user:pass@example.com/weather",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "空用户名",
+                    "url": "https://@example.com/weather",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "空用户名密码",
+                    "url": "https://:@example.com/weather",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "带密钥参数",
+                    "url": "https://example.com/weather?api_key=secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "分号查询参数",
+                    "url": "https://example.com/weather?day=today;token=secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "分号路径参数",
+                    "url": "https://example.com/weather;token=secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "片段密钥参数",
+                    "url": "https://example.com/weather#access_token=secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "编码片段密钥参数",
+                    "url": "https://example.com/weather#access%5Ftoken=secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "脚本链接",
+                    "url": "javascript:alert(1)",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "数据链接",
+                    "url": "data:text/plain,secret",
+                    "content": "不应保留链接。",
+                },
+                {
+                    "title": "夹带换行链接",
+                    "url": "https://example.com/public\nhttp://localhost/admin",
+                    "content": "不应保留链接。",
+                },
+            ]
+        }
+    )
+
+    assert sources[0].url == safe_url
+    assert all(source.url == "" for source in sources[1:])
+    assert len(sources) == 5
+    assert all(source.url == "" for source in unsafe_sources)
+
+    for unsafe_local_url in [
+        "http://2130706433/secret",
+        "http://127.1/secret",
+        "http://0x7f.0.0.1/secret",
+        "http://intranet/secret",
+        "http://%31%32%37.0.0.1/secret",
+        "http://127.%30.0.1/secret",
+        "http://%31%32%37.%30.%30.%31/secret",
+        "https://example.com/public http://localhost/admin",
+        "https://example.com/public\tpath",
+    ]:
+        [source] = summarize_search_sources(
+            {"results": [{"title": "本地别名", "url": unsafe_local_url, "content": "不应保留链接。"}]}
+        )
+        assert source.url == "", unsafe_local_url
+
+    for safe_path_url in safe_path_urls:
+        [source] = summarize_search_sources(
+            {"results": [{"title": "路径像本地目录", "url": safe_path_url, "content": "公开摘要。"}]}
+        )
+        assert source.url == safe_path_url
+        assert "<absolute-path>" not in source.url
+
+    for sensitive_key in [
+        "authorization",
+        "auth",
+        "auth_token",
+        "access_token",
+        "api-key",
+        "apikey",
+        "key",
+        "secret",
+        "password",
+        "credential",
+    ]:
+        [source] = summarize_search_sources(
+            {
+                "results": [
+                    {
+                        "title": "敏感查询参数",
+                        "url": f"https://example.com/weather?{sensitive_key}=secret",
+                        "content": "不应保留链接。",
+                    }
+                ]
+            }
+        )
+        assert source.url == "", sensitive_key
 
 
 def test_search_missing_provider_uses_bounded_source_summary(tmp_path: Path) -> None:
