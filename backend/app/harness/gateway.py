@@ -14,6 +14,8 @@ from app.contracts import (
     ResourceKind,
     ResourceRef,
     ToolSpec,
+    build_artifact_ref,
+    build_upload_resource_ref,
 )
 from app.deep_agent_runtime import DeepAgentRunResult
 from app.model_provider import ModelProvider
@@ -200,14 +202,12 @@ def upload_resource_ref(path: Path, *, session_id: str) -> ResourceRef:
 
 
 def artifact_resource_ref(name: str, *, session_id: str, run_id: str) -> ResourceRef:
-    safe_name = name.strip().replace("\\", "/").split("/")[-1]
-    return ResourceRef(
-        id=f"artifact:{session_id}:{run_id}:{safe_name}",
-        kind="artifact",
-        uri=f"myagent://sessions/{session_id}/runs/{run_id}/artifacts/{safe_name}",
-        name=safe_name,
-        metadata={"session_id": session_id, "run_id": run_id},
-    )
+    return build_artifact_ref(
+        session_id=session_id,
+        run_id=run_id,
+        name=name,
+        artifact_type="text",
+    ).resource
 
 
 def legacy_web_search_executor(
@@ -300,14 +300,19 @@ def legacy_deep_agent_executor(
 
 
 def _path_resource_ref(path: Path, *, session_id: str, kind: ResourceKind) -> ResourceRef:
-    safe_name = path.name
-    return ResourceRef(
-        id=f"{kind}:{session_id}:{safe_name}",
-        kind=kind,
-        uri=f"myagent://sessions/{session_id}/resources/{safe_name}",
-        name=safe_name,
+    if kind != "upload":
+        return ResourceRef(
+            id=f"{kind}:{session_id}:{path.name}",
+            kind=kind,
+            uri=f"myagent://sessions/{session_id}/resources/{path.name}",
+            name=path.name,
+            size_bytes=path.stat().st_size if path.exists() else None,
+            metadata={"session_id": session_id},
+        )
+    return build_upload_resource_ref(
+        session_id=session_id,
+        filename=path.name,
         size_bytes=path.stat().st_size if path.exists() else None,
-        metadata={"session_id": session_id},
     )
 
 

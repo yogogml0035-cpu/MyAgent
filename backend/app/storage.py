@@ -6,13 +6,23 @@ import threading
 import uuid
 from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
+from hashlib import sha256
 from json import JSONDecodeError
 from pathlib import Path
 from typing import Any, Literal, TypeAlias
 
 from fastapi import UploadFile
 
-from .contracts import EventLevel, NewSessionEvent, SessionEvent, SessionSnapshot
+from .contracts import (
+    EventLevel,
+    NewSessionEvent,
+    SessionEvent,
+    SessionSnapshot,
+    artifact_ref_payload,
+    build_artifact_ref,
+    build_upload_resource_ref,
+    resource_ref_payload,
+)
 from .reasoning_trace import (
     ReasoningConfidence,
     ReasoningPhase,
@@ -166,6 +176,14 @@ def validate_run_id(run_id: str) -> str:
     if not run_id or not RUN_ID_PATTERN.fullmatch(run_id):
         raise ValueError("运行 ID 无效")
     return run_id
+
+
+def file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(UPLOAD_CHUNK_SIZE), b""):
+            digest.update(chunk)
+    return "sha256:" + digest.hexdigest()
 
 
 def summary_title(messages: list[ChatMessage]) -> str:
@@ -480,11 +498,25 @@ class TaskStorage:
 
             saved_paths = [destination for _, destination, _ in staged]
             for _, destination, bytes_written in staged:
+                resource_ref = build_upload_resource_ref(
+                    session_id=task_id,
+                    filename=destination.name,
+                    size_bytes=bytes_written,
+                    digest=file_sha256(destination),
+                    media_type=source_format_for_upload(destination),
+                )
                 self.append_event(
                     task_id,
                     "file_uploaded",
                     f"已上传 {destination.name}",
-                    {"filename": destination.name, "bytes": bytes_written},
+                    {
+                        "filename": destination.name,
+                        "bytes": bytes_written,
+                        "resource_id": resource_ref.id,
+                        "digest": resource_ref.digest,
+                        "uri": resource_ref.uri,
+                        "resource_ref": resource_ref_payload(resource_ref),
+                    },
                 )
             return saved_paths
 
@@ -803,6 +835,34 @@ class TaskStorage:
         self.write_json(task_id, "run.json", data)
         return run_path
 
+    def _read_run_manifest(self, task_id: str, run_id: str) -> dict[str, Any]:
+        run_path = self.run_artifact_dir(task_id, run_id) / "run.json"
+        if not run_path.exists():
+            return {}
+        try:
+            data = json.loads(run_path.read_text(encoding="utf-8"))
+        except (JSONDecodeError, UnicodeDecodeError):
+            return {}
+        return data if isinstance(data, dict) else {}
+
+    def _merge_run_manifest_artifact_ref(
+        self,
+        task_id: str,
+        run_id: str,
+        artifact_ref: dict[str, Any],
+    ) -> None:
+        manifest = self._read_run_manifest(task_id, run_id)
+        refs = manifest.get("artifact_refs")
+        artifact_refs = [item for item in refs if isinstance(item, dict)] if isinstance(refs, list) else []
+        artifact_id = artifact_ref.get("id")
+        artifact_refs = [item for item in artifact_refs if item.get("id") != artifact_id]
+        artifact_refs.append(artifact_ref)
+        manifest["artifact_refs"] = sorted(
+            artifact_refs,
+            key=lambda item: str(item.get("name") or item.get("id") or ""),
+        )
+        self.write_run_manifest(task_id, run_id, manifest)
+
     def write_run_json(self, task_id: str, run_id: str, artifact_name: str, data: Any) -> Path:
         text = json.dumps(data, ensure_ascii=False, indent=2)
         return self.write_run_text(task_id, run_id, artifact_name, text)
@@ -815,7 +875,12 @@ class TaskStorage:
         path.write_text(text, encoding="utf-8")
         if name in RUN_ARTIFACT_NAMES:
             self.write_text(task_id, f"artifacts/{name}", text)
-            self.record_run_artifact(task_id, run_id, name)
+            self.record_run_artifact(
+                task_id,
+                run_id,
+                name,
+                artifact_ref=self._artifact_ref_payload(task_id, run_id, name, path),
+            )
         return path
 
     def run_artifact_dir(self, task_id: str, run_id: str) -> Path:
@@ -828,7 +893,31 @@ class TaskStorage:
             raise ValueError("运行产物路径超出任务根目录")
         return path
 
-    def record_run_artifact(self, task_id: str, run_id: str, artifact_name: str) -> None:
+    def _artifact_ref_payload(
+        self,
+        task_id: str,
+        run_id: str,
+        artifact_name: str,
+        artifact_path: Path,
+    ) -> dict[str, Any]:
+        artifact_ref = build_artifact_ref(
+            session_id=task_id,
+            run_id=run_id,
+            name=artifact_name,
+            artifact_type=TYPE_MAP.get(Path(artifact_name).suffix.lower(), "text"),
+            size_bytes=artifact_path.stat().st_size if artifact_path.exists() else None,
+            digest=file_sha256(artifact_path) if artifact_path.exists() else None,
+        )
+        return artifact_ref_payload(artifact_ref)
+
+    def record_run_artifact(
+        self,
+        task_id: str,
+        run_id: str,
+        artifact_name: str,
+        *,
+        artifact_ref: dict[str, Any] | None = None,
+    ) -> None:
         name = normalize_artifact_name(artifact_name)
         validate_run_id(run_id)
         with self._lock:
@@ -836,11 +925,19 @@ class TaskStorage:
             run = self._find_run(state, run_id)
             if run is None:
                 raise ValueError("未找到运行记录")
+            if artifact_ref is None:
+                artifact_path = self.run_artifact_dir(task_id, run_id) / name
+                if artifact_path.exists():
+                    artifact_ref = self._artifact_ref_payload(
+                        task_id, run_id, name, artifact_path
+                    )
             if name not in run.artifact_names:
                 run.artifact_names.append(name)
                 run.artifact_names.sort()
                 state.run_count = len(state.runs)
                 self._write_state(state)
+            if artifact_ref is not None:
+                self._merge_run_manifest_artifact_ref(task_id, run_id, artifact_ref)
 
     def list_artifacts(self, task_id: str) -> list[ArtifactRecord]:
         with self._lock:

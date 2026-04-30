@@ -3,10 +3,21 @@
 from .events import EventLevel, NewSessionEvent, SessionEvent, SessionSnapshot
 from .execution import ExecutionGateway, ExecutionHandle, ExecutionResult, ExecutionStatus, ToolSpec
 from .harness import HarnessEngine, Scheduler, WakeReason, WakeRequest
-from .resources import ResourceKind, ResourceRef
+from .resources import (
+    ArtifactKind,
+    ArtifactRef,
+    ResourceKind,
+    ResourceRef,
+    artifact_ref_payload,
+    build_artifact_ref,
+    build_upload_resource_ref,
+    resource_ref_payload,
+)
 from .session import SessionStore
 
 __all__ = [
+    "ArtifactKind",
+    "ArtifactRef",
     "EventLevel",
     "ExecutionGateway",
     "ExecutionHandle",
@@ -23,4 +34,8 @@ __all__ = [
     "ToolSpec",
     "WakeReason",
     "WakeRequest",
+    "artifact_ref_payload",
+    "build_artifact_ref",
+    "build_upload_resource_ref",
+    "resource_ref_payload",
 ]
