@@ -7,6 +7,10 @@ from typing import Any, cast
 import pytest
 
 import app.deep_agent_runtime as deep_agent_runtime
+from app.agent_activity import (
+    build_live_tool_call_metadata,
+    build_live_tool_result_metadata,
+)
 from app.agent_profiles import (
     BID_MULTI_AGENT_PROFILE_ID,
     AgentProfile,
@@ -608,6 +612,17 @@ def test_deep_agent_runtime_streams_with_required_options_and_activity_events(
     assert [event["status"] for event in activity_events] == [
         "started",
         "running",
+        "running",
+        "completed",
+    ]
+    assert activity_events[0]["live"]["stage"] == "analyzing_intent"
+    answer_status_events = [
+        event
+        for event in activity_events
+        if event.get("live", {}).get("kind") == "answer_status"
+    ]
+    assert [event["live"]["stage"] for event in answer_status_events] == [
+        "generating_answer",
         "completed",
     ]
     assert all(event["schema_version"] == 1 for event in activity_events)
@@ -716,14 +731,64 @@ def test_deep_agent_runtime_activity_sanitizes_tool_args_results_and_paths(
     assert tool_started["parameter_summary"] == (
         "relative_path=uploads/source.md; path=<redacted>"
     )
+    assert tool_started["live"]["agent_name"] == "main_agent"
+    assert tool_started["live"]["tool_name"] == "read_file"
+    assert tool_started["live"]["tool_call_id"] == "dg_tool_1"
+    assert tool_started["live"]["parameter_items"] == [
+        {"key": "relative_path", "value": "uploads/source.md"},
+        {"key": "path", "value": "<redacted>", "truncated": True},
+    ]
+    assert tool_completed["live"]["tool_call_id"] == "dg_tool_1"
+    assert tool_completed["live"]["result_status"] == "success"
     assert tool_completed["result_summary"].startswith("工具返回文本 ")
     assert error_completed["result_summary"] == "status=error; bytes=77"
+    assert error_completed["live"]["result_status"] == "failed"
     assert "CUSTOMER_UPLOADED_BODY" not in serialized
     assert "SECRET_DOC_CANARY_123" not in serialized
     assert "Authorization" not in serialized
     assert "abcdefghijklmnop" not in serialized
     assert "/mnt/d/private" not in serialized
     assert "C:\\Users" not in serialized
+
+
+def test_live_metadata_sanitizes_parameters_and_summarizes_results() -> None:
+    live_call = build_live_tool_call_metadata(
+        agent_name="internet_agent",
+        tool_name="tavily_search",
+        tool_call_id="call-1",
+        parameters={
+            "query": "上海天气",
+            "max_results": 5,
+            "prompt": "SHOULD_NOT_APPEAR",
+            "path": "/mnt/d/private/customer.md",
+            "content": "CUSTOMER_UPLOADED_BODY",
+            "extra": "x" * 120,
+        },
+    )
+    live_result = build_live_tool_result_metadata(
+        agent_name="internet_agent",
+        tool_name="tavily_search",
+        tool_call_id="call-1",
+        result={"results": [{"title": "A"}, {"title": "B"}]},
+    )
+
+    serialized = json.dumps(live_call, ensure_ascii=False)
+    assert live_call["kind"] == "tool_call"
+    assert live_call["agent_name"] == "internet_agent"
+    assert live_call["tool_name"] == "tavily_search"
+    assert live_call["tool_call_id"] == "call-1"
+    assert live_call["parameter_items"] == [
+        {"key": "query", "value": "上海天气"},
+        {"key": "max_results", "value": 5},
+        {"key": "path", "value": "<redacted>", "truncated": True},
+        {"key": "extra", "value": "...", "truncated": True},
+    ]
+    assert "SHOULD_NOT_APPEAR" not in serialized
+    assert "CUSTOMER_UPLOADED_BODY" not in serialized
+    assert "/mnt/d/private" not in serialized
+    assert live_result["kind"] == "tool_result"
+    assert live_result["result_status"] == "success"
+    assert live_result["result_count"] == 2
 
 
 def test_deep_agent_runtime_invoke_fallback_emits_safe_activity(
@@ -757,6 +822,13 @@ def test_deep_agent_runtime_invoke_fallback_emits_safe_activity(
     assert result.output_text == "fallback output"
     assert result.metadata["execution_mode"] == "invoke"
     assert any(event["status"] == "skipped" for event in activity_events)
+    assert any(
+        event.get("live", {}).get("kind") == "answer_status"
+        and event.get("live", {}).get("stage") == "generating_answer"
+        for event in activity_events
+    )
+    assert activity_events[-1]["live"]["kind"] == "answer_status"
+    assert activity_events[-1]["live"]["stage"] == "completed"
     assert all(set(event).issubset(deep_agent_activity_keys()) for event in activity_events)
 
 
@@ -881,7 +953,7 @@ def test_deep_agent_runtime_coalesces_high_frequency_progress_events(
     statuses = [event["status"] for event in activity_events]
     assert statuses.count("started") == 1
     assert statuses.count("completed") == 1
-    assert statuses.count("running") == 1
+    assert statuses.count("running") == 2
     assert len(activity_events) <= 4
 
 
@@ -1208,5 +1280,6 @@ def deep_agent_activity_keys() -> set[str]:
         "result_summary",
         "subgraph_path",
         "related_event_id",
+        "live",
         "truncated",
     }

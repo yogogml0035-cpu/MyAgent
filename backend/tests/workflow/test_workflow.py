@@ -489,10 +489,12 @@ def test_search_synthesizes_final_answer_after_tool_result(tmp_path: Path) -> No
     assert state["status"] == "complete"
     assert [message["role"] for message in state["messages"]] == ["user", "assistant"]
     assert "上海今天以多云为主" in state["messages"][-1]["content"]
-    assert "参考来源" in state["messages"][-1]["content"]
+    assert "参考来源" not in state["messages"][-1]["content"]
     assert "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR" not in state["messages"][-1]["content"]
     assert "RAW_TAVILY_JSON_CANARY_SHOULD_NOT_APPEAR" not in serialized_events
     assert positions["search_tool_call"] < positions["search_tool_result"]
+    assert positions["search_tool_result"] < positions["answer_generation_started"]
+    assert positions["answer_generation_started"] < positions["search_synthesis_completed"]
     assert positions["search_tool_result"] < positions["search_synthesis_completed"]
     assert positions["search_synthesis_completed"] < positions["search_completed"]
     final_reasoning = reasoning_events_for_run(state, run_id, phase="final_summary")
@@ -507,8 +509,56 @@ def test_search_synthesizes_final_answer_after_tool_result(tmp_path: Path) -> No
     synthesis_events = [
         event for event in state["events"] if event["type"] == "search_synthesis_completed"
     ]
+    run_manifest_event = next(
+        event for event in state["events"] if event["type"] == "run_manifest_created"
+    )
+    orchestration_event = next(
+        event for event in state["events"] if event["type"] == "orchestration_decision"
+    )
+    search_call_event = next(event for event in state["events"] if event["type"] == "search_tool_call")
+    search_result_event = next(
+        event for event in state["events"] if event["type"] == "search_tool_result"
+    )
+    answer_started_event = next(
+        event for event in state["events"] if event["type"] == "answer_generation_started"
+    )
+    assert run_manifest_event["payload"]["live"]["kind"] == "status"
+    assert run_manifest_event["payload"]["live"]["stage"] == "analyzing_intent"
+    assert orchestration_event["payload"]["live"]["kind"] == "status"
+    assert orchestration_event["payload"]["live"]["stage"] == "selecting_tool"
+    assert search_call_event["payload"]["live"] == {
+        "schema_version": 1,
+        "kind": "tool_call",
+        "stage": "using_tool",
+        "agent_name": "search_agent",
+        "tool_name": "tavily_search",
+        "tool_call_id": "search_tool_1",
+        "parameter_items": [
+            {"key": "query", "value": "上海今天的天气怎么样？"},
+            {"key": "max_results", "value": 5},
+            {"key": "use_uploads", "value": False},
+        ],
+    }
+    assert search_result_event["payload"]["live"] == {
+        "schema_version": 1,
+        "kind": "tool_result",
+        "stage": "completed",
+        "agent_name": "search_agent",
+        "tool_name": "tavily_search",
+        "tool_call_id": "search_tool_1",
+        "result_status": "success",
+        "result_count": 2,
+    }
+    assert answer_started_event["payload"]["live"] == {
+        "schema_version": 1,
+        "kind": "answer_status",
+        "stage": "generating_answer",
+        "agent_name": "search_agent",
+    }
     assert synthesis_events[-1]["payload"]["used_model"] is True
     assert synthesis_events[-1]["payload"]["source_count"] == 2
+    assert synthesis_events[-1]["payload"]["live"]["kind"] == "answer_status"
+    assert synthesis_events[-1]["payload"]["live"]["stage"] == "completed"
     assert len(synthesis_events[-1]["payload"]["sources"]) <= 5
     assert set(synthesis_events[-1]["payload"]["sources"][0]) == {"title", "url", "snippet"}
     prompt = provider_chat.call_args.args[0]

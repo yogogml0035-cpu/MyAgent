@@ -63,7 +63,6 @@ export function useTaskWorkspace() {
   const [input, setInput] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
   const [model, setModel] = useState(DEFAULT_MODEL_OPTIONS[0].id);
-  const [expandedReasoningRuns, setExpandedReasoningRuns] = useState<Record<string, boolean>>({});
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string>("");
@@ -426,20 +425,12 @@ export function useTaskWorkspace() {
     [taskId],
   );
 
-  const toggleReasoningRun = useCallback((runId: string) => {
-    setExpandedReasoningRuns((current) => ({
-      ...current,
-      [runId]: !current[runId],
-    }));
-  }, []);
-
   return {
     apiBaseUrl: TASK_API_BASE_URL,
     activeTask,
     canSend,
     copiedCopyKey,
     conversationStreamItems,
-    expandedReasoningRuns,
     handleClearFiles,
     handleCopyLogs,
     handleCopyText,
@@ -464,7 +455,6 @@ export function useTaskWorkspace() {
     setInput,
     setModel,
     status,
-    toggleReasoningRun,
     uploadCount,
   };
 }

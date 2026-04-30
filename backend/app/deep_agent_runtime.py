@@ -439,6 +439,8 @@ class DeepAgentRuntime:
                 agent, request, active_controller, projector
             )
             active_controller.raise_if_cancelled()
+            if output_text != DEEP_AGENT_NO_FINAL_MESSAGE:
+                projector.record_final_output_text(output_text)
             projector.emit_completed()
             return DeepAgentRunResult(
                 status="complete",

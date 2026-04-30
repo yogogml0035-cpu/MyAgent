@@ -401,6 +401,104 @@ test("normalizeTaskState bounds optional deep agent activity fields and ignores 
   assert.equal(JSON.stringify(state.logs).includes("unknown_optional"), false);
 });
 
+test("normalizeTaskState preserves bounded live metadata for user-facing logs", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "search-call",
+          type: "search_tool_call",
+          message: "已调用联网搜索工具。",
+          payload: {
+            live: {
+              schema_version: 1,
+              kind: "tool_call",
+              stage: "using_tool",
+              agent_name: "internet_agent",
+              tool_name: "tavily_search",
+              tool_call_id: "call-1",
+              parameter_items: [
+                { key: "query", value: "上海天气", secret: "SHOULD_NOT_RENDER" },
+                { key: "max_results", value: 5 },
+                { key: "use_uploads", value: false },
+              ],
+              raw_tool_result: "SHOULD_NOT_RENDER",
+            },
+          },
+        },
+        {
+          id: "search-result",
+          type: "search_tool_result",
+          message: "联网搜索工具已返回安全摘要。",
+          payload: {
+            live: {
+              schema_version: 1,
+              kind: "tool_result",
+              stage: "completed",
+              agent_name: "internet_agent",
+              tool_name: "tavily_search",
+              tool_call_id: "call-1",
+              result_status: "success",
+              result_count: 5,
+            },
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.logs[0].live, {
+    schemaVersion: 1,
+    kind: "tool_call",
+    stage: "using_tool",
+    agentName: "internet_agent",
+    toolName: "tavily_search",
+    toolCallId: "call-1",
+    parameterItems: [
+      { key: "query", value: "上海天气", truncated: undefined },
+      { key: "max_results", value: 5, truncated: undefined },
+      { key: "use_uploads", value: false, truncated: undefined },
+    ],
+    resultStatus: undefined,
+    resultCount: undefined,
+  });
+  assert.equal(state.logs[1].live?.kind, "tool_result");
+  assert.equal(state.logs[1].live?.resultStatus, "success");
+  assert.equal(state.logs[1].live?.resultCount, 5);
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+});
+
+test("normalizeTaskState ignores malformed live metadata", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "bad-live",
+          type: "search_tool_call",
+          message: "已调用联网搜索工具。",
+          payload: {
+            live: {
+              schema_version: 1,
+              kind: "raw_chain_of_thought",
+              parameter_items: [{ key: "query", value: { unsafe: true } }],
+              raw_reasoning: "SHOULD_NOT_RENDER",
+            },
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].live, undefined);
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+});
+
 test("normalizeTaskState preserves bounded search trace metadata and ignores raw fields", () => {
   const state = normalizeTaskState(
     {

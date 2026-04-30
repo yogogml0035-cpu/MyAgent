@@ -20,14 +20,12 @@ export function TaskWorkspace() {
         <TaskConversation
           conversationStreamItems={workspace.conversationStreamItems}
           copiedCopyKey={workspace.copiedCopyKey}
-          expandedReasoningRuns={workspace.expandedReasoningRuns}
           hasConversation={workspace.hasConversation}
           noticeMessages={workspace.noticeMessages}
           onCopyLogs={workspace.handleCopyLogs}
           onCopyText={workspace.handleCopyText}
           onDownloadArtifact={workspace.handleDownloadArtifact}
           onOpenArtifact={workspace.handleOpenArtifact}
-          onToggleReasoningRun={workspace.toggleReasoningRun}
         />
 
         <ChatComposer

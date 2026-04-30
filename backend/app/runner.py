@@ -7,6 +7,12 @@ from pathlib import Path
 from threading import Lock, Thread
 from typing import Any, Literal, TypeAlias
 
+from .agent_activity import (
+    build_live_answer_status_metadata,
+    build_live_status_metadata,
+    build_live_tool_call_metadata,
+    build_live_tool_result_metadata,
+)
 from .agent_profiles import (
     AgentProfile,
     agent_profile_manifest,
@@ -283,19 +289,29 @@ class TaskRunner:
                     "route": decision.route,
                     "input_scope": decision.resolved_input_scope,
                     "chosen_profile_id": agent_profile.id if agent_profile else None,
+                    "live": build_live_status_metadata(
+                        agent_name="task_agent",
+                        stage="analyzing_intent",
+                    ),
                 },
             )
             emit(
                 "orchestration_decision",
                 "已记录本轮编排策略。",
-                build_orchestration_decision_payload(
-                    route=decision.route,
-                    reason=decision.reason,
-                    selected_upload_names=selected_upload_name_list,
-                    message=message,
-                    agent_profile=agent_profile,
-                    bidder_count=bidder_count,
-                ),
+                {
+                    **build_orchestration_decision_payload(
+                        route=decision.route,
+                        reason=decision.reason,
+                        selected_upload_names=selected_upload_name_list,
+                        message=message,
+                        agent_profile=agent_profile,
+                        bidder_count=bidder_count,
+                    ),
+                    "live": build_live_status_metadata(
+                        agent_name="task_agent",
+                        stage="selecting_tool",
+                    ),
+                },
             )
             if decision.route == "chat" or decision.route == "search":
                 simple_result = self._run_simple_message(
@@ -484,7 +500,14 @@ class TaskRunner:
                 ),
                 completion_event_type="task_completed",
                 completion_event_message="任务已完成。",
-                completion_event_payload=bid_result,
+                completion_event_payload={
+                    **bid_result,
+                    "live": build_live_answer_status_metadata(
+                        agent_name="analysis_agent",
+                        stage="completed",
+                        result_status="success",
+                    ),
+                },
             )
             if not completed and controller.is_cancelled():
                 raise CancelledError()
@@ -496,12 +519,29 @@ class TaskRunner:
                 summary="任务已取消，已保留当前可用的安全运行记录。",
                 confidence="medium",
             )
-            emit("task_cancelled", "任务已取消，已保留中间产物。", {})
+            emit(
+                "task_cancelled",
+                "任务已取消，已保留中间产物。",
+                {
+                    "live": build_live_status_metadata(
+                        agent_name="task_agent",
+                        stage="failed",
+                        result_status="cancelled",
+                    )
+                },
+            )
             self.storage.update_task_if_status(
                 task_id, RUNNING_STATUSES, status="cancelled", run_id=run_id
             )
         except NeedsInputError as exc:
-            payload = {"message": str(exc), **exc.payload}
+            payload = {
+                "message": str(exc),
+                **exc.payload,
+                "live": build_live_status_metadata(
+                    agent_name="task_agent",
+                    stage="needs_input",
+                ),
+            }
             self.storage.update_task_if_status_and_append_events(
                 task_id,
                 RUNNING_STATUSES,
@@ -541,7 +581,19 @@ class TaskRunner:
                         summary=f"任务执行失败，已停止本轮运行：{safe_error}",
                         confidence="medium",
                     ),
-                    ("task_failed", "任务执行失败。", {"error": safe_error}, None),
+                    (
+                        "task_failed",
+                        "任务执行失败。",
+                        {
+                            "error": safe_error,
+                            "live": build_live_status_metadata(
+                                agent_name="task_agent",
+                                stage="failed",
+                                result_status="failed",
+                            ),
+                        },
+                        None,
+                    ),
                 ],
             )
         finally:
@@ -660,22 +712,30 @@ class TaskRunner:
         emit: Emit,
     ) -> SimpleMessageResult:
         if route == "search":
+            search_tool_call_id = "search_tool_1"
             workspace_tools = WorkspaceTools(
                 self.storage.task_dir(task_id),
                 PermissionPolicy(self.storage.task_dir(task_id)),
                 self.settings.tavily_api_key,
                 controller,
             )
+            search_parameters = {
+                "query": bounded_safe_text(message, 240),
+                "max_results": SEARCH_SOURCE_LIMIT,
+                "use_uploads": False,
+            }
             emit(
                 "search_tool_call",
                 "已调用联网搜索工具。",
                 {
                     "tool_name": "tavily_search",
-                    "parameter_summary": {
-                        "query": bounded_safe_text(message, 240),
-                        "max_results": SEARCH_SOURCE_LIMIT,
-                        "use_uploads": False,
-                    },
+                    "parameter_summary": search_parameters,
+                    "live": build_live_tool_call_metadata(
+                        agent_name="search_agent",
+                        tool_name="tavily_search",
+                        tool_call_id=search_tool_call_id,
+                        parameters=search_parameters,
+                    ),
                 },
             )
             result = workspace_tools.tavily_search(message)
@@ -689,9 +749,27 @@ class TaskRunner:
                     "tool_name": "tavily_search",
                     "result_count": len(sources),
                     "sources": [source.to_payload() for source in sources],
+                    "live": build_live_tool_result_metadata(
+                        agent_name="search_agent",
+                        tool_name="tavily_search",
+                        tool_call_id=search_tool_call_id,
+                        result=result,
+                        result_status="failed" if warning_code else None,
+                        result_count=len(sources),
+                    ),
                     **({"warning_code": warning_code} if warning_code else {}),
                 },
                 level="warning" if warning_code else None,
+            )
+            emit(
+                "answer_generation_started",
+                "正在生成回答。",
+                {
+                    "live": build_live_answer_status_metadata(
+                        agent_name="search_agent",
+                        stage="generating_answer",
+                    )
+                },
             )
             synthesis = self._synthesize_search_result(
                 message=message,
@@ -700,10 +778,18 @@ class TaskRunner:
                 warning_code=warning_code,
                 controller=controller,
             )
+            synthesis_payload = {
+                **synthesis.event_payload,
+                "live": build_live_answer_status_metadata(
+                    agent_name="search_agent",
+                    stage="completed",
+                    result_status="skipped" if synthesis.warning_code else "success",
+                ),
+            }
             emit(
                 "search_synthesis_completed",
                 "已根据搜索结果生成最终回答。",
-                synthesis.event_payload,
+                synthesis_payload,
                 level="warning" if synthesis.warning_code else "success",
             )
             return SimpleMessageResult(
@@ -712,6 +798,16 @@ class TaskRunner:
                 completion_payload=synthesis.event_payload,
             )
 
+        emit(
+            "answer_generation_started",
+            "正在生成回答。",
+            {
+                "live": build_live_answer_status_metadata(
+                    agent_name="main_agent",
+                    stage="generating_answer",
+                )
+            },
+        )
         try:
             reply = self.model_provider.chat(message, model, controller)
         except RuntimeError as exc:
@@ -724,7 +820,14 @@ class TaskRunner:
         return SimpleMessageResult(
             answer=reply,
             warning_code=warning_code,
-            completion_payload={"used_model": warning_code is None},
+            completion_payload={
+                "used_model": warning_code is None,
+                "live": build_live_answer_status_metadata(
+                    agent_name="main_agent",
+                    stage="completed",
+                    result_status="skipped" if warning_code else "success",
+                ),
+            },
         )
 
     def _synthesize_search_result(
@@ -797,7 +900,7 @@ class TaskRunner:
                 warning_code="empty_model_response",
             )
         return SearchSynthesisResult(
-            answer=append_search_references(answer, sources),
+            answer=answer,
             sources=sources,
             used_model=True,
         )
@@ -1097,15 +1200,3 @@ def render_search_fallback_answer(
             source_line += f"（{source.url}）"
         lines.append(source_line)
     return "\n".join(lines)
-
-
-def append_search_references(answer: str, sources: list[SearchSourceSummary]) -> str:
-    if not sources:
-        return answer
-    references = []
-    for source in sources:
-        label = source.title
-        if source.url:
-            label += f" - {source.url}"
-        references.append(f"- {label}")
-    return answer.rstrip() + "\n\n参考来源：\n" + "\n".join(references)

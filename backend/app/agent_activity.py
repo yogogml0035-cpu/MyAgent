@@ -4,6 +4,8 @@ import json
 import re
 import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
+from contextlib import suppress
+from math import isfinite
 from typing import Any, Literal, TypeAlias
 
 from .reasoning_trace import sanitize_reasoning_text
@@ -30,6 +32,10 @@ INTERNAL_PATH_PATTERN = re.compile(
 )
 SAFE_VIRTUAL_ROOTS = {"uploads", "records", "outputs"}
 MAX_PAYLOAD_BYTES = 8 * 1024
+MAX_LIVE_PARAMETER_ITEMS = 5
+MAX_LIVE_PARAMETER_KEY_CHARS = 40
+MAX_LIVE_PARAMETER_STRING_CHARS = 80
+MAX_LIVE_ID_CHARS = 120
 SAFE_TOOL_RESULT_STATUSES = {
     "success",
     "ok",
@@ -43,6 +49,35 @@ SAFE_TOOL_RESULT_STATUSES = {
     "skipped",
     "timeout",
 }
+LIVE_KINDS = {"think", "tool_call", "tool_result", "answer_status", "status"}
+LIVE_STAGES = {
+    "analyzing_intent",
+    "selecting_tool",
+    "using_tool",
+    "reading_input",
+    "generating_answer",
+    "completed",
+    "needs_input",
+    "failed",
+}
+LIVE_RESULT_STATUSES = {"success", "empty", "failed", "cancelled", "skipped"}
+LIVE_SAFE_PARAMETER_KEYS = {"max_results"}
+LIVE_SECRET_KEY_PATTERN = re.compile(
+    r"(?:api[_-]?key|secret|token|authorization|auth|password|credential|content|prompt|body|result)",
+    re.IGNORECASE,
+)
+LIVE_RESULT_COUNT_KEYS = ("result_count", "count", "total_count", "total", "items_count")
+LIVE_RESULT_LIST_KEYS = ("results", "items", "records", "sources")
+LIVE_PATH_PARAMETER_KEYS = {"path", "file_path", "relative_path", "virtual_path"}
+LIVE_PARAMETER_PRIORITY = (
+    "query",
+    "max_results",
+    "use_uploads",
+    "relative_path",
+    "virtual_path",
+    "path",
+    "file_path",
+)
 
 FIELD_LIMITS = {
     "title": 120,
@@ -75,6 +110,7 @@ def build_deep_agent_activity_payload(
     agent_id: str | None = None,
     parent_agent_id: str | None = None,
     task_label: str | None = None,
+    live: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     normalized_kind = activity_kind.strip() if isinstance(activity_kind, str) else ""
     normalized_phase = phase.strip() if isinstance(phase, str) else ""
@@ -131,12 +167,147 @@ def build_deep_agent_activity_payload(
     if path:
         payload["subgraph_path"] = path
         payload["truncated"] = payload["truncated"] or path_truncated
+    normalized_live = normalize_live_metadata(live)
+    if normalized_live is not None:
+        payload["live"] = normalized_live
 
     if len(json.dumps(payload, ensure_ascii=False).encode("utf-8")) > MAX_PAYLOAD_BYTES:
         payload["summary"] = _trim_text(str(payload.get("summary") or ""), 360)
         payload["result_summary"] = _trim_text(str(payload.get("result_summary") or ""), 240)
         payload["truncated"] = True
     return payload
+
+
+def build_live_tool_call_metadata(
+    *,
+    agent_name: str,
+    tool_name: str,
+    tool_call_id: str,
+    parameters: Any,
+) -> dict[str, Any]:
+    return normalize_live_metadata(
+        {
+            "schema_version": 1,
+            "kind": "tool_call",
+            "stage": "using_tool",
+            "agent_name": agent_name,
+            "tool_name": tool_name,
+            "tool_call_id": tool_call_id,
+            "parameter_items": _live_parameter_items(parameters),
+        }
+    ) or {"schema_version": 1, "kind": "tool_call"}
+
+
+def build_live_tool_result_metadata(
+    *,
+    agent_name: str,
+    tool_name: str,
+    tool_call_id: str,
+    result: Any,
+    result_status: str | None = None,
+    result_count: int | None = None,
+) -> dict[str, Any]:
+    resolved_status = _normalize_live_result_status(result_status)
+    if resolved_status is None:
+        resolved_status = _infer_live_result_status(result)
+    resolved_count = result_count if isinstance(result_count, int) and result_count >= 0 else None
+    if resolved_count is None:
+        resolved_count = _infer_live_result_count(result)
+    metadata: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "tool_result",
+        "stage": "completed" if resolved_status != "failed" else "failed",
+        "agent_name": agent_name,
+        "tool_name": tool_name,
+        "tool_call_id": tool_call_id,
+        "result_status": resolved_status,
+    }
+    if resolved_count is not None:
+        metadata["result_count"] = resolved_count
+    return normalize_live_metadata(metadata) or {
+        "schema_version": 1,
+        "kind": "tool_result",
+        "result_status": resolved_status,
+    }
+
+
+def build_live_answer_status_metadata(
+    *,
+    agent_name: str,
+    stage: str,
+    result_status: str | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "answer_status",
+        "stage": stage,
+        "agent_name": agent_name,
+    }
+    normalized_status = _normalize_live_result_status(result_status)
+    if normalized_status is not None:
+        metadata["result_status"] = normalized_status
+    return normalize_live_metadata(metadata) or {
+        "schema_version": 1,
+        "kind": "answer_status",
+    }
+
+
+def build_live_status_metadata(
+    *,
+    agent_name: str,
+    stage: str,
+    result_status: str | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "schema_version": 1,
+        "kind": "status",
+        "stage": stage,
+        "agent_name": agent_name,
+    }
+    normalized_status = _normalize_live_result_status(result_status)
+    if normalized_status is not None:
+        metadata["result_status"] = normalized_status
+    return normalize_live_metadata(metadata) or {"schema_version": 1, "kind": "status"}
+
+
+def normalize_live_metadata(value: Mapping[str, Any] | None) -> dict[str, Any] | None:
+    if not isinstance(value, Mapping):
+        return None
+    if value.get("schema_version") != 1:
+        return None
+    kind = value.get("kind")
+    if not isinstance(kind, str) or kind not in LIVE_KINDS:
+        return None
+    live: dict[str, Any] = {"schema_version": 1, "kind": kind}
+    stage = value.get("stage")
+    if isinstance(stage, str) and stage in LIVE_STAGES:
+        live["stage"] = stage
+    for field in ("agent_name", "tool_name", "tool_call_id"):
+        text, _ = _sanitize_activity_text(
+            value.get(field), max_chars=MAX_LIVE_ID_CHARS
+        )
+        if text:
+            live[field] = text
+    parameter_items = value.get("parameter_items")
+    if isinstance(parameter_items, Sequence) and not isinstance(
+        parameter_items, (str, bytes, bytearray)
+    ):
+        items: list[dict[str, Any]] = []
+        for item in parameter_items:
+            normalized_item = _normalize_live_parameter_item(item)
+            if normalized_item is not None:
+                items.append(normalized_item)
+            if len(items) >= MAX_LIVE_PARAMETER_ITEMS:
+                break
+        if items:
+            live["parameter_items"] = items
+    result_status = _normalize_live_result_status(value.get("result_status"))
+    if result_status is not None:
+        live["result_status"] = result_status
+    result_count = value.get("result_count")
+    if isinstance(result_count, int) and result_count >= 0:
+        live["result_count"] = result_count
+    return live
 
 
 def validate_deep_agent_activity_payload(payload: Mapping[str, Any]) -> bool:
@@ -159,6 +330,7 @@ def validate_deep_agent_activity_payload(payload: Mapping[str, Any]) -> bool:
             agent_id=_optional_str(payload.get("agent_id")),
             parent_agent_id=_optional_str(payload.get("parent_agent_id")),
             task_label=_optional_str(payload.get("task_label")),
+            live=payload.get("live") if isinstance(payload.get("live"), Mapping) else None,
         )
     except ValueError:
         return False
@@ -183,15 +355,24 @@ class DeepAgentActivityProjector:
         self.coalesce_seconds = coalesce_seconds
         self.clock = clock
         self._counter = 0
+        self._tool_call_counter = 0
+        self._pending_tool_calls: dict[str, str] = {}
+        self._pending_tool_call_order: list[str] = []
         self._last_emit_at: dict[tuple[str, str, tuple[str, ...], str, str], float] = {}
         self._assistant_message_id: str | None = None
         self._assistant_parts: list[str] = []
         self._final_assistant_text = ""
+        self._answer_generation_paths: set[tuple[str, ...]] = set()
 
     @property
     def final_output_text(self) -> str:
         buffered = "".join(self._assistant_parts).strip()
         return buffered or self._final_assistant_text.strip()
+
+    def record_final_output_text(self, output_text: str) -> None:
+        text = output_text.strip()
+        if text:
+            self._final_assistant_text = text
 
     def emit_started(self) -> None:
         self.emit(
@@ -200,6 +381,10 @@ class DeepAgentActivityProjector:
             status="started",
             title="DeepAgent 已启动",
             summary="DeepAgent 已在本轮隔离工作区内开始执行。",
+            live=build_live_status_metadata(
+                agent_name="deep_agent",
+                stage="analyzing_intent",
+            ),
         )
 
     def emit_completed(self) -> None:
@@ -209,6 +394,19 @@ class DeepAgentActivityProjector:
             status="completed",
             title="DeepAgent 已完成",
             summary="DeepAgent 执行结束，最终回复将作为单独助手消息保存。",
+            live=(
+                build_live_answer_status_metadata(
+                    agent_name="deep_agent",
+                    stage="completed",
+                    result_status="success",
+                )
+                if self.final_output_text
+                else build_live_status_metadata(
+                    agent_name="deep_agent",
+                    stage="completed",
+                    result_status="success",
+                )
+            ),
         )
 
     def emit_failed(self) -> None:
@@ -218,6 +416,11 @@ class DeepAgentActivityProjector:
             status="failed",
             title="DeepAgent 执行失败",
             summary="DeepAgent 执行未完成，已停止记录流式进度。",
+            live=build_live_status_metadata(
+                agent_name="deep_agent",
+                stage="failed",
+                result_status="failed",
+            ),
         )
 
     def emit_invoke_fallback(self) -> None:
@@ -227,6 +430,10 @@ class DeepAgentActivityProjector:
             status="skipped",
             title="DeepAgent 流式进度不可用",
             summary="当前 DeepAgents 对象未提供兼容的 stream 接口，已改用一次性调用并保留安全执行记录。",
+            live=build_live_answer_status_metadata(
+                agent_name="deep_agent",
+                stage="generating_answer",
+            ),
         )
 
     def observe_stream_chunk(self, chunk: Any) -> None:
@@ -259,6 +466,7 @@ class DeepAgentActivityProjector:
         result_summary: str | None = None,
         subgraph_path: Iterable[Any] | None = None,
         related_event_id: str | None = None,
+        live: Mapping[str, Any] | None = None,
     ) -> None:
         if self.sink is None:
             return
@@ -285,6 +493,7 @@ class DeepAgentActivityProjector:
             related_event_id=related_event_id,
             agent_id=_agent_id_from_path(path),
             task_label=_task_label_from_path(path),
+            live=live,
         )
         self.sink(payload)
 
@@ -353,8 +562,11 @@ class DeepAgentActivityProjector:
                 self._observe_nested_messages(item, subgraph_path)
 
     def _observe_message(self, message: Any, subgraph_path: list[str]) -> None:
+        agent_name = _agent_name_from_path(subgraph_path)
         for tool_call in _extract_tool_calls(message):
             tool_name = _tool_call_name(tool_call)
+            tool_args = _tool_call_args(tool_call)
+            tool_call_id = self._resolve_tool_call_id(tool_call, tool_name)
             self.emit(
                 activity_kind="lifecycle",
                 phase="tool_use",
@@ -362,12 +574,21 @@ class DeepAgentActivityProjector:
                 title="工具调用准备",
                 summary=f"DeepAgent 准备调用 {tool_name or '工具'}。",
                 tool_name=tool_name,
-                parameter_summary=_summarize_tool_arguments(_tool_call_args(tool_call)),
+                parameter_summary=_summarize_tool_arguments(tool_args),
                 subgraph_path=subgraph_path,
+                live=build_live_tool_call_metadata(
+                    agent_name=agent_name,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    parameters=tool_args,
+                ),
             )
 
         if _is_tool_message(message):
             tool_name = _message_tool_name(message)
+            content = _message_content(message)
+            tool_call_id = self._resolve_tool_result_id(message, tool_name)
+            live_result_status = _tool_message_live_result_status(message)
             self.emit(
                 activity_kind="lifecycle",
                 phase="tool_use",
@@ -375,8 +596,15 @@ class DeepAgentActivityProjector:
                 title="工具调用完成",
                 summary=f"DeepAgent 已收到 {tool_name or '工具'} 的执行结果。",
                 tool_name=tool_name,
-                result_summary=_summarize_tool_result(_message_content(message)),
+                result_summary=_summarize_tool_result(content),
                 subgraph_path=subgraph_path,
+                live=build_live_tool_result_metadata(
+                    agent_name=agent_name,
+                    tool_name=tool_name,
+                    tool_call_id=tool_call_id,
+                    result=content,
+                    result_status=live_result_status,
+                ),
             )
             return
 
@@ -385,6 +613,7 @@ class DeepAgentActivityProjector:
         content = _message_content_text(message).strip()
         if not content:
             return
+        self._emit_answer_generation_started(agent_name, subgraph_path)
         message_id = _message_id(message)
         if _is_chunk_message(message):
             if message_id and self._assistant_message_id not in {None, message_id}:
@@ -395,6 +624,64 @@ class DeepAgentActivityProjector:
         self._assistant_message_id = message_id
         self._assistant_parts = [content]
         self._final_assistant_text = content
+
+    def _emit_answer_generation_started(
+        self, agent_name: str, subgraph_path: list[str]
+    ) -> None:
+        path = tuple(_sanitize_subgraph_path(subgraph_path)[0])
+        if path in self._answer_generation_paths:
+            return
+        self._answer_generation_paths.add(path)
+        self.emit(
+            activity_kind="progress",
+            phase="finalizing",
+            status="running",
+            title="正在生成回答",
+            summary="DeepAgent 正在整理最终回复。",
+            subgraph_path=subgraph_path,
+            live=build_live_answer_status_metadata(
+                agent_name=agent_name,
+                stage="generating_answer",
+            ),
+        )
+
+    def _resolve_tool_call_id(self, tool_call: Any, tool_name: str) -> str:
+        tool_call_id = _tool_call_id(tool_call) or self._next_tool_call_id()
+        self._remember_tool_call(tool_call_id, tool_name)
+        return tool_call_id
+
+    def _resolve_tool_result_id(self, message: Any, tool_name: str) -> str:
+        tool_call_id = _message_tool_call_id(message)
+        if tool_call_id:
+            self._forget_tool_call(tool_call_id)
+            return tool_call_id
+        pending = self._pop_pending_tool_call(tool_name)
+        return pending or self._next_tool_call_id()
+
+    def _next_tool_call_id(self) -> str:
+        self._tool_call_counter += 1
+        return f"dg_tool_{self._tool_call_counter}"
+
+    def _remember_tool_call(self, tool_call_id: str, tool_name: str) -> None:
+        self._pending_tool_calls[tool_call_id] = tool_name
+        if tool_call_id not in self._pending_tool_call_order:
+            self._pending_tool_call_order.append(tool_call_id)
+
+    def _forget_tool_call(self, tool_call_id: str) -> None:
+        self._pending_tool_calls.pop(tool_call_id, None)
+        with suppress(ValueError):
+            self._pending_tool_call_order.remove(tool_call_id)
+
+    def _pop_pending_tool_call(self, tool_name: str) -> str | None:
+        for tool_call_id in list(self._pending_tool_call_order):
+            if self._pending_tool_calls.get(tool_call_id) == tool_name:
+                self._forget_tool_call(tool_call_id)
+                return tool_call_id
+        if not self._pending_tool_call_order:
+            return None
+        tool_call_id = self._pending_tool_call_order[0]
+        self._forget_tool_call(tool_call_id)
+        return tool_call_id
 
 
 def activity_payload_from_file_audit(
@@ -492,6 +779,10 @@ def _agent_id_from_path(path: Sequence[str]) -> str | None:
     return None
 
 
+def _agent_name_from_path(path: Sequence[str]) -> str:
+    return _agent_id_from_path(path) or "main_agent"
+
+
 def _task_label_from_path(path: Sequence[str]) -> str | None:
     agent_id = _agent_id_from_path(path)
     if not agent_id:
@@ -529,6 +820,190 @@ def _tool_call_args(tool_call: Any) -> Any:
     function = _mapping_or_attr(tool_call, "function")
     if isinstance(function, Mapping):
         return function.get("arguments")
+    return None
+
+
+def _tool_call_id(tool_call: Any) -> str | None:
+    for key in ("id", "tool_call_id"):
+        value = _mapping_or_attr(tool_call, key)
+        safe_id = _safe_live_id(value)
+        if safe_id:
+            return safe_id
+    function = _mapping_or_attr(tool_call, "function")
+    if isinstance(function, Mapping):
+        for key in ("id", "tool_call_id"):
+            safe_id = _safe_live_id(function.get(key))
+            if safe_id:
+                return safe_id
+    return None
+
+
+def _message_tool_call_id(message: Any) -> str | None:
+    for key in ("tool_call_id", "id"):
+        safe_id = _safe_live_id(_message_value(message, key))
+        if safe_id:
+            return safe_id
+    return None
+
+
+def _safe_live_id(value: Any) -> str | None:
+    if value is None:
+        return None
+    sanitized, _ = _sanitize_activity_text(value, max_chars=MAX_LIVE_ID_CHARS)
+    return sanitized or None
+
+
+def _live_parameter_items(parameters: Any) -> list[dict[str, Any]]:
+    normalized_parameters = _mapping_from_json_string(parameters)
+    if not isinstance(normalized_parameters, Mapping):
+        return []
+
+    ordered_keys = [key for key in LIVE_PARAMETER_PRIORITY if key in normalized_parameters]
+    ordered_keys.extend(
+        str(key)
+        for key in normalized_parameters
+        if isinstance(key, str) and key not in ordered_keys
+    )
+
+    items: list[dict[str, Any]] = []
+    for key in ordered_keys:
+        normalized_item = _normalize_live_parameter_item(
+            {"key": key, "value": normalized_parameters.get(key)}
+        )
+        if normalized_item is not None:
+            items.append(normalized_item)
+        if len(items) >= MAX_LIVE_PARAMETER_ITEMS:
+            break
+    return items
+
+
+def _normalize_live_parameter_item(item: Any) -> dict[str, Any] | None:
+    if not isinstance(item, Mapping):
+        return None
+    raw_key = item.get("key")
+    if not isinstance(raw_key, str):
+        return None
+    if raw_key not in LIVE_SAFE_PARAMETER_KEYS and LIVE_SECRET_KEY_PATTERN.search(raw_key):
+        return None
+    key, key_truncated = _sanitize_activity_text(
+        raw_key, max_chars=MAX_LIVE_PARAMETER_KEY_CHARS
+    )
+    if not key:
+        return None
+    if key not in LIVE_SAFE_PARAMETER_KEYS and LIVE_SECRET_KEY_PATTERN.search(key):
+        return None
+
+    input_truncated = item.get("truncated") is True
+    normalized: dict[str, Any] = {"key": key}
+    value = item.get("value")
+    if isinstance(value, (bool, int)) or (isinstance(value, float) and isfinite(value)):
+        normalized["value"] = value
+    elif isinstance(value, str):
+        parameter_value, value_truncated = _safe_live_parameter_string(key, value)
+        if parameter_value is None:
+            return None
+        normalized["value"] = parameter_value
+        if key_truncated or value_truncated or input_truncated:
+            normalized["truncated"] = True
+        return normalized
+    else:
+        return None
+
+    if key_truncated or input_truncated:
+        normalized["truncated"] = True
+    return normalized
+
+
+def _safe_live_parameter_string(key: str, value: str) -> tuple[str | None, bool]:
+    if key in LIVE_PATH_PARAMETER_KEYS:
+        safe_path = _safe_virtual_path(value)
+        if safe_path:
+            return safe_path, False
+        return "<redacted>", True
+
+    raw = value.strip()
+    if not raw:
+        return "", False
+    if _looks_like_unsafe_path(raw):
+        return "<redacted>", True
+    sanitized, sanitized_truncated = _sanitize_activity_text(
+        raw, max_chars=MAX_LIVE_PARAMETER_STRING_CHARS
+    )
+    if not sanitized:
+        return None, False
+    if sanitized_truncated or len(raw) > MAX_LIVE_PARAMETER_STRING_CHARS:
+        return "...", True
+    return sanitized, False
+
+
+def _mapping_from_json_string(value: Any) -> Any:
+    if not isinstance(value, str):
+        return value
+    text = value.strip()
+    if not text or len(text) > 4096:
+        return value
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return value
+
+
+def _normalize_live_result_status(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    normalized = value.strip().lower()
+    if normalized in {"success", "ok", "completed", "complete"}:
+        return "success"
+    if normalized in {"empty", "no_result", "none", "not_found"}:
+        return "empty"
+    if normalized in {"error", "failed", "failure", "denied", "timeout"}:
+        return "failed"
+    if normalized in {"cancelled", "canceled"}:
+        return "cancelled"
+    if normalized == "skipped":
+        return "skipped"
+    return None
+
+
+def _infer_live_result_status(result: Any) -> str:
+    normalized_result = _mapping_from_json_string(result)
+    if normalized_result is None or normalized_result == "":
+        return "empty"
+    if isinstance(normalized_result, Mapping):
+        status = _normalize_live_result_status(normalized_result.get("status"))
+        if status is not None:
+            return status
+        if normalized_result.get("error"):
+            return "failed"
+        count = _infer_live_result_count(normalized_result)
+        if count == 0:
+            return "empty"
+        return "success"
+    if isinstance(normalized_result, Sequence) and not isinstance(
+        normalized_result, (str, bytes, bytearray)
+    ):
+        return "success" if len(normalized_result) > 0 else "empty"
+    return "success"
+
+
+def _infer_live_result_count(result: Any) -> int | None:
+    normalized_result = _mapping_from_json_string(result)
+    if isinstance(normalized_result, Mapping):
+        for key in LIVE_RESULT_COUNT_KEYS:
+            value = normalized_result.get(key)
+            if isinstance(value, int) and value >= 0:
+                return value
+        for key in LIVE_RESULT_LIST_KEYS:
+            value = normalized_result.get(key)
+            if isinstance(value, Sequence) and not isinstance(
+                value, (str, bytes, bytearray)
+            ):
+                return len(value)
+        return None
+    if isinstance(normalized_result, Sequence) and not isinstance(
+        normalized_result, (str, bytes, bytearray)
+    ):
+        return len(normalized_result)
     return None
 
 
@@ -664,6 +1139,21 @@ def _tool_message_status(message: Any) -> str:
     return "completed"
 
 
+def _tool_message_live_result_status(message: Any) -> str | None:
+    status = _message_value(message, "status")
+    if isinstance(status, str):
+        normalized = status.strip().lower()
+        if normalized in {"error", "failed", "failure", "denied", "timeout"}:
+            return "failed"
+        if normalized in {"cancelled", "canceled"}:
+            return "cancelled"
+        if normalized in {"skipped"}:
+            return "skipped"
+        if normalized in {"success", "ok", "completed", "complete"}:
+            return "success"
+    return None
+
+
 def _is_assistant_message(message: Any) -> bool:
     role = _message_role(message)
     class_name = type(message).__name__.lower()
@@ -712,6 +1202,18 @@ def _safe_virtual_path(value: Any) -> str | None:
         return None
     sanitized, _ = _sanitize_activity_text(raw, max_chars=120)
     return sanitized or None
+
+
+def _looks_like_unsafe_path(value: str) -> bool:
+    raw = value.strip().replace("\\", "/")
+    if INTERNAL_PATH_PATTERN.search(raw):
+        return True
+    if re.match(r"^[A-Za-z]:/", raw) or raw.startswith("//"):
+        return True
+    if raw.startswith("/"):
+        first = raw.lstrip("/").split("/", 1)[0]
+        return first not in SAFE_VIRTUAL_ROOTS
+    return False
 
 
 def _sanitize_subgraph_path(values: Iterable[Any]) -> tuple[list[str], bool]:

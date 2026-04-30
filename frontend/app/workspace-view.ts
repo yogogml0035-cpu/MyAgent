@@ -1,4 +1,12 @@
-import type { Artifact, ChatMessage, ExecutionLog, TaskRunRecord, TaskStatus, TaskSummary } from "./task-state";
+import {
+  isTaskActive,
+  type Artifact,
+  type ChatMessage,
+  type ExecutionLog,
+  type TaskRunRecord,
+  type TaskStatus,
+  type TaskSummary,
+} from "./task-state";
 
 export type TimeVariant = "default" | "short";
 
@@ -30,11 +38,34 @@ export type VisibleLogPartition = {
   hiddenReasoningCount: number;
 };
 
+export type LiveToolLogItem = {
+  id: string;
+  kind: "tool";
+  createdAt?: string;
+  level?: ExecutionLog["level"];
+  title: string;
+  resultText: string;
+  resultStatus?: NonNullable<ExecutionLog["live"]>["resultStatus"];
+};
+
+export type LiveStatusLogItem = {
+  id: string;
+  kind: "status";
+  createdAt?: string;
+  level?: ExecutionLog["level"];
+  text: string;
+  active?: boolean;
+};
+
+export type LiveLogItem = LiveToolLogItem | LiveStatusLogItem;
+
 export type ConversationStreamItem =
   | {
       id: string;
       kind: "message";
       message: ChatMessage;
+      assistantArtifacts?: Artifact[];
+      groupTitle?: string;
     }
   | {
       id: string;
@@ -131,90 +162,274 @@ export function formatTime(value?: string, variant: TimeVariant = "default") {
 }
 
 export function buildLogClipboardText(logs: ExecutionLog[]) {
-  return (
-    logs
-      .map((log) => {
-        const time = formatTime(log.createdAt);
-        if (log.agentActivity) {
-          const activity = log.agentActivity;
-          const details = [
-            typeof activity.iterationIndex === "number" ? `轮次：${activity.iterationIndex}` : "",
-            activity.agentId ? `代理：${activity.agentId}` : "",
-            activity.parentAgentId ? `父代理：${activity.parentAgentId}` : "",
-            activity.taskLabel ? `任务：${activity.taskLabel}` : "",
-            activity.toolName ? `工具：${activity.toolName}` : "",
-            activity.parameterSummary ? `参数：${activity.parameterSummary}` : "",
-            activity.resultSummary ? `结果：${activity.resultSummary}` : "",
-            activity.subgraphPath.length > 0 ? `路径：${activity.subgraphPath.join(" / ")}` : "",
-            activity.relatedEventId ? `关联：${activity.relatedEventId}` : "",
-            activity.truncated ? "已截断" : "",
-          ].filter(Boolean);
-          const detailText = details.length > 0 ? ` ${details.join(" · ")}` : "";
-          return `${time} 执行进展 ${formatAgentActivityPhaseLabel(activity.phase)} ${formatAgentActivityStatusLabel(activity.status)}：${activity.title} ${activity.summary}${detailText}`;
-        }
-        if (log.reasoning) {
-          const refs =
-            log.reasoning.evidenceRefs.length > 0
-              ? ` 关联：${log.reasoning.evidenceRefs.join("、")}`
-              : "";
-          return `${time} 思考摘要 ${formatReasoningPhaseLabel(log.reasoning.phase)} ${log.reasoning.agentId}：${log.reasoning.summary}${refs}`;
-        }
-        if (log.fileAudit) {
-          const audit = log.fileAudit;
-          const details = [
-            audit.toolName ? `工具：${audit.toolName}` : "",
-            audit.source ? `来源：${audit.source}` : "",
-            typeof audit.bytes === "number" ? `字节：${audit.bytes}` : "",
-            audit.sha256 ? `SHA256：${audit.sha256}` : "",
-            audit.reason ? `原因：${audit.reason}` : "",
-            audit.promotedArtifactId ? `产物：${audit.promotedArtifactId}` : "",
-            audit.partial ? "部分写入" : "",
-          ].filter(Boolean);
-          const detailText = details.length > 0 ? ` ${details.join(" · ")}` : "";
-          return `${time} 文件审计 ${formatFileAuditOperationLabel(audit.operation)} ${formatFileAuditStatusLabel(audit.status)}：${audit.virtualPath}${detailText}`;
-        }
-        if (log.searchTrace) {
-          const search = log.searchTrace;
-          const details = [
-            search.toolName ? `工具：${search.toolName}` : "",
-            search.parameterSummary ? `参数：${search.parameterSummary}` : "",
-            search.resultSummary ? `结果：${search.resultSummary}` : "",
-            typeof search.sourceCount === "number" ? `来源数：${search.sourceCount}` : "",
-            typeof search.usedModel === "boolean" ? `模型：${search.usedModel ? "已使用" : "未使用"}` : "",
-            search.warningCode ? `提醒：${search.warningCode}` : "",
-          ].filter(Boolean);
-          const sourceText =
-            search.sources.length > 0
-              ? ` 来源：${search.sources.map((source) => source.title).join("、")}`
-              : "";
-          const detailText = details.length > 0 ? ` ${details.join(" · ")}` : "";
-          return `${time} 搜索日志 ${formatSearchTraceKindLabel(search.kind)}：${log.title}${detailText}${sourceText}`;
-        }
-        if (log.orchestration) {
-          const orchestration = log.orchestration;
-          const details = [
-            orchestration.chosenProfileLabel
-              ? `Profile：${orchestration.chosenProfileLabel}`
-              : "",
-            orchestration.chosenProfileId ? `ID：${orchestration.chosenProfileId}` : "",
-            orchestration.reasonCode ? `原因：${orchestration.reasonCode}` : "",
-            orchestration.messageClass ? `消息类型：${orchestration.messageClass}` : "",
-            typeof orchestration.bidderCount === "number"
-              ? `投标人数：${orchestration.bidderCount}`
-              : "",
-            orchestration.plannedSubagents.length > 0
-              ? `子 Agent：${orchestration.plannedSubagents.join("、")}`
-              : "",
-          ].filter(Boolean);
-          const detailText = details.length > 0 ? ` ${details.join(" · ")}` : "";
-          const summary = orchestration.decisionSummary ? ` ${orchestration.decisionSummary}` : "";
-          return `${time} 编排策略 ${orchestration.strategy}：${log.title}${detailText}${summary}`;
-        }
-        const detail = log.detail ? ` ${log.detail}` : "";
-        return `${time} ${formatLogLevelLabel(log.level)} ${log.title}${detail}`;
-      })
-      .join("\n") || "暂无日志"
-  );
+  const liveItems = buildLiveLogItems(logs);
+  return liveItems.map(formatLiveLogItemClipboardText).join("\n") || "暂无日志";
+}
+
+export function buildLiveLogItems(
+  logs: ExecutionLog[],
+  status: TaskStatus = "unknown",
+): LiveLogItem[] {
+  const items: LiveLogItem[] = [];
+  const toolItemsById = new Map<string, LiveToolLogItem>();
+  const pendingToolItemsByName = new Map<string, LiveToolLogItem[]>();
+  let activeText = "";
+  let activeCreatedAt: string | undefined;
+
+  logs.forEach((log, index) => {
+    const live = log.live;
+    if (!live) {
+      const text = formatLegacyLiveSummary(log);
+      if (text) {
+        items.push({
+          id: `legacy:${log.id}`,
+          kind: "status",
+          createdAt: log.createdAt,
+          level: log.level,
+          text,
+        });
+      }
+      return;
+    }
+
+    if (live.kind === "tool_call") {
+      const toolItem: LiveToolLogItem = {
+        id: `tool:${live.toolCallId ?? log.id}`,
+        kind: "tool",
+        createdAt: log.createdAt,
+        level: log.level,
+        title: formatLiveToolCallTitle(live),
+        resultText: formatLiveToolPendingText(live.toolName),
+      };
+      items.push(toolItem);
+      rememberPendingToolItem(toolItemsById, pendingToolItemsByName, toolItem, live);
+      return;
+    }
+
+    if (live.kind === "tool_result") {
+      const toolItem = takePendingToolItem(toolItemsById, pendingToolItemsByName, live);
+      if (toolItem) {
+        toolItem.level = log.level;
+        toolItem.resultStatus = live.resultStatus;
+        toolItem.resultText = formatLiveToolResultText(live);
+        return;
+      }
+      items.push({
+        id: `tool-result:${live.toolCallId ?? log.id ?? index}`,
+        kind: "tool",
+        createdAt: log.createdAt,
+        level: log.level,
+        title: formatLiveToolCallTitle(live),
+        resultStatus: live.resultStatus,
+        resultText: formatLiveToolResultText(live),
+      });
+      return;
+    }
+
+    const text = formatLiveStatusText(live);
+    if (!text) {
+      return;
+    }
+    if (isTerminalLiveStage(live.stage) || !isTaskActive(status)) {
+      items.push({
+        id: `status:${log.id}`,
+        kind: "status",
+        createdAt: log.createdAt,
+        level: log.level,
+        text,
+      });
+      return;
+    }
+    activeText = text;
+    activeCreatedAt = log.createdAt;
+  });
+
+  if (isTaskActive(status)) {
+    items.push({
+      id: "status:active",
+      kind: "status",
+      createdAt: activeCreatedAt,
+      level: "info",
+      text: activeText || "正在分析任务意图...",
+      active: true,
+    });
+  }
+
+  return items;
+}
+
+export function formatLiveLogItemClipboardText(item: LiveLogItem) {
+  const time = formatTime(item.createdAt);
+  if (item.kind === "tool") {
+    return `${time} ${item.title} -> ${item.resultText}`;
+  }
+  return `${time} ${item.text}`;
+}
+
+function rememberPendingToolItem(
+  toolItemsById: Map<string, LiveToolLogItem>,
+  pendingToolItemsByName: Map<string, LiveToolLogItem[]>,
+  toolItem: LiveToolLogItem,
+  live: NonNullable<ExecutionLog["live"]>,
+) {
+  if (live.toolCallId) {
+    toolItemsById.set(live.toolCallId, toolItem);
+  }
+  const toolName = liveToolQueueKey(live.toolName);
+  const queue = pendingToolItemsByName.get(toolName) ?? [];
+  queue.push(toolItem);
+  pendingToolItemsByName.set(toolName, queue);
+}
+
+function takePendingToolItem(
+  toolItemsById: Map<string, LiveToolLogItem>,
+  pendingToolItemsByName: Map<string, LiveToolLogItem[]>,
+  live: NonNullable<ExecutionLog["live"]>,
+) {
+  if (live.toolCallId) {
+    const matchedById = toolItemsById.get(live.toolCallId);
+    if (matchedById) {
+      toolItemsById.delete(live.toolCallId);
+      removePendingToolItemByReference(pendingToolItemsByName, matchedById);
+      return matchedById;
+    }
+  }
+  const toolName = liveToolQueueKey(live.toolName);
+  const queue = pendingToolItemsByName.get(toolName);
+  const matched = queue?.shift();
+  if (queue && queue.length === 0) {
+    pendingToolItemsByName.delete(toolName);
+  }
+  return matched;
+}
+
+function removePendingToolItemByReference(
+  pendingToolItemsByName: Map<string, LiveToolLogItem[]>,
+  toolItem: LiveToolLogItem,
+) {
+  for (const [toolName, queue] of pendingToolItemsByName) {
+    const index = queue.indexOf(toolItem);
+    if (index < 0) {
+      continue;
+    }
+    queue.splice(index, 1);
+    if (queue.length === 0) {
+      pendingToolItemsByName.delete(toolName);
+    }
+    return;
+  }
+}
+
+function liveToolQueueKey(toolName?: string) {
+  return toolName || "tool";
+}
+
+function formatLiveToolCallTitle(live: NonNullable<ExecutionLog["live"]>) {
+  const agentName = live.agentName || "main_agent";
+  const toolName = live.toolName || "tool";
+  return `${agentName} 调用 ${toolName}(${formatLiveToolParameters(live.parameterItems)})`;
+}
+
+function formatLiveToolParameters(
+  parameterItems: NonNullable<ExecutionLog["live"]>["parameterItems"] = [],
+) {
+  return parameterItems
+    .map((item) => `"${item.key}":${formatLiveParameterValue(item.value)}`)
+    .join(",");
+}
+
+function formatLiveParameterValue(value: string | number | boolean) {
+  if (typeof value === "string") {
+    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+  }
+  return String(value);
+}
+
+function formatLiveToolPendingText(toolName?: string) {
+  return `${toolName || "工具"} 正在执行`;
+}
+
+function formatLiveToolResultText(live: NonNullable<ExecutionLog["live"]>) {
+  const toolLabel = live.toolName ? `${live.toolName} 工具` : "工具";
+  switch (live.resultStatus) {
+    case "failed":
+      return `${toolLabel}调用失败，正在调整处理方式`;
+    case "empty":
+      return `${live.toolName || "工具"} 未找到可用结果，正在尝试其他方式`;
+    case "cancelled":
+      return `${toolLabel}调用已取消`;
+    case "skipped":
+      return `${toolLabel}已跳过`;
+    case "success":
+    default:
+      if (typeof live.resultCount === "number") {
+        return `${toolLabel}返回了 ${live.resultCount} 条结果`;
+      }
+      return `${toolLabel}已返回结果`;
+  }
+}
+
+function formatLiveStatusText(live: NonNullable<ExecutionLog["live"]>) {
+  if (live.resultStatus === "cancelled") {
+    return "任务已取消";
+  }
+  if (live.kind === "answer_status") {
+    if (live.stage === "completed") {
+      return "回答已完成";
+    }
+    if (live.stage === "generating_answer") {
+      return "正在生成回答...";
+    }
+  }
+  switch (live.stage) {
+    case "analyzing_intent":
+      return "正在分析任务意图...";
+    case "selecting_tool":
+      return "正在选择合适工具...";
+    case "using_tool":
+      return "正在调用工具...";
+    case "reading_input":
+      return "正在读取输入...";
+    case "generating_answer":
+      return "正在整理回答...";
+    case "completed":
+      return live.kind === "answer_status" ? "回答已完成" : "任务处理已完成";
+    case "needs_input":
+      return "需要补充信息后继续";
+    case "failed":
+      return "处理遇到问题，正在调整处理方式";
+    default:
+      return "";
+  }
+}
+
+function isTerminalLiveStage(stage: NonNullable<ExecutionLog["live"]>["stage"]) {
+  return stage === "completed" || stage === "failed" || stage === "needs_input";
+}
+
+function formatLegacyLiveSummary(log: ExecutionLog) {
+  if (log.type === "answer_generation_started") {
+    return "正在生成回答...";
+  }
+  if (log.type === "task_cancelled") {
+    return "任务已取消";
+  }
+  if (log.type === "needs_input") {
+    return "需要补充信息后继续";
+  }
+  if (log.type === "task_failed") {
+    return "处理遇到问题，正在调整处理方式";
+  }
+  if (log.type === "reasoning_trace") {
+    return "";
+  }
+  if (log.level === "error") {
+    return "处理遇到问题，正在调整处理方式";
+  }
+  if (log.level === "warning") {
+    return "任务需要注意，正在调整处理方式";
+  }
+  return "";
 }
 
 export function formatAgentActivityKindLabel(kind: NonNullable<ExecutionLog["agentActivity"]>["activityKind"]) {
@@ -453,7 +668,7 @@ export function formatMessagePanelTitle(message: ChatMessage) {
   }
   const tone = getMessagePanelTone(message);
   if (tone === "default") {
-    return "最终答案";
+    return "AI回复";
   }
   return "AI 生成内容";
 }
@@ -650,9 +865,12 @@ export function buildConversationStreamItems(
       id: `message:${message.id}`,
       kind: "message",
       message,
+      assistantArtifacts:
+        message.role !== "user" && groupBeforeReply ? groupBeforeReply.artifacts : undefined,
+      groupTitle: groupBeforeReply?.title,
     });
 
-    if (groupBeforeReply) {
+    if (groupBeforeReply && message.role === "user") {
       pushArtifactItems(groupBeforeReply);
     }
 

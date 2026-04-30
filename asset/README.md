@@ -4,7 +4,7 @@
 
 ## Current Knowledge Packs
 
-- `asset/task_workspace_runtime_knowledge_pack.md`: the single main package for backend task runtime, DeepAgent multi-agent profile routing, frontend task workspace, frontend architecture boundaries, frontend visual-token boundaries, text-only empty-state wordmark, reference robot avatar treatment, composer/message-card alignment, clipboard feedback, model-provider security, upload limits, local-first access boundaries, artifact handling, and test layout.
+- `asset/task_workspace_runtime_knowledge_pack.md`: the single main package for backend task runtime, DeepAgent multi-agent profile routing, frontend task workspace, user-facing live log projection, `AI回复` result panels, frontend architecture boundaries, frontend visual-token boundaries, text-only empty-state wordmark, reference robot avatar treatment, composer/message-card alignment, clipboard feedback, model-provider security, upload limits, local-first access boundaries, artifact handling, and test layout.
 
 ## Registration Rules
 

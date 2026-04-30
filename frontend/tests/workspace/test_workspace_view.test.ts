@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   buildConversationHistoryItems,
   buildConversationStreamItems,
+  buildLiveLogItems,
   buildLogClipboardText,
   buildRunActivityGroups,
   buildStateNoticeMessages,
@@ -42,7 +43,7 @@ test("formatTime has stable empty and invalid fallbacks", () => {
   assert.equal(formatTime("not-a-date"), "--:--:--");
 });
 
-test("buildLogClipboardText includes level, title, and detail", () => {
+test("buildLogClipboardText hides legacy info titles without live metadata", () => {
   assert.equal(buildLogClipboardText([]), "暂无日志");
   assert.equal(
     buildLogClipboardText([
@@ -53,11 +54,11 @@ test("buildLogClipboardText includes level, title, and detail", () => {
         level: "info",
       },
     ]),
-    "--:--:-- 信息 准备编排副本 开始 (0/5)",
+    "暂无日志",
   );
 });
 
-test("buildLogClipboardText labels reasoning summaries without arbitrary payload data", () => {
+test("buildLogClipboardText hides legacy reasoning summaries without arbitrary payload data", () => {
   assert.equal(formatReasoningPhaseLabel("decide"), "决策");
   const text = buildLogClipboardText([
     {
@@ -81,14 +82,11 @@ test("buildLogClipboardText labels reasoning summaries without arbitrary payload
     },
   ]);
 
-  assert.equal(
-    text,
-    "--:--:-- 思考摘要 决策 subagent-a：纳入 2 条结构化证据。 关联：quotation_similarity、bidder-a.md\n--:--:-- 信息 畸形思考摘要。",
-  );
+  assert.equal(text, "暂无日志");
   assert.equal(text.includes("arbitrary_secret"), false);
 });
 
-test("buildLogClipboardText includes deep agent activity and file audit summaries", () => {
+test("buildLogClipboardText projects live tool cards instead of technical activity details", () => {
   const text = buildLogClipboardText([
     {
       id: "activity-1",
@@ -115,43 +113,45 @@ test("buildLogClipboardText includes deep agent activity and file audit summarie
         relatedEventId: "audit-1",
         truncated: false,
       },
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "using_tool",
+        agentName: "main_agent",
+        toolName: "list_dir",
+        toolCallId: "call-1",
+        parameterItems: [{ key: "relative_path", value: "uploads" }],
+      },
     },
     {
       id: "audit-1",
-      type: "file_tool_audit",
-      title: "已记录文件工具访问审计。",
+      type: "deep_agent_activity",
+      title: "DeepAgent activity",
       level: "info",
       createdAt: "2026-04-27T08:02:00.000Z",
-      fileAudit: {
-        toolName: "read_file",
-        operation: "read",
-        status: "success",
-        virtualPath: "uploads/source.md",
-        source: "upload_snapshot",
-        bytes: 241,
-        sha256: "abc123",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_result",
+        stage: "completed",
+        agentName: "main_agent",
+        toolName: "list_dir",
+        toolCallId: "call-1",
+        parameterItems: [],
+        resultStatus: "success",
+        resultCount: 3,
       },
     },
   ]);
 
-  assert.match(text, /执行进展 工具调用 已开始：工具调用准备 本轮准备调用 list_dir 检查上传快照。/);
-  assert.match(text, /轮次：1/);
-  assert.match(text, /代理：main-agent/);
-  assert.match(text, /父代理：root/);
-  assert.match(text, /任务：输入分类/);
-  assert.match(text, /工具：list_dir/);
-  assert.match(text, /参数：relative_path=uploads/);
-  assert.match(text, /结果：工具返回 3 个文件名。/);
-  assert.match(text, /路径：agent \/ file-record-agent/);
-  assert.match(text, /关联：audit-1/);
-  assert.match(text, /文件审计 读文件 成功：uploads\/source\.md/);
-  assert.match(text, /工具：read_file/);
-  assert.match(text, /来源：upload_snapshot/);
-  assert.match(text, /字节：241/);
-  assert.match(text, /SHA256：abc123/);
+  assert.match(
+    text,
+    /main_agent 调用 list_dir\("relative_path":"uploads"\) -> list_dir 工具返回了 3 条结果/,
+  );
+  assert.equal(text.includes("轮次"), false);
+  assert.equal(text.includes("路径：agent"), false);
 });
 
-test("buildLogClipboardText includes bounded search tool parameters and results", () => {
+test("buildLogClipboardText includes bounded live search parameters and generic results", () => {
   const text = buildLogClipboardText([
     {
       id: "search-call",
@@ -164,6 +164,18 @@ test("buildLogClipboardText includes bounded search tool parameters and results"
         toolName: "tavily_search",
         parameterSummary: "query=上海天气; max_results=5; use_uploads=false",
         sources: [],
+      },
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "using_tool",
+        agentName: "search_agent",
+        toolName: "tavily_search",
+        toolCallId: "search_tool_1",
+        parameterItems: [
+          { key: "query", value: "上海天气" },
+          { key: "max_results", value: 5 },
+        ],
       },
     },
     {
@@ -179,18 +191,165 @@ test("buildLogClipboardText includes bounded search tool parameters and results"
         sourceCount: 1,
         sources: [{ title: "上海天气", url: "https://weather.example/shanghai" }],
       },
+      live: {
+        schemaVersion: 1,
+        kind: "tool_result",
+        stage: "completed",
+        agentName: "search_agent",
+        toolName: "tavily_search",
+        toolCallId: "search_tool_1",
+        parameterItems: [],
+        resultStatus: "success",
+        resultCount: 1,
+      },
     },
   ]);
 
-  assert.match(text, /搜索日志 工具调用：已调用联网搜索工具。/);
-  assert.match(text, /工具：tavily_search/);
-  assert.match(text, /参数：query=上海天气; max_results=5; use_uploads=false/);
-  assert.match(text, /搜索日志 工具结果：联网搜索工具已返回安全摘要。/);
-  assert.match(text, /结果：结果数量：1/);
-  assert.match(text, /来源：上海天气/);
+  assert.match(
+    text,
+    /search_agent 调用 tavily_search\("query":"上海天气","max_results":5\) -> tavily_search 工具返回了 1 条结果/,
+  );
+  assert.equal(text.includes("https://weather.example"), false);
+  assert.equal(text.includes("来源：上海天气"), false);
 });
 
-test("buildLogClipboardText includes safe orchestration profile labels", () => {
+test("buildLiveLogItems pairs tool events and keeps one active status row", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "call",
+        title: "call",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_call",
+          stage: "using_tool",
+          agentName: "internet_agent",
+          toolName: "tavily_search",
+          toolCallId: "tool-1",
+          parameterItems: [{ key: "query", value: "上海天气" }],
+        },
+      },
+      {
+        id: "answer-start",
+        title: "正在生成回答。",
+        live: {
+          schemaVersion: 1,
+          kind: "answer_status",
+          stage: "generating_answer",
+          agentName: "internet_agent",
+          parameterItems: [],
+        },
+      },
+      {
+        id: "result",
+        title: "result",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_result",
+          stage: "completed",
+          agentName: "internet_agent",
+          toolName: "tavily_search",
+          toolCallId: "tool-1",
+          parameterItems: [],
+          resultStatus: "empty",
+          resultCount: 0,
+        },
+      },
+    ],
+    "running",
+  );
+
+  assert.equal(items.length, 2);
+  assert.deepEqual(items[0], {
+    id: "tool:tool-1",
+    kind: "tool",
+    createdAt: undefined,
+    level: undefined,
+    title: 'internet_agent 调用 tavily_search("query":"上海天气")',
+    resultText: "tavily_search 未找到可用结果，正在尝试其他方式",
+    resultStatus: "empty",
+  });
+  assert.deepEqual(items[1], {
+    id: "status:active",
+    kind: "status",
+    createdAt: undefined,
+    level: "info",
+    text: "正在生成回答...",
+    active: true,
+  });
+});
+
+test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
+  const items = buildLiveLogItems([
+    {
+      id: "call-a",
+      title: "call",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "using_tool",
+        agentName: "file_agent",
+        toolName: "read_file",
+        parameterItems: [{ key: "relative_path", value: "uploads/a.md" }],
+      },
+    },
+    {
+      id: "call-b",
+      title: "call",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "using_tool",
+        agentName: "file_agent",
+        toolName: "read_file",
+        parameterItems: [{ key: "relative_path", value: "uploads/b.md" }],
+      },
+    },
+    {
+      id: "result-a",
+      title: "result",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_result",
+        stage: "completed",
+        agentName: "file_agent",
+        toolName: "read_file",
+        parameterItems: [],
+        resultStatus: "success",
+        resultCount: 1,
+      },
+    },
+    {
+      id: "result-b",
+      title: "result",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_result",
+        stage: "completed",
+        agentName: "file_agent",
+        toolName: "read_file",
+        parameterItems: [],
+        resultStatus: "empty",
+        resultCount: 0,
+      },
+    },
+  ], "complete");
+
+  assert.equal(items.length, 2);
+  const firstItem = items[0];
+  const secondItem = items[1];
+  assert.equal(firstItem?.kind, "tool");
+  assert.equal(secondItem?.kind, "tool");
+  if (firstItem?.kind !== "tool" || secondItem?.kind !== "tool") {
+    throw new Error("expected two tool live items");
+  }
+  assert.equal(firstItem.title, 'file_agent 调用 read_file("relative_path":"uploads/a.md")');
+  assert.equal(firstItem.resultText, "read_file 工具返回了 1 条结果");
+  assert.equal(secondItem.title, 'file_agent 调用 read_file("relative_path":"uploads/b.md")');
+  assert.equal(secondItem.resultText, "read_file 未找到可用结果，正在尝试其他方式");
+});
+
+test("buildLogClipboardText hides orchestration details without live metadata", () => {
   const text = buildLogClipboardText([
     {
       id: "orchestration-1",
@@ -212,11 +371,7 @@ test("buildLogClipboardText includes safe orchestration profile labels", () => {
     },
   ]);
 
-  assert.match(text, /编排策略 multi_agent：已记录本轮编排策略。/);
-  assert.match(text, /Profile：招投标多 Agent 分析/);
-  assert.match(text, /ID：bid_multi_agent/);
-  assert.match(text, /子 Agent：document-classification-agent、report-writing-agent/);
-  assert.match(text, /选择多 Agent Profile。/);
+  assert.equal(text, "暂无日志");
 });
 
 test("buildLogClipboardText ignores arbitrary malformed payload fields", () => {
@@ -233,7 +388,7 @@ test("buildLogClipboardText ignores arbitrary malformed payload fields", () => {
     } as never,
   ]);
 
-  assert.equal(text, "--:--:-- 信息 畸形活动。");
+  assert.equal(text, "暂无日志");
   assert.equal(text.includes("SHOULD_NOT_COPY"), false);
   assert.equal(text.includes("raw_provider_chunk"), false);
 });
@@ -351,6 +506,19 @@ test("workspace CSS uses the reference robot sender avatar treatment", () => {
     /\.robotAvatarIcon\s*\{[\s\S]*?width: 20px;[\s\S]*?height: 20px;/,
   );
   assert.match(cssSource, /\.messageBotIcon\s*\{[\s\S]*?color: #2563eb;/);
+});
+
+test("assistant replies render Markdown with GFM but no raw HTML plugin", () => {
+  const conversationSource = readFileSync(
+    new URL("../../components/chat/TaskConversation.tsx", import.meta.url),
+    "utf-8",
+  );
+
+  assert.equal(conversationSource.includes("react-markdown"), true);
+  assert.equal(conversationSource.includes("remark-gfm"), true);
+  assert.equal(conversationSource.includes("rehype-raw"), false);
+  assert.equal(conversationSource.includes("markdownBody"), true);
+  assert.equal(conversationSource.includes("messageArtifactFooter"), true);
 });
 
 test("empty workspace hero wordmark is text-only", () => {
@@ -785,7 +953,7 @@ test("message panel helpers map assistant notices to TenderWord-like card states
   assert.equal(formatMessagePanelTitle(systemMessage), "系统消息");
   assert.equal(getMessagePanelTone(okMessage), "default");
   assert.equal(formatMessagePanelStatus(okMessage), "已完成");
-  assert.equal(formatMessagePanelTitle(okMessage), "最终答案");
+  assert.equal(formatMessagePanelTitle(okMessage), "AI回复");
 });
 
 test("formatRunLogStatus uses log-card labels for terminal states", () => {
@@ -828,7 +996,7 @@ test("buildConversationStreamItems places run activity before the assistant repl
   );
 });
 
-test("buildConversationStreamItems orders user, logs, final answer, then artifacts", () => {
+test("buildConversationStreamItems attaches run artifacts to the assistant reply", () => {
   const items = buildConversationStreamItems(
     [
       { id: "m1", role: "user", content: "分析", runId: "run-1" },
@@ -854,10 +1022,17 @@ test("buildConversationStreamItems orders user, logs, final answer, then artifac
       "message:m1",
       "run:run-1",
       "message:m2",
-      "artifact:run-1:final-summary.md",
-      "artifact:run-1:evidence.json",
     ],
   );
+  const assistantItem = items[2];
+  assert.equal(assistantItem.kind, "message");
+  assert.deepEqual(
+    assistantItem.kind === "message"
+      ? assistantItem.assistantArtifacts?.map((artifact) => artifact.name)
+      : [],
+    ["final-summary.md", "evidence.json"],
+  );
+  assert.equal(assistantItem.kind === "message" ? assistantItem.groupTitle : "", "第 1 轮");
 });
 
 test("buildConversationStreamItems keeps artifact cards after run logs without assistant reply", () => {

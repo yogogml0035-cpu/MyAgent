@@ -25,6 +25,7 @@ export type ExecutionLog = {
   level?: "info" | "success" | "warning" | "error";
   createdAt?: string;
   runId?: string | null;
+  live?: LiveEventMetadata;
   agentActivity?: AgentActivityTrace;
   fileAudit?: FileToolAuditTrace;
   reasoning?: ReasoningTrace;
@@ -104,6 +105,34 @@ export type SearchTrace = {
   sources: SearchSourceTrace[];
   usedModel?: boolean;
   warningCode?: string;
+};
+
+export type LiveEventKind = "think" | "tool_call" | "tool_result" | "answer_status" | "status";
+export type LiveEventStage =
+  | "analyzing_intent"
+  | "selecting_tool"
+  | "using_tool"
+  | "reading_input"
+  | "generating_answer"
+  | "completed"
+  | "needs_input"
+  | "failed";
+export type LiveResultStatus = "success" | "empty" | "failed" | "cancelled" | "skipped";
+export type LiveParameterItem = {
+  key: string;
+  value: string | number | boolean;
+  truncated?: boolean;
+};
+export type LiveEventMetadata = {
+  schemaVersion: 1;
+  kind: LiveEventKind;
+  stage?: LiveEventStage;
+  agentName?: string;
+  toolName?: string;
+  toolCallId?: string;
+  parameterItems: LiveParameterItem[];
+  resultStatus?: LiveResultStatus;
+  resultCount?: number;
 };
 
 export type OrchestrationTrace = {
@@ -193,6 +222,7 @@ const KNOWN_STATUSES = new Set([
   "failed",
   "needs_input",
   "interrupted",
+  "unknown",
 ]);
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -317,6 +347,82 @@ function readOptionalBoundedInteger(value: unknown, min: number, max: number) {
     return undefined;
   }
   return number;
+}
+
+function readLiveKind(value: unknown): LiveEventKind | undefined {
+  const kind = readString(value);
+  return kind === "think" ||
+    kind === "tool_call" ||
+    kind === "tool_result" ||
+    kind === "answer_status" ||
+    kind === "status"
+    ? kind
+    : undefined;
+}
+
+function readLiveStage(value: unknown): LiveEventStage | undefined {
+  const stage = readString(value);
+  return stage === "analyzing_intent" ||
+    stage === "selecting_tool" ||
+    stage === "using_tool" ||
+    stage === "reading_input" ||
+    stage === "generating_answer" ||
+    stage === "completed" ||
+    stage === "needs_input" ||
+    stage === "failed"
+    ? stage
+    : undefined;
+}
+
+function readLiveResultStatus(value: unknown): LiveResultStatus | undefined {
+  const status = readString(value);
+  return status === "success" ||
+    status === "empty" ||
+    status === "failed" ||
+    status === "cancelled" ||
+    status === "skipped"
+    ? status
+    : undefined;
+}
+
+function normalizeLiveParameterValue(value: unknown): string | number | boolean | undefined {
+  if (typeof value === "string") {
+    return readBoundedString(value, 160);
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value;
+  }
+  if (typeof value === "boolean") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeLiveParameterItems(value: unknown): LiveParameterItem[] | undefined {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    return undefined;
+  }
+
+  const items: LiveParameterItem[] = [];
+  for (const entry of value.slice(0, 5)) {
+    if (!isRecord(entry)) {
+      return undefined;
+    }
+    const key = readBoundedString(entry.key, 60);
+    const parameterValue = normalizeLiveParameterValue(entry.value);
+    if (!key || parameterValue === undefined) {
+      return undefined;
+    }
+    items.push({
+      key,
+      value: parameterValue,
+      truncated: readOptionalBoolean(entry.truncated),
+    });
+  }
+  return items;
 }
 
 function readOptionalBoolean(value: unknown) {
@@ -672,6 +778,38 @@ function normalizeSearchTrace(type: string | undefined, payload: Record<string, 
   };
 }
 
+function normalizeLiveMetadata(payload: Record<string, unknown>) {
+  const live = payload.live;
+  if (live === undefined) {
+    return undefined;
+  }
+  if (!isRecord(live)) {
+    return undefined;
+  }
+
+  const schemaVersion = live.schema_version ?? live.schemaVersion;
+  const kind = readLiveKind(live.kind);
+  const parameterItems = normalizeLiveParameterItems(
+    live.parameter_items ?? live.parameterItems,
+  );
+
+  if (schemaVersion !== 1 || !kind || !parameterItems) {
+    return undefined;
+  }
+
+  return {
+    schemaVersion: 1 as const,
+    kind,
+    stage: readLiveStage(live.stage),
+    agentName: readBoundedString(live.agent_name ?? live.agentName, 120),
+    toolName: readBoundedString(live.tool_name ?? live.toolName, 80),
+    toolCallId: readBoundedString(live.tool_call_id ?? live.toolCallId, 160),
+    parameterItems,
+    resultStatus: readLiveResultStatus(live.result_status ?? live.resultStatus),
+    resultCount: readOptionalBoundedInteger(live.result_count ?? live.resultCount, 0, 9999),
+  };
+}
+
 function normalizeOrchestrationTrace(type: string | undefined, payload: Record<string, unknown>) {
   if (type !== "orchestration_decision") {
     return undefined;
@@ -739,6 +877,7 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
     level,
     createdAt: readOptionalString(record.created_at ?? record.createdAt),
     runId: maybeRunId(record),
+    live: normalizeLiveMetadata(payload),
     agentActivity: normalizeAgentActivity(type, payload),
     fileAudit: normalizeFileToolAudit(type, payload),
     reasoning: normalizeReasoningTrace(type, payload),
