@@ -26,6 +26,35 @@ test("task workspace follows components, hook, and api-client boundaries", () =>
   });
 });
 
+test("frontend dev server uses an isolated Next dist directory", () => {
+  const nextConfigSource = readFileSync(
+    new URL("../../next.config.mjs", import.meta.url),
+    "utf-8",
+  );
+  const packageSource = readFileSync(
+    new URL("../../package.json", import.meta.url),
+    "utf-8",
+  );
+  const devRunnerSource = readFileSync(
+    new URL("../../../scripts/dev-terminal-runner.sh", import.meta.url),
+    "utf-8",
+  );
+  const eslintConfigSource = readFileSync(
+    new URL("../../eslint.config.mjs", import.meta.url),
+    "utf-8",
+  );
+  const tsconfigSource = readFileSync(
+    new URL("../../tsconfig.json", import.meta.url),
+    "utf-8",
+  );
+
+  assert.match(nextConfigSource, /distDir: process\.env\.NEXT_DIST_DIR \|\| "\.next"/);
+  assert.match(packageSource, /"dev": "NEXT_DIST_DIR=\.next-dev next dev -p 3001"/);
+  assert.match(devRunnerSource, /export NEXT_DIST_DIR="\$\{NEXT_DIST_DIR:-\.next-dev\}"/);
+  assert.match(eslintConfigSource, /"\.next-dev\/\*\*"/);
+  assert.match(tsconfigSource, /"\.next-dev\/types\/\*\*\/\*\.ts"/);
+});
+
 test("robot avatar uses the same lucide Bot geometry as the reference frontend", () => {
   const avatarSource = readFileSync(
     new URL("../../components/chat/RobotAvatar.tsx", import.meta.url),

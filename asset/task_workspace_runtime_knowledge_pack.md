@@ -73,8 +73,8 @@ Use it when changing task APIs, task state transitions, runner behavior, event l
 - The native file picker intentionally has no restrictive `accept` filter; the visible upload workflow queues only `.md` and `.json` filenames.
 - Execution logs render as run-grouped cards inside the conversation stream. For a run with an assistant reply, activity appears after the user prompt and before the assistant reply.
 - Successful AI-side conversation order is user message -> execution-log card -> final-answer card -> run-scoped artifact cards when logs and a final answer exist. The execution-log card projects search events, `deep_agent_activity`, `reasoning_trace`, `file_tool_audit`, and warning/error events through safe live summaries for that run; it is not a persisted chat message and must not be fed back as assistant conversation history.
-- User message cards expose a copy action after the timestamp whose clipboard text is exactly `message.content`, without timestamps, labels, metadata, or logs. Assistant copy support remains on the final-answer card only. Execution-log copy/export uses the full safe run log set, including rows hidden by compact default rendering.
-- User-message, final-answer, and execution-log copy controls show a short checkmark feedback state only after a successful clipboard write. Copy failures stay as assistant-style workspace notices and must not fake a success state.
+- User message cards expose a copy action after the timestamp whose clipboard text is exactly `message.content`, without timestamps, labels, metadata, or logs. The user-message copy control is visually hidden until hover, keyboard focus, or its copied feedback state so the default user footer remains quiet. Assistant copy support remains on the final-answer card only. Execution-log copy/export uses the full safe run log set, including rows hidden by compact default rendering.
+- User-message, final-answer, and execution-log copy controls show a short checkmark feedback state only after a successful clipboard write. The checkmark should stay within the warm cream/coral/dark visual-token system instead of using a separate green success block. Copy failures stay as assistant-style workspace notices and must not fake a success state.
 - Frontend final-answer wording should distinguish assistant final content from execution logs with an `AI回复` card title. It must not create extra assistant messages or move tool/log summaries into the final-answer card.
 - Assistant final content renders as Markdown using `react-markdown` with `remark-gfm` and no raw-HTML plugin. Paragraphs, lists, tables, code blocks, links, and blockquotes should use the warm editorial visual system while preserving raw answer text for copy.
 - Frontend handling of new optional activity or orchestration fields must be explicit. Unknown optional fields are ignored by default and must not appear in the DOM or copied logs; displayed/copied fields must be individually normalized with enum and length bounds.
@@ -161,7 +161,7 @@ Copy a user message:
 
 ```text
 Input: frontend user message content is "继续根据刚才这些文件分析".
-Output: the footer shows time before the copy control; clicking copy writes exactly "继续根据刚才这些文件分析" to the clipboard and briefly changes the icon to a checkmark, without labels, timestamps, run logs, or hidden metadata.
+Output: the footer shows time before a hover/focus-revealed copy control; clicking copy writes exactly "继续根据刚才这些文件分析" to the clipboard and briefly changes the copy icon into a warm checkmark state, without labels, timestamps, run logs, or hidden metadata.
 ```
 
 Open a run report:
@@ -224,7 +224,7 @@ Output: backend MYAGENT_CORS_ORIGINS includes http://<LAN_IP>:3001, backend acce
 - Frontend component refactors must keep API/token handling in `frontend/lib/task-api.ts` and task orchestration in `frontend/hooks/use-task-workspace.ts`; presentational chat components should receive normalized data and callbacks instead of creating parallel fetch or polling flows.
 - Copy feedback must be per button/keyed target and time out automatically; copying one message or log card must not permanently mark unrelated copy controls as successful.
 - Visual-only restyling must preserve existing task creation, upload, message submission, model selection, polling, artifact opening/downloading, log copying, and notice rendering behavior.
-- Run only one Next.js dev server against a single `frontend/.next` directory at a time.
+- Frontend development uses `NEXT_DIST_DIR=.next-dev`; production builds use `.next`. Do not let `next dev` and `next build` write the same dist directory, and run only one Next.js dev server against a single dev dist directory at a time.
 
 ## Known Pitfalls
 
@@ -295,6 +295,10 @@ Output: backend MYAGENT_CORS_ORIGINS includes http://<LAN_IP>:3001, backend acce
 - `frontend/app/globals.css`
 - `frontend/app/layout.tsx`
 - `frontend/next.config.mjs`
+- `frontend/package.json`
+- `frontend/tsconfig.json`
+- `frontend/eslint.config.mjs`
+- `scripts/dev-terminal-runner.sh`
 - `backend/.env.example`
 - `frontend/.env.example`
 
@@ -317,7 +321,7 @@ DeepAgent two-card/activity coverage should live in the existing paths above:
 - `backend/tests/runtime/test_intent_router.py`: search/weather after uploads route without selected uploads; multi-document bid markers with uploads route to the DeepAgent/document-analysis path.
 - `backend/tests/runtime/test_reasoning_trace.py`: shared redaction/truncation canaries when activity sanitization reuses reasoning sanitizers, including prompt/upload/private-path/provider-key leakage guards for `reasoning_trace` payloads and provider `reasoning_content` non-disclosure.
 - `frontend/tests/state/test_task_state.test.ts`: valid activity normalization to `ExecutionLog.agentActivity`, terminal `task-run` reasoning normalization, optional orchestration/profile/activity field normalization, invalid enum/missing-field rejection, malformed payload non-disclosure, unknown optional field ignore behavior, long/truncated field safety, exact user-message copy wiring, copy feedback state, and user footer time-before-copy order.
-- `frontend/tests/workspace/test_workspace_view.test.ts`: user -> execution-log card -> `AI回复` card order, assistant artifact footer dedupe, live-log projection and clipboard text, legacy same-tool FIFO pairing without ids, non-live technical-title suppression, Markdown renderer usage, composer-to-message-card alignment CSS, text-only empty-state wordmark CSS, and reference robot-avatar CSS.
+- `frontend/tests/workspace/test_workspace_view.test.ts`: user -> execution-log card -> `AI回复` card order, assistant artifact footer dedupe, live-log projection and clipboard text, legacy same-tool FIFO pairing without ids, non-live technical-title suppression, Markdown renderer usage, composer-to-message-card alignment CSS, live-log width/copy checkmark CSS, user-copy hover/focus reveal CSS, text-only empty-state wordmark CSS, and reference robot-avatar CSS.
 - `frontend/tests/workspace/test_frontend_architecture.test.ts`: route-shell delegation, chat component/hook/API-client file boundaries, and lucide Bot avatar geometry.
 
 ## Verification Commands

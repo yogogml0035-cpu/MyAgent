@@ -85,9 +85,10 @@
 ## 本地开发参考与建议
 
 - 默认后端开发端口为 `8001`，默认前端开发端口为 `3001`；前端 `auto` API base 默认按页面 hostname 访问后端 `8001`。
-- WSL 本地开发脚本在 `scripts/`：`start-dev-wsl.sh` 负责开前后端终端，`stop-dev-ports.sh` 负责释放默认或指定端口。
-- 修改本地脚本时至少运行 `bash -n scripts/start-dev-wsl.sh`、`bash -n scripts/stop-dev-ports.sh`、对应 `--help`/`--dry-run` 和 `git diff --check`。
-- 同一个 `frontend/.next` 目录只运行一个 `next dev`；并行开发服务可能污染生成产物。
+- WSL 本地开发启动入口在 `scripts/start-dev-wsl.ps1`，由 Windows PowerShell 拉起 WSL 前后端终端；`scripts/dev-terminal-runner.sh` 是新开 WSL 标签页内的服务 runner，`scripts/stop-dev-ports.sh` 负责释放默认或指定端口。
+- 修改本地脚本时至少运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -Help`、`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -DryRun`、`bash -n scripts/dev-terminal-runner.sh`、`bash -n scripts/stop-dev-ports.sh`、`./scripts/stop-dev-ports.sh --dry-run` 和 `git diff --check`。
+- 前端开发服务必须使用隔离的 `NEXT_DIST_DIR=.next-dev`，生产构建保留 `.next`；不要让 `next dev` 和 `next build` 写同一个目录。
+- 同一个前端开发产物目录只运行一个 `next dev`；并行开发服务可能污染生成产物。
 - 启动脚本不得嵌入 provider 密钥、访问令牌、客户文档路径或本机私密绝对路径。非 loopback 访问仍必须遵守访问令牌与 CORS 边界。
 
 ## 运行与验证命令

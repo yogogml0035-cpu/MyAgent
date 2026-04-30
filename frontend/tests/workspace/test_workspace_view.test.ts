@@ -494,6 +494,39 @@ test("workspace CSS aligns composer panel with the assistant message card column
   assert.match(cssSource, /\.isEmpty \.composerPanel\s*\{[\s\S]*?margin-left: 0;/);
 });
 
+test("workspace CSS keeps live tool rows dense and copy feedback as a coral checkmark", () => {
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.match(
+    cssSource,
+    /\.liveToolCard strong\s*\{[\s\S]*?width: 100%;[\s\S]*?justify-self: stretch;[\s\S]*?word-break: break-all;/,
+  );
+  assert.match(
+    cssSource,
+    /\.copyButton-copied,\s*\n\.copyButton-copied:hover:not\(:disabled\)\s*\{[\s\S]*?border-color: rgba\(204, 120, 92, 0\.52\);[\s\S]*?color: var\(--primary-active\);/,
+  );
+  assert.match(
+    cssSource,
+    /\.copyButton-copied span::after\s*\{[\s\S]*?width: 4px;[\s\S]*?height: 9px;[\s\S]*?border-right: 1\.55px solid currentColor;[\s\S]*?border-bottom: 1\.55px solid currentColor;[\s\S]*?transform: rotate\(40deg\);/,
+  );
+  assert.match(cssSource, /\.copyButton-copied span::before\s*\{[\s\S]*?display: none;/);
+  assert.equal(cssSource.includes("color: #8bd899;"), false);
+  assert.equal(cssSource.includes("box-shadow: 3px -3px 0"), false);
+});
+
+test("workspace CSS hides user copy controls until hover or focus", () => {
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.match(
+    cssSource,
+    /\.copyButton\.userCopyButton\s*\{[\s\S]*?width: 0;[\s\S]*?opacity: 0;[\s\S]*?pointer-events: none;[\s\S]*?visibility: hidden;/,
+  );
+  assert.match(
+    cssSource,
+    /\.userMessageFrame:hover \.copyButton\.userCopyButton,\s*\n\.userMessageFrame:focus-within \.copyButton\.userCopyButton,\s*\n\.copyButton\.userCopyButton\.copyButton-copied\s*\{[\s\S]*?width: 24px;[\s\S]*?opacity: 1;[\s\S]*?pointer-events: auto;[\s\S]*?visibility: visible;/,
+  );
+});
+
 test("workspace CSS uses the reference robot sender avatar treatment", () => {
   const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
 

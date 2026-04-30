@@ -39,13 +39,13 @@ asset/                   面向后续智能体协作的长期知识包索引
 cd /mnt/d/AgentProject/MyAgent
 ```
 
-前端依赖、`.next` 缓存和开发服务应在同一个环境内生成和运行。不要在 Windows 的 `D:\AgentProject\MyAgent\frontend` 下安装依赖后，再从 WSL 的 `/mnt/d/AgentProject/MyAgent/frontend` 启动 `npm run dev`；反向混用也一样会让 Next.js 的 React Client Manifest 同时出现 Windows 路径和 WSL 路径。
+前端依赖、Next 缓存和开发服务应在同一个环境内生成和运行。开发服务使用 `.next-dev`，生产构建使用 `.next`，两者不要互相复用。不要在 Windows 的 `D:\AgentProject\MyAgent\frontend` 下安装依赖后，再从 WSL 的 `/mnt/d/AgentProject/MyAgent/frontend` 启动 `npm run dev`；反向混用也一样会让 Next.js 的 React Client Manifest 同时出现 Windows 路径和 WSL 路径。
 
 如果已经混用过 Windows 和 WSL，请在 WSL 中清理前端产物并重新安装依赖：
 
 ```bash
 cd /mnt/d/AgentProject/MyAgent/frontend
-rm -rf .next node_modules
+rm -rf .next .next-dev node_modules
 npm ci
 ```
 
@@ -109,19 +109,21 @@ NEXT_PUBLIC_MYAGENT_TOKEN=
 
 ## 本地开发启动
 
-WSL 中可直接用仓库脚本清理端口，并打开两个新的 WSL 终端分别启动前后端：
+从 Windows PowerShell 启动 WSL 开发环境，并打开两个新的 Windows Terminal 标签页分别运行前后端：
 
-```bash
-cd /mnt/d/AgentProject/MyAgent
-./scripts/start-dev-wsl.sh
+```powershell
+cd D:\AgentProject\MyAgent
+.\scripts\start-dev-wsl.ps1
 ```
 
 脚本会先停止 WSL 内监听后端端口 `8001` 和前端端口 `3001` 的进程，然后通过 Windows Terminal 分别打开两个 WSL 窗口：
 
 - 后端：`uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001`
-- 前端：`next dev -p 3001 -H 0.0.0.0`
+- 前端：`NEXT_DIST_DIR=.next-dev next dev -p 3001 -H 0.0.0.0`
 
-启动后可以在各自终端中用 `Ctrl+C` 停止单个服务，也可以回到仓库运行 `./scripts/stop-dev-ports.sh` 统一释放端口。该脚本依赖 WSL 可调用的 `wt.exe` 和 `wsl.exe`。
+启动后可以在各自终端中用 `Ctrl+C` 停止单个服务，也可以回到 WSL 仓库路径运行 `./scripts/stop-dev-ports.sh` 统一释放端口。启动脚本依赖 Windows 侧可调用的 `wt.exe` 和 `wsl.exe`。前端开发服务写入 `.next-dev`，因此运行 `npm run build` 验证生产构建时写入 `.next`，不会再覆盖正在热更新的开发缓存。
+
+如果 Windows 系统代理指向 `localhost` 或 `127.0.0.1`，WSL NAT 模式可能在新开 WSL 终端时报 `Wsl/Service/E_UNEXPECTED`。PowerShell 启动脚本会检测该情况，并在需要时写入 `%USERPROFILE%\.wslconfig` 的 `[wsl2] autoProxy=false` 后重启 WSL；已有自定义代理方案时可加 `-NoProxyRepair` 禁用自动修复。
 
 如果只需要释放端口：
 
@@ -130,10 +132,15 @@ cd /mnt/d/AgentProject/MyAgent
 ./scripts/stop-dev-ports.sh
 ```
 
-可用环境变量或参数覆盖端口：
+可用参数覆盖端口：
+
+```powershell
+.\scripts\start-dev-wsl.ps1 -BackendPort 8002 -FrontendPort 3002
+```
+
+停止对应端口：
 
 ```bash
-BACKEND_PORT=8002 FRONTEND_PORT=3002 ./scripts/start-dev-wsl.sh
 ./scripts/stop-dev-ports.sh --backend-port 8002 --frontend-port 3002
 ```
 

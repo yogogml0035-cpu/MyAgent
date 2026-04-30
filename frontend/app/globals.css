@@ -432,18 +432,45 @@ p {
   gap: 6px;
 }
 
-.userCopyButton {
-  width: 24px;
+.copyButton.userCopyButton {
+  width: 0;
   height: 24px;
+  overflow: hidden;
+  border-color: transparent;
   background: var(--surface-card);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(4px) scale(0.96);
+  visibility: hidden;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    color 0.16s ease,
+    opacity 0.16s ease,
+    transform 0.16s ease,
+    visibility 0s linear 0.16s,
+    width 0.16s ease;
 }
 
-.userCopyButton span {
+.userMessageFrame:hover .copyButton.userCopyButton,
+.userMessageFrame:focus-within .copyButton.userCopyButton,
+.copyButton.userCopyButton.copyButton-copied {
+  width: 24px;
+  border-color: var(--hairline);
+  opacity: 1;
+  pointer-events: auto;
+  transform: none;
+  visibility: visible;
+  transition-delay: 0s;
+}
+
+.copyButton.userCopyButton span {
   width: 10px;
   height: 12px;
 }
 
-.userCopyButton span::before {
+.copyButton.userCopyButton span::before {
   right: 2px;
   top: -4px;
   width: 8px;
@@ -977,11 +1004,13 @@ p {
 }
 
 .copyButton {
+  position: relative;
   display: grid;
   place-items: center;
   width: 28px;
   height: 28px;
   flex: 0 0 auto;
+  overflow: hidden;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-sm);
   background: var(--surface);
@@ -989,7 +1018,9 @@ p {
   transition:
     background 0.16s ease,
     border-color 0.16s ease,
-    color 0.16s ease;
+    box-shadow 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
 }
 
 .traceCard .copyButton {
@@ -1002,6 +1033,7 @@ p {
   border-color: var(--primary);
   background: var(--surface-card);
   color: var(--primary-active);
+  transform: translateY(-1px);
 }
 
 .traceCard .copyButton:hover:not(:disabled) {
@@ -1012,16 +1044,19 @@ p {
 
 .copyButton-copied,
 .copyButton-copied:hover:not(:disabled) {
-  border-color: rgba(93, 184, 114, 0.58);
-  background: rgba(93, 184, 114, 0.13);
-  color: var(--success);
+  border-color: rgba(204, 120, 92, 0.52);
+  background: rgba(250, 249, 245, 0.94);
+  color: var(--primary-active);
+  box-shadow: 0 0 0 2px rgba(204, 120, 92, 0.09);
+  transform: translateY(0);
 }
 
 .traceCard .copyButton-copied,
 .traceCard .copyButton-copied:hover:not(:disabled) {
-  border-color: rgba(93, 184, 114, 0.52);
-  background: rgba(93, 184, 114, 0.16);
-  color: #8bd899;
+  border-color: rgba(204, 120, 92, 0.66);
+  background: rgba(204, 120, 92, 0.12);
+  color: #f2b69d;
+  box-shadow: 0 0 0 2px rgba(204, 120, 92, 0.08);
 }
 
 .copyButton span {
@@ -1030,6 +1065,7 @@ p {
   height: 14px;
   border: 1.5px solid currentColor;
   border-radius: 3px;
+  transition: transform 0.16s ease;
 }
 
 .copyButton span::before {
@@ -1044,26 +1080,35 @@ p {
   background: inherit;
 }
 
+.copyButton span::after {
+  position: absolute;
+  content: "";
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
 .copyButton-copied span {
-  width: 15px;
-  height: 15px;
-  border-radius: 999px;
+  width: 14px;
+  height: 14px;
+  border-color: transparent;
+  border-radius: 0;
   background: transparent;
+  transform: translateY(-1px);
 }
 
 .copyButton-copied span::before {
-  left: 4px;
-  right: auto;
-  top: 4px;
-  width: 6px;
-  height: 3px;
-  border-top: 0;
-  border-right: 0;
-  border-bottom: 1.7px solid currentColor;
-  border-left: 1.7px solid currentColor;
-  border-radius: 0;
-  background: transparent;
-  transform: rotate(-45deg);
+  display: none;
+}
+
+.copyButton-copied span::after {
+  left: 5px;
+  top: 1px;
+  width: 4px;
+  height: 9px;
+  border-right: 1.55px solid currentColor;
+  border-bottom: 1.55px solid currentColor;
+  opacity: 1;
+  transform: rotate(40deg);
 }
 
 .logList {
@@ -1184,12 +1229,15 @@ p {
 
 .liveToolCard strong {
   min-width: 0;
+  width: 100%;
+  justify-self: stretch;
   color: var(--on-dark);
   font-family: var(--font-code);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.45;
   overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 .liveToolCard time {

@@ -10,15 +10,16 @@ Use the WSL path consistently when developing from WSL:
 cd /mnt/d/AgentProject/MyAgent/frontend
 ```
 
-Do not install dependencies or build `.next` from Windows `D:\AgentProject\MyAgent\frontend`
+Do not install dependencies or build Next output from Windows `D:\AgentProject\MyAgent\frontend`
 and then run the dev server from WSL `/mnt/d/AgentProject/MyAgent/frontend`. Mixing the two
 path styles can make Next.js generate a React Client Manifest with Windows paths while the
-server resolves WSL paths.
+server resolves WSL paths. The dev server writes `.next-dev`; production builds write `.next`.
+Keep both directories environment-local and do not reuse them across Windows and WSL.
 
 If that has happened, clean and reinstall from WSL:
 
 ```bash
-rm -rf .next node_modules
+rm -rf .next .next-dev node_modules
 npm ci
 npm run dev
 ```

@@ -32,6 +32,7 @@ case "$SERVICE" in
     cd "$ROOT_DIR/frontend"
     printf '[dev] starting frontend on http://localhost:%s (bind %s)\n\n' "$FRONTEND_PORT" "$FRONTEND_HOST"
 
+    export NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-dev}"
     if [[ "$FRONTEND_PORT" == "3001" && -z "$FRONTEND_HOST" ]]; then
       npm run dev
     else
