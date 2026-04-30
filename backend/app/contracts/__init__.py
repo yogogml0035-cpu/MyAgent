@@ -20,6 +20,14 @@ from .resources import (
     build_upload_resource_ref,
     resource_ref_payload,
 )
+from .security import (
+    CredentialKind,
+    CredentialRef,
+    InMemorySecretVault,
+    SecretVault,
+    build_credential_ref,
+    credential_ref_payload,
+)
 from .session import SessionStore
 
 __all__ = [
@@ -30,16 +38,20 @@ __all__ = [
     "ContextMessage",
     "ContextMessageRole",
     "ContextView",
+    "CredentialKind",
+    "CredentialRef",
     "EventLevel",
     "ExecutionGateway",
     "ExecutionHandle",
     "ExecutionResult",
     "ExecutionStatus",
     "HarnessEngine",
+    "InMemorySecretVault",
     "NewSessionEvent",
     "ResourceKind",
     "ResourceRef",
     "Scheduler",
+    "SecretVault",
     "SessionEvent",
     "SessionSnapshot",
     "SessionStore",
@@ -48,6 +60,8 @@ __all__ = [
     "WakeRequest",
     "artifact_ref_payload",
     "build_artifact_ref",
+    "build_credential_ref",
     "build_upload_resource_ref",
+    "credential_ref_payload",
     "resource_ref_payload",
 ]
