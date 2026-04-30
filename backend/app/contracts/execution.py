@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, runtime_checkable
 
 from .resources import ResourceRef
+from .security import CredentialRef
 
 ExecutionStatus = Literal["success", "failed", "denied", "cancelled", "timeout"]
 
@@ -24,6 +25,7 @@ class ExecutionHandle:
     id: str
     executor: str
     resources: tuple[ResourceRef, ...] = ()
+    credential_refs: tuple[CredentialRef, ...] = ()
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

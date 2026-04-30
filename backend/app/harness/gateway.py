@@ -8,6 +8,7 @@ from typing import Any, Literal
 
 from app.analysis import Emit, run_bid_analysis
 from app.contracts import (
+    CredentialRef,
     ExecutionGateway,
     ExecutionHandle,
     ExecutionResult,
@@ -133,9 +134,10 @@ class LegacyExecutionGateway(ExecutionGateway):
             id=f"exec-{uuid.uuid4().hex}",
             executor="legacy",
             resources=tuple(resources),
+            credential_refs=_credential_refs_from_requirements(requirements or {}),
             metadata={
                 "session_id": session_id,
-                "requirements": dict(requirements or {}),
+                "requirements": _safe_requirements(requirements or {}),
             },
         )
         self._handles.add(handle.id)
@@ -314,6 +316,25 @@ def _path_resource_ref(path: Path, *, session_id: str, kind: ResourceKind) -> Re
         filename=path.name,
         size_bytes=path.stat().st_size if path.exists() else None,
     )
+
+
+def _safe_requirements(requirements: dict[str, Any]) -> dict[str, Any]:
+    safe = dict(requirements)
+    credential_refs = safe.get("credential_refs")
+    if credential_refs is not None:
+        safe["credential_refs"] = [
+            ref.id if isinstance(ref, CredentialRef) else "<invalid-credential-ref>"
+            for ref in credential_refs
+            if ref is not None
+        ]
+    return safe
+
+
+def _credential_refs_from_requirements(requirements: dict[str, Any]) -> tuple[CredentialRef, ...]:
+    raw_refs = requirements.get("credential_refs", ())
+    if not isinstance(raw_refs, list | tuple):
+        return ()
+    return tuple(ref for ref in raw_refs if isinstance(ref, CredentialRef))
 
 
 def _coerce_execution_result(value: ExecutionResult | dict[str, Any] | str) -> ExecutionResult:
