@@ -18,6 +18,7 @@ Use it when changing task APIs, task state transitions, runner behavior, event l
 - Uploads support `.md` and `.json` files through `POST /api/tasks/{task_id}/files`. Backend filename checks and JSON parsing are authoritative; MIME type alone is not trusted.
 - Upload validation is atomic. Invalid file type, invalid JSON, duplicate names, file-count limits, file-size limits, request-size limits, or overlong filenames must reject the batch without partial persistence.
 - Every new run has a non-empty `run_id`. New user messages, assistant messages, events, run records, and run-scoped artifacts should carry that `run_id`.
+- Session events are the append-only Harness truth boundary. New events should be representable as `SessionEvent` contracts with `session_id`, stable increasing `seq`, `type`, `message`, `created_at`, safe `payload`, optional `run_id`, optional `level`, and optional `idempotency_key`; legacy `EventRecord`/`after_id` APIs remain compatibility surfaces until the frontend projection is migrated.
 - Successful terminal transitions must not expose a `complete` task state before the corresponding success event (`chat_completed`, `search_completed`, `deep_agent_completed`, or `task_completed`) is persisted for the same `run_id`.
 - Search/weather runs must synthesize a final answer after tool use. Search result formatting may be used only as a bounded source-summary helper or fallback, not as the normal successful assistant answer.
 - Search synthesis uses the `TaskRunner`'s injected model provider. It should not instantiate a separate provider router inside the runner unless ownership is intentionally refactored.
@@ -199,6 +200,7 @@ Output: backend MYAGENT_CORS_ORIGINS includes http://<LAN_IP>:3001, backend acce
 - Runtime JSON parse failures after a previously valid upload indicate local storage drift or corruption and should fail the run with a filename-specific error.
 - JSON upload and runtime parse failures should keep filenames visible but must not expose raw parser text such as Python or Pydantic English messages.
 - `TaskStorage.get_task()` may derive `events`, `artifacts`, `upload_count`, and `run_count`, but derived fields are not persisted back as authoritative data.
+- `TaskStorage` is temporarily allowed to bridge old task storage and the new `SessionStore` contract. It must write `seq` and `session_id` for new JSONL events, and must synthesize compatible values when reading legacy events that do not have those fields.
 - Top-level artifact URLs resolve to the latest completed run containing that artifact name, then fall back to legacy top-level files.
 - Frontend message submission sends `mode` only for normal first-party runs. The composer intentionally does not expose Auto/Do not use files/Use files choices; file relevance is decided by backend routing and, for DeepAgent runs, by the model's audited file-tool calls.
 - Frontend run activity grouping suppresses setup-only `task_created` and `file_uploaded` fallback history when real run cards exist, while preserving unmatched warning/error logs.

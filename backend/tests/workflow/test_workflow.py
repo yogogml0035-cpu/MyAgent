@@ -2292,6 +2292,8 @@ def test_task_events_endpoint_supports_incremental_reads(tmp_path: Path) -> None
 
     assert summary["events"] == []
     assert [event["type"] for event in incremental] == ["second"]
+    assert incremental[0]["session_id"] == task_id
+    assert incremental[0]["seq"] == 2
 
 
 def test_read_events_ignores_partial_jsonl_tail(tmp_path: Path) -> None:

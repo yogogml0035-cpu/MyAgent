@@ -12,6 +12,7 @@ from typing import Any, Literal, TypeAlias
 
 from fastapi import UploadFile
 
+from .contracts import EventLevel, NewSessionEvent, SessionEvent, SessionSnapshot
 from .reasoning_trace import (
     ReasoningConfidence,
     ReasoningPhase,
@@ -33,7 +34,7 @@ EventAppendSpec: TypeAlias = tuple[
     str,
     str,
     dict[str, Any],
-    Literal["info", "success", "warning", "error"] | None,
+    EventLevel | None,
 ]
 UPLOAD_CHUNK_SIZE = 1024 * 1024
 MAX_FILENAME_BYTES = 180
@@ -86,6 +87,10 @@ class UploadLimitError(ValueError):
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_utc_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
 def safe_filename(name: str) -> str:
@@ -171,6 +176,25 @@ def summary_title(messages: list[ChatMessage]) -> str:
         if visible:
             return visible[:5]
     return "新对话"
+
+
+def session_event_from_record(record: EventRecord) -> SessionEvent:
+    if record.session_id is None:
+        raise ValueError("事件缺少 session_id")
+    if record.seq is None:
+        raise ValueError("事件缺少 seq")
+    return SessionEvent(
+        id=record.id,
+        session_id=record.session_id,
+        seq=record.seq,
+        type=record.type,
+        created_at=parse_utc_timestamp(record.created_at),
+        message=record.message,
+        payload=record.payload,
+        run_id=record.run_id,
+        level=record.level,
+        idempotency_key=record.idempotency_key,
+    )
 
 
 class TaskStorage:
@@ -526,7 +550,7 @@ class TaskStorage:
         payload: dict[str, Any] | None = None,
         *,
         run_id: str | None = None,
-        level: Literal["info", "success", "warning", "error"] | None = None,
+        level: EventLevel | None = None,
     ) -> EventRecord:
         with self._lock:
             return self._append_event_unlocked(
@@ -538,6 +562,50 @@ class TaskStorage:
                 level=level,
             )
 
+    def emit_event(self, session_id: str, event: NewSessionEvent) -> SessionEvent:
+        with self._lock:
+            record = self._append_event_unlocked(
+                session_id,
+                event.type,
+                event.message,
+                event.payload,
+                run_id=event.run_id,
+                level=event.level,
+                idempotency_key=event.idempotency_key,
+            )
+            return session_event_from_record(record)
+
+    def get_session(self, session_id: str) -> SessionSnapshot:
+        state = self.get_task(session_id, include_events=False)
+        return SessionSnapshot(
+            session_id=state.task_id,
+            created_at=parse_utc_timestamp(state.created_at),
+            latest_seq=self._latest_event_seq(session_id),
+            metadata={"model": state.model, "status": state.status},
+        )
+
+    def get_events(
+        self,
+        session_id: str,
+        *,
+        after_seq: int | None = None,
+        limit: int | None = None,
+        reverse: bool = False,
+    ) -> list[SessionEvent]:
+        events = [session_event_from_record(event) for event in self.read_events(session_id)]
+        if after_seq is not None:
+            events = [event for event in events if event.seq > after_seq]
+        if reverse:
+            events = list(reversed(events))
+        if limit is not None:
+            events = events[: max(0, limit)]
+        return events
+
+    def create_session(self, metadata: dict[str, Any]) -> SessionSnapshot:
+        model = str(metadata.get("model") or "deepseek-reasoner")
+        state = self.create_task(None, model)
+        return self.get_session(state.task_id)
+
     def _append_event_unlocked(
         self,
         task_id: str,
@@ -546,18 +614,23 @@ class TaskStorage:
         payload: dict[str, Any],
         *,
         run_id: str | None = None,
-        level: Literal["info", "success", "warning", "error"] | None = None,
+        level: EventLevel | None = None,
+        idempotency_key: str | None = None,
     ) -> EventRecord:
         if run_id:
             validate_run_id(run_id)
+        seq = self._next_event_seq(task_id)
         event = EventRecord(
             id=uuid.uuid4().hex,
+            session_id=task_id,
+            seq=seq,
             type=event_type,
             message=message,
             created_at=utc_now(),
             payload=payload,
             run_id=run_id,
             level=level,
+            idempotency_key=idempotency_key,
         )
         events_path = self.task_dir(task_id) / "logs" / "events.jsonl"
         with events_path.open("a", encoding="utf-8") as handle:
@@ -573,7 +646,7 @@ class TaskStorage:
         if missing:
             raise ValueError(f"文件工具审计记录缺少字段：{', '.join(sorted(missing))}")
         status = payload.get("status")
-        level: Literal["info", "success", "warning", "error"] = "info"
+        level: EventLevel = "info"
         if status in {"denied", "cancelled"}:
             level = "warning"
         elif status == "failed":
@@ -627,7 +700,7 @@ class TaskStorage:
                 if not line.strip():
                     continue
                 try:
-                    event = EventRecord(**json.loads(line))
+                    event = self._event_record_from_json(task_id, json.loads(line), index + 1)
                 except JSONDecodeError:
                     if index == len(lines) - 1:
                         break
@@ -637,6 +710,39 @@ class TaskStorage:
                 elif event.id == after_id:
                     include = True
             return events
+
+    def _event_record_from_json(
+        self, task_id: str, raw_event: Mapping[str, Any], fallback_seq: int
+    ) -> EventRecord:
+        data = dict(raw_event)
+        data.setdefault("session_id", task_id)
+        data.setdefault("seq", fallback_seq)
+        return EventRecord(**data)
+
+    def _next_event_seq(self, task_id: str) -> int:
+        return self._latest_event_seq(task_id) + 1
+
+    def _latest_event_seq(self, task_id: str) -> int:
+        events_path = self.task_dir(task_id) / "logs" / "events.jsonl"
+        if not events_path.exists():
+            return 0
+        latest_seq = 0
+        lines = events_path.read_text(encoding="utf-8").splitlines()
+        for index, line in enumerate(lines):
+            if not line.strip():
+                continue
+            try:
+                raw_event = json.loads(line)
+            except JSONDecodeError:
+                if index == len(lines) - 1:
+                    break
+                raise
+            raw_seq = raw_event.get("seq")
+            if isinstance(raw_seq, int) and raw_seq > 0:
+                latest_seq = max(latest_seq, raw_seq)
+            else:
+                latest_seq = max(latest_seq, index + 1)
+        return latest_seq
 
     def list_task_ids(self) -> list[str]:
         with self._lock:

@@ -35,12 +35,15 @@ class ChatMessage(BaseModel):
 
 class EventRecord(BaseModel):
     id: str
+    session_id: str | None = None
+    seq: int | None = None
     type: str
     message: str
     created_at: str
     payload: dict[str, Any] = Field(default_factory=dict)
     run_id: str | None = None
     level: Literal["info", "success", "warning", "error"] | None = None
+    idempotency_key: str | None = None
 
 
 class ArtifactRecord(BaseModel):
