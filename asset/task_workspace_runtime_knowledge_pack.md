@@ -201,6 +201,7 @@ Output: backend MYAGENT_CORS_ORIGINS includes http://<LAN_IP>:3001, backend acce
 - Runtime JSON parse failures after a previously valid upload indicate local storage drift or corruption and should fail the run with a filename-specific error.
 - JSON upload and runtime parse failures should keep filenames visible but must not expose raw parser text such as Python or Pydantic English messages.
 - `TaskStorage.get_task()` may derive `events`, `artifacts`, `upload_count`, and `run_count`, but derived fields are not persisted back as authoritative data.
+- `TaskStorage.write_json()` and `TaskStorage.write_text()` are shared storage sinks for runner, analysis, and compatibility artifacts. They must resolve task-relative paths inside the current task directory and reject empty, absolute, or `../` escaping paths before creating parent directories or writing bytes.
 - `TaskStorage` is temporarily allowed to bridge old task storage and the new `SessionStore` contract. It must write `seq` and `session_id` for new JSONL events, and must synthesize compatible values when reading legacy events that do not have those fields.
 - `TaskStateProjector` is the low-risk read-only bridge from Session events toward future projection-cache semantics. Until the API is explicitly migrated, it must not replace `TaskStorage.get_task()`, delete or rename `state.json`, or claim to reconstruct fields that the current event stream does not persist, such as full assistant message content.
 - Scheduler and HarnessEngine contracts may exist before they are wired into production. Until an explicit migration PR, `TaskRunner` remains the runtime owner for threads, cancellation, and `_run()` behavior; Harness skeletons should be testable with fake stores/engines and must not introduce queues, workers, databases, or deployment changes.
@@ -256,6 +257,7 @@ Output: backend MYAGENT_CORS_ORIGINS includes http://<LAN_IP>:3001, backend acce
 - Do not create path-taking artifact APIs for run outputs; use `{run_id}` plus a normalized artifact name.
 - Do not drop token checks from list, detail, event, upload, message, cancel, or artifact routes.
 - Do not assume all old task states already contain `runs`; legacy synthesis must stay readable.
+- Do not call `TaskStorage.write_json()` or `TaskStorage.write_text()` with user-controlled paths unless the caller expects the storage layer to reject task-directory escapes. These helpers are not generic filesystem writers.
 - Do not accept JSON uploads by MIME type alone or add a separate JSON upload endpoint unless JSON becomes a distinct workflow.
 - Do not translate stored machine fields to satisfy UI copy requirements.
 - Do not rebuild sidebar history from local messages; that loses persisted conversations on refresh and backend restart.
@@ -343,6 +345,7 @@ DeepAgent two-card/activity coverage should live in the existing paths above:
 - `backend/tests/workflow/test_workflow.py`: API-level successful/failing DeepAgent runs, profile selection consistency between run manifest/orchestration event/runtime factory, upload-reference bid prompt routing, search synthesis event order, exactly one user and one assistant message per run, `deep_agent_activity` plus `file_tool_audit` plus `reasoning_trace`, every created run's terminal safe reasoning coverage, generic reasoning idempotency on DeepAgent/document routes, incremental `/events` polling, orchestration decision records, bounded search source summaries, missing-provider fallback summaries, no raw Tavily JSON or provider content in final assistant content/event payloads, canonical bid artifacts, evidence pair coverage, and final task status.
 - `backend/tests/runtime/test_intent_router.py`: search/weather after uploads route without selected uploads; multi-document bid markers with uploads route to the DeepAgent/document-analysis path.
 - `backend/tests/runtime/test_reasoning_trace.py`: shared redaction/truncation canaries when activity sanitization reuses reasoning sanitizers, including prompt/upload/private-path/provider-key leakage guards for `reasoning_trace` payloads and provider `reasoning_content` non-disclosure.
+- `backend/tests/runtime/test_resource_refs.py`: resource/artifact virtual refs plus TaskStorage common-write path boundary tests for legal relative paths, `../` escapes, and absolute paths.
 - `backend/tests/security/test_secret_boundary.py`: `CredentialRef` public payloads, vault stub behavior, execution-handle credential refs, and secret scanning across events, assistant messages, artifacts, records, outputs, and agent workspaces.
 - `frontend/tests/state/test_task_state.test.ts`: valid activity normalization to `ExecutionLog.agentActivity`, terminal `task-run` reasoning normalization, optional orchestration/profile/activity field normalization, invalid enum/missing-field rejection, malformed payload non-disclosure, unknown optional field ignore behavior, long/truncated field safety, exact user-message copy wiring, copy feedback state, and user footer time-before-copy order.
 - `frontend/tests/workspace/test_workspace_view.test.ts`: user -> execution-log card -> `AI回复` card order, assistant artifact footer dedupe, live-log projection and clipboard text, legacy same-tool FIFO pairing without ids, non-live technical-title suppression, Markdown renderer usage, composer-to-message-card alignment CSS, live-log width/centered copy checkmark CSS, user-copy hover/focus reveal CSS, text-only empty-state wordmark CSS, and reference robot-avatar CSS.
@@ -351,6 +354,7 @@ DeepAgent two-card/activity coverage should live in the existing paths above:
 ## Verification Commands
 
 ```bash
+cd backend && uv run pytest tests/runtime/test_resource_refs.py
 cd backend && uv run pytest tests/runtime/test_deep_agent_runtime.py
 cd backend && uv run pytest tests/runtime/test_reasoning_trace.py
 cd backend && uv run pytest tests/workflow/test_workflow.py
