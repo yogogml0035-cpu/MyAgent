@@ -1,5 +1,12 @@
 """Stable Harness contracts shared by runtime adapters."""
 
+from .context import (
+    ContextEventRef,
+    ContextManager,
+    ContextMessage,
+    ContextMessageRole,
+    ContextView,
+)
 from .events import EventLevel, NewSessionEvent, SessionEvent, SessionSnapshot
 from .execution import ExecutionGateway, ExecutionHandle, ExecutionResult, ExecutionStatus, ToolSpec
 from .harness import HarnessEngine, Scheduler, WakeReason, WakeRequest
@@ -18,6 +25,11 @@ from .session import SessionStore
 __all__ = [
     "ArtifactKind",
     "ArtifactRef",
+    "ContextEventRef",
+    "ContextManager",
+    "ContextMessage",
+    "ContextMessageRole",
+    "ContextView",
     "EventLevel",
     "ExecutionGateway",
     "ExecutionHandle",
