@@ -1371,11 +1371,14 @@ def test_upload_while_task_is_running_returns_conflict_without_persisting(
     client = TestClient(create_app(settings))
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
 
-    async def slow_chat(_message: str, _model: str) -> str:
-        await asyncio.sleep(10)
+    def slow_stream(_message: str, _model: str, _on_delta, _controller=None) -> str:
+        for _ in range(200):
+            if _controller is not None and _controller.is_cancelled():
+                raise RuntimeError("模型调用已取消")
+            time.sleep(0.05)
         return "late"
 
-    with patch("app.model_provider.DeepSeekProvider._chat_http_async", side_effect=slow_chat):
+    with patch("app.model_provider.DeepSeekProvider._chat_http_stream", side_effect=slow_stream):
         client.post(
             f"/api/tasks/{task_id}/messages",
             json={"message": "你好，请简单介绍你能做什么", "model": "deepseek-reasoner"},
@@ -1408,11 +1411,14 @@ def test_follow_up_message_is_rejected_while_run_is_active(tmp_path: Path) -> No
     client = TestClient(create_app(settings))
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
 
-    async def slow_chat(_message: str, _model: str) -> str:
-        await asyncio.sleep(10)
+    def slow_stream(_message: str, _model: str, _on_delta, _controller=None) -> str:
+        for _ in range(200):
+            if _controller is not None and _controller.is_cancelled():
+                raise RuntimeError("模型调用已取消")
+            time.sleep(0.05)
         return "late"
 
-    with patch("app.model_provider.DeepSeekProvider._chat_http_async", side_effect=slow_chat):
+    with patch("app.model_provider.DeepSeekProvider._chat_http_stream", side_effect=slow_stream):
         started = client.post(
             f"/api/tasks/{task_id}/messages",
             json={"message": "你好，请简单介绍你能做什么", "model": "deepseek-reasoner"},
@@ -2198,6 +2204,48 @@ def test_simple_chat_success_has_final_reasoning_trace(tmp_path: Path) -> None:
     assert "已完成模型回复" in final_events[-1]["payload"]["summary"]
 
 
+def test_simple_chat_emits_streaming_answer_events_before_completion(tmp_path: Path) -> None:
+    client = make_client(tmp_path)
+    task_id = client.post("/api/tasks", json={}).json()["task_id"]
+
+    def streamed_chat(_message: str, _model: str, _controller=None, *, on_delta=None) -> str:
+        assert on_delta is not None
+        on_delta("你好，")
+        on_delta("我正在生成回答。")
+        return "你好，我正在生成回答。"
+
+    with patch("app.model_provider.ProviderRouter.chat", side_effect=streamed_chat):
+        client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={"message": "你好，请简单介绍你能做什么", "model": "deepseek-reasoner"},
+        )
+        state = wait_for_terminal_status(client, task_id)
+
+    run_id = state["runs"][0]["id"]
+    run_event_types = [
+        event["type"] for event in state["events"] if event.get("run_id") == run_id
+    ]
+    stream_events = [
+        event
+        for event in state["events"]
+        if event["type"] == "assistant_answer_delta" and event.get("run_id") == run_id
+    ]
+
+    assert state["status"] == "complete"
+    assert [message["role"] for message in state["messages"]] == ["user", "assistant"]
+    assert state["messages"][-1]["content"] == "你好，我正在生成回答。"
+    assert stream_events
+    assert stream_events[-1]["payload"]["schema_version"] == 1
+    assert stream_events[-1]["payload"]["content"] == "你好，我正在生成回答。"
+    assert stream_events[-1]["payload"]["live"]["kind"] == "answer_status"
+    assert stream_events[-1]["payload"]["live"]["stage"] == "generating_answer"
+    assert (
+        run_event_types.index("answer_generation_started")
+        < run_event_types.index("assistant_answer_delta")
+        < run_event_types.index("chat_completed")
+    )
+
+
 def test_messages_and_events_from_new_runs_carry_run_id(tmp_path: Path) -> None:
     client = make_client(tmp_path)
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
@@ -2437,11 +2485,14 @@ def test_simple_chat_cancel_does_not_overwrite_cancelled_state(tmp_path: Path) -
     client = TestClient(create_app(settings))
     task_id = client.post("/api/tasks", json={}).json()["task_id"]
 
-    async def slow_chat(_message: str, _model: str) -> str:
-        await asyncio.sleep(10)
+    def slow_stream(_message: str, _model: str, _on_delta, _controller=None) -> str:
+        for _ in range(200):
+            if _controller is not None and _controller.is_cancelled():
+                raise RuntimeError("模型调用已取消")
+            time.sleep(0.05)
         return "late"
 
-    with patch("app.model_provider.DeepSeekProvider._chat_http_async", side_effect=slow_chat):
+    with patch("app.model_provider.DeepSeekProvider._chat_http_stream", side_effect=slow_stream):
         client.post(
             f"/api/tasks/{task_id}/messages",
             json={"message": "你好，请简单介绍你能做什么", "model": "deepseek-reasoner"},

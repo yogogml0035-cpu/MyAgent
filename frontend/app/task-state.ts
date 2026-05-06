@@ -15,6 +15,7 @@ export type ChatMessage = {
   createdAt?: string;
   runId?: string | null;
   level?: "info" | "warning" | "error";
+  streaming?: boolean;
 };
 
 export type ExecutionLog = {
@@ -31,6 +32,7 @@ export type ExecutionLog = {
   reasoning?: ReasoningTrace;
   searchTrace?: SearchTrace;
   orchestration?: OrchestrationTrace;
+  answerStream?: AssistantAnswerStreamTrace;
 };
 
 export type ReasoningPhase = "plan" | "observe" | "decide" | "next_step" | "final_summary" | "risk";
@@ -105,6 +107,12 @@ export type SearchTrace = {
   sources: SearchSourceTrace[];
   usedModel?: boolean;
   warningCode?: string;
+};
+
+export type AssistantAnswerStreamTrace = {
+  schemaVersion: 1;
+  streamIndex: number;
+  content: string;
 };
 
 export type LiveEventKind = "think" | "tool_call" | "tool_result" | "answer_status" | "status";
@@ -438,6 +446,11 @@ function truncateDisplayText(value: string, maxChars: number) {
 
 function readBoundedString(value: unknown, maxChars: number) {
   const text = readString(value).trim();
+  return text ? truncateDisplayText(text, maxChars) : undefined;
+}
+
+function readBoundedContent(value: unknown, maxChars: number) {
+  const text = readString(value);
   return text ? truncateDisplayText(text, maxChars) : undefined;
 }
 
@@ -845,6 +858,26 @@ function normalizeOrchestrationTrace(type: string | undefined, payload: Record<s
   };
 }
 
+function normalizeAssistantAnswerStream(type: string | undefined, payload: Record<string, unknown>) {
+  if (type !== "assistant_answer_delta") {
+    return undefined;
+  }
+  const schemaVersion = payload.schema_version ?? payload.schemaVersion;
+  const content = readBoundedContent(payload.content, 8000);
+  if (schemaVersion !== 1 || !content) {
+    return undefined;
+  }
+  return {
+    schemaVersion: 1 as const,
+    streamIndex: readOptionalBoundedInteger(
+      payload.stream_index ?? payload.streamIndex,
+      0,
+      9999,
+    ) ?? 0,
+    content,
+  };
+}
+
 function normalizeMessage(value: unknown, index: number): ChatMessage {
   const record = isRecord(value) ? value : {};
   const role = readString(record.role, "assistant");
@@ -883,6 +916,7 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
     reasoning: normalizeReasoningTrace(type, payload),
     searchTrace: normalizeSearchTrace(type, payload),
     orchestration: normalizeOrchestrationTrace(type, payload),
+    answerStream: normalizeAssistantAnswerStream(type, payload),
   };
 }
 

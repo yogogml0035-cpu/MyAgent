@@ -122,7 +122,6 @@ export function TaskConversation({
         <article className={messageClassName}>
           <header className="messageCardHeader">
             <div className="messageCardTitle">
-              <RobotAvatar variant="title" />
               <strong>{formatMessagePanelTitle(message)}</strong>
               <span className={`statusGlyph statusGlyph-${tone}`} aria-hidden="true" />
               <span>{formatMessagePanelStatus(message)}</span>
@@ -144,6 +143,7 @@ export function TaskConversation({
           {tone !== "error" ? (
             <div className="messageCardBody markdownBody">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              {message.streaming ? <span className="answerStreamCursor" aria-hidden="true" /> : null}
             </div>
           ) : null}
 
@@ -254,7 +254,6 @@ export function TaskConversation({
         <article className={`traceCard traceCard-${group.status}`}>
           <header className="traceHeader">
             <div className="traceTitle">
-              <span className="documentIcon" aria-hidden="true" />
               <strong>进度日志</strong>
               <span className="runRoundLabel">{group.title}</span>
               <span
@@ -298,7 +297,6 @@ export function TaskConversation({
       return (
         <details className={toolClassName} key={item.id}>
           <summary>
-            <span className="liveToolIcon" aria-hidden="true" />
             <strong>{item.title}</strong>
             <time>{formatTime(item.createdAt)}</time>
           </summary>

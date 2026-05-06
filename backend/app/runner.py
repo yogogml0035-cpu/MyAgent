@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import Lock, Thread
+from time import monotonic
 from typing import Any, Literal, TypeAlias
 
 from .agent_activity import (
@@ -52,11 +53,14 @@ SEARCH_SNIPPET_CHARS = 320
 SEARCH_TITLE_CHARS = 140
 SEARCH_URL_CHARS = 360
 SEARCH_SYNTHESIS_ANSWER_CHARS = 4000
+ANSWER_STREAM_CONTENT_CHARS = 8000
+ANSWER_STREAM_MIN_INTERVAL_SECONDS = 0.3
 ORCHESTRATION_TENDER_MARKERS = ("tender", "招标", "采购", "需求书")
 RUN_REASONING_AGENT_ID = "task-run"
 
 Emit = Callable[..., None]
 TerminalReasoning: TypeAlias = tuple[ReasoningPhase, str, ReasoningConfidence, list[str]]
+AnswerDeltaHandler: TypeAlias = Callable[[str], None]
 
 
 @dataclass(frozen=True)
@@ -97,6 +101,64 @@ class SimpleMessageResult:
     answer: str
     warning_code: str | None = None
     completion_payload: dict[str, Any] | None = None
+
+
+class AnswerStreamEmitter:
+    def __init__(
+        self,
+        *,
+        storage: TaskStorage,
+        task_id: str,
+        run_id: str,
+        agent_name: str,
+        max_chars: int = ANSWER_STREAM_CONTENT_CHARS,
+        min_interval_seconds: float = ANSWER_STREAM_MIN_INTERVAL_SECONDS,
+    ) -> None:
+        self.storage = storage
+        self.task_id = task_id
+        self.run_id = run_id
+        self.agent_name = agent_name
+        self.max_chars = max_chars
+        self.min_interval_seconds = min_interval_seconds
+        self._raw_content = ""
+        self._last_emitted_content = ""
+        self._last_emit_at = 0.0
+        self._index = 0
+
+    def add_delta(self, delta: str) -> None:
+        if not delta:
+            return
+        self._raw_content += delta
+        now = monotonic()
+        if (
+            now - self._last_emit_at >= self.min_interval_seconds
+            or "\n" in delta
+            or len(self._raw_content) - len(self._last_emitted_content) >= 80
+        ):
+            self.flush()
+
+    def flush(self) -> None:
+        content = bounded_safe_text(self._raw_content, self.max_chars)
+        if not content or content == self._last_emitted_content:
+            return
+        self._index += 1
+        self._last_emitted_content = content
+        self._last_emit_at = monotonic()
+        self.storage.append_event(
+            self.task_id,
+            "assistant_answer_delta",
+            "AI 回复生成中。",
+            {
+                "schema_version": 1,
+                "stream_index": self._index,
+                "content": content,
+                "live": build_live_answer_status_metadata(
+                    agent_name=self.agent_name,
+                    stage="generating_answer",
+                ),
+            },
+            run_id=self.run_id,
+        )
 
 
 class TaskRunner:
@@ -317,6 +379,7 @@ class TaskRunner:
             if decision.route == "chat" or decision.route == "search":
                 simple_result = self._run_simple_message(
                     task_id,
+                    run_id,
                     message,
                     model,
                     decision.route,
@@ -706,6 +769,7 @@ class TaskRunner:
     def _run_simple_message(
         self,
         task_id: str,
+        run_id: str,
         message: str,
         model: str,
         route: Literal["chat", "search"],
@@ -772,13 +836,22 @@ class TaskRunner:
                     )
                 },
             )
+            stream_emitter = AnswerStreamEmitter(
+                storage=self.storage,
+                task_id=task_id,
+                run_id=run_id,
+                agent_name="search_agent",
+                max_chars=SEARCH_SYNTHESIS_ANSWER_CHARS,
+            )
             synthesis = self._synthesize_search_result(
                 message=message,
                 model=model,
                 sources=sources,
                 warning_code=warning_code,
                 controller=controller,
+                on_delta=stream_emitter.add_delta,
             )
+            stream_emitter.flush()
             synthesis_payload = {
                 **synthesis.event_payload,
                 "live": build_live_answer_status_metadata(
@@ -809,12 +882,24 @@ class TaskRunner:
                 )
             },
         )
+        stream_emitter = AnswerStreamEmitter(
+            storage=self.storage,
+            task_id=task_id,
+            run_id=run_id,
+            agent_name="main_agent",
+        )
         try:
-            reply = self.model_provider.chat(message, model, controller)
+            reply = self.model_provider.chat(
+                message,
+                model,
+                controller,
+                on_delta=stream_emitter.add_delta,
+            )
         except RuntimeError as exc:
             if controller.is_cancelled():
                 raise CancelledError() from exc
             raise
+        stream_emitter.flush()
         if controller.is_cancelled():
             raise CancelledError()
         warning_code = "missing_provider_key" if is_model_configuration_warning(reply) else None
@@ -839,6 +924,7 @@ class TaskRunner:
         sources: list[SearchSourceSummary],
         warning_code: str | None,
         controller: CancellationController,
+        on_delta: AnswerDeltaHandler | None = None,
     ) -> SearchSynthesisResult:
         if warning_code == "missing_tavily_key":
             return SearchSynthesisResult(
@@ -861,7 +947,12 @@ class TaskRunner:
 
         prompt = build_search_synthesis_prompt(message, sources)
         try:
-            answer = self.model_provider.chat(prompt, model, controller)
+            answer = self.model_provider.chat(
+                prompt,
+                model,
+                controller,
+                on_delta=on_delta,
+            )
         except Exception as exc:
             if controller.is_cancelled():
                 raise CancelledError() from exc

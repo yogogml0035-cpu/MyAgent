@@ -1,7 +1,3 @@
-type RobotAvatarProps = {
-  variant?: "marker" | "title";
-};
-
 function BotIcon() {
   return (
     <svg
@@ -26,15 +22,7 @@ function BotIcon() {
   );
 }
 
-export function RobotAvatar({ variant = "marker" }: RobotAvatarProps) {
-  if (variant === "title") {
-    return (
-      <span className="messageBotIcon" aria-hidden="true">
-        <BotIcon />
-      </span>
-    );
-  }
-
+export function RobotAvatar() {
   return (
     <div className="agentMarker" aria-hidden="true">
       <BotIcon />

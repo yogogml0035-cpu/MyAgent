@@ -268,6 +268,46 @@ test("normalizeTaskState preserves valid reasoning trace metadata", () => {
   });
 });
 
+test("normalizeTaskState preserves safe assistant answer stream events", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "running",
+      events: [
+        {
+          id: "stream-1",
+          type: "assistant_answer_delta",
+          message: "AI 回复生成中。",
+          run_id: "run-1",
+          payload: {
+            schema_version: 1,
+            stream_index: 2,
+            content: "第一段\n第二段",
+          },
+        },
+        {
+          id: "stream-bad",
+          type: "assistant_answer_delta",
+          message: "AI 回复生成中。",
+          run_id: "run-1",
+          payload: {
+            schema_version: 2,
+            content: "不应显示",
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.logs[0].answerStream, {
+    schemaVersion: 1,
+    streamIndex: 2,
+    content: "第一段\n第二段",
+  });
+  assert.equal(state.logs[1].answerStream, undefined);
+});
+
 test("normalizeTaskState preserves terminal task-run reasoning summaries", () => {
   const state = normalizeTaskState(
     {

@@ -31,6 +31,8 @@ export type RunActivityGroup = {
   completedAt?: string;
   logs: ExecutionLog[];
   artifacts: Artifact[];
+  streamedAnswer?: string;
+  streamedAnswerCreatedAt?: string;
 };
 
 export type VisibleLogPartition = {
@@ -177,6 +179,10 @@ export function buildLiveLogItems(
   let activeCreatedAt: string | undefined;
 
   logs.forEach((log, index) => {
+    if (log.type === "assistant_answer_delta") {
+      return;
+    }
+
     const live = log.live;
     if (!live) {
       const text = formatLegacyLiveSummary(log);
@@ -649,6 +655,9 @@ export function getMessagePanelTone(message: ChatMessage): MessagePanelTone {
 }
 
 export function formatMessagePanelStatus(message: ChatMessage) {
+  if (message.streaming) {
+    return "生成中";
+  }
   const tone = getMessagePanelTone(message);
   if (tone === "error") {
     return "生成失败";
@@ -736,6 +745,20 @@ function isSetupFallbackLog(log: ExecutionLog) {
   return log.type === "task_created" || log.type === "file_uploaded";
 }
 
+function latestStreamedAnswer(logs: ExecutionLog[]) {
+  const streamLogs = logs
+    .filter((log) => Boolean(log.answerStream?.content))
+    .sort((left, right) => {
+      const leftIndex = left.answerStream?.streamIndex ?? 0;
+      const rightIndex = right.answerStream?.streamIndex ?? 0;
+      if (leftIndex !== rightIndex) {
+        return leftIndex - rightIndex;
+      }
+      return byCreatedAt(left, right);
+    });
+  return streamLogs.at(-1);
+}
+
 export function buildRunActivityGroups(
   runs: TaskRunRecord[],
   logs: ExecutionLog[],
@@ -771,20 +794,25 @@ export function buildRunActivityGroups(
         }
       });
 
+    const runLogs = logs
+      .filter(
+        (log) =>
+          log.runId === run.id ||
+          (runs.length === 1 && !log.runId && !isSetupFallbackLog(log)),
+      )
+      .sort(byCreatedAt);
+    const latestAnswerStream = latestStreamedAnswer(runLogs);
+
     return {
       runId: run.id,
       title: `第 ${index + 1} 轮`,
       status: run.status,
       startedAt: run.startedAt,
       completedAt: run.completedAt,
-      logs: logs
-        .filter(
-          (log) =>
-            log.runId === run.id ||
-            (runs.length === 1 && !log.runId && !isSetupFallbackLog(log)),
-        )
-        .sort(byCreatedAt),
+      logs: runLogs,
       artifacts: Array.from(artifactMap.values()),
+      streamedAnswer: latestAnswerStream?.answerStream?.content,
+      streamedAnswerCreatedAt: latestAnswerStream?.createdAt,
     };
   });
 
@@ -855,6 +883,26 @@ export function buildConversationStreamItems(
     });
   }
 
+  function pushStreamedAnswerItem(group: RunActivityGroup) {
+    const content = group.streamedAnswer?.trim();
+    if (!content) {
+      return;
+    }
+    items.push({
+      id: `message:stream:${group.runId}`,
+      kind: "message",
+      message: {
+        id: `stream:${group.runId}`,
+        role: "assistant",
+        content: group.streamedAnswer ?? "",
+        createdAt: group.streamedAnswerCreatedAt,
+        runId: group.runId,
+        streaming: true,
+      },
+      groupTitle: group.title,
+    });
+  }
+
   messages.forEach((message, index) => {
     let groupBeforeReply: RunActivityGroup | undefined;
     if (message.runId && firstReplyIndexByRunId.get(message.runId) === index) {
@@ -881,6 +929,7 @@ export function buildConversationStreamItems(
     ) {
       const group = pushGroup(message.runId);
       if (group) {
+        pushStreamedAnswerItem(group);
         pushArtifactItems(group);
       }
     }

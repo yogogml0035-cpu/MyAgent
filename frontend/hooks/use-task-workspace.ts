@@ -207,7 +207,7 @@ export function useTaskWorkspace() {
     const timer = window.setInterval(() => {
       void refreshTaskSummary();
       void refreshTaskEvents();
-    }, 2000);
+    }, 700);
 
     return () => window.clearInterval(timer);
   }, [activeTask, refreshTaskEvents, refreshTaskSummary, taskId]);

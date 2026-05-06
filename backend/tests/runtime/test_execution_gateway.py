@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import app.harness.gateway as gateway_module
@@ -154,10 +155,24 @@ def test_legacy_bid_analysis_executor_wraps_run_bid_analysis(monkeypatch, tmp_pa
     calls: list[dict[str, object]] = []
 
     class FakeModelProvider:
-        def chat(self, message: str, model: str, controller=None) -> str:
+        def chat(
+            self,
+            message: str,
+            model: str,
+            controller: CancellationController | None = None,
+            *,
+            on_delta: Callable[[str], None] | None = None,
+        ) -> str:
+            if on_delta is not None:
+                on_delta("chat")
             return "chat"
 
-        def reason(self, prompt: str, model: str, controller=None) -> str:
+        def reason(
+            self,
+            prompt: str,
+            model: str,
+            controller: CancellationController | None = None,
+        ) -> str:
             return "reason"
 
     def fake_run_bid_analysis(**kwargs):

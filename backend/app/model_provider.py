@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+from collections.abc import Callable, Iterable
 from contextlib import suppress
 from typing import Protocol
 
@@ -8,6 +10,8 @@ import httpx
 
 from .runtime import CancellationController
 from .settings import MODEL_REGISTRY, Settings
+
+AnswerDeltaHandler = Callable[[str], None]
 
 MISSING_DEEPSEEK_API_KEY_MESSAGE = (
     "已选择 DeepSeek，但后端 .env 未配置 DEEPSEEK_API_KEY。"
@@ -17,7 +21,12 @@ MISSING_DEEPSEEK_API_KEY_MESSAGE = (
 
 class ModelProvider(Protocol):
     def chat(
-        self, message: str, model: str, controller: CancellationController | None = None
+        self,
+        message: str,
+        model: str,
+        controller: CancellationController | None = None,
+        *,
+        on_delta: AnswerDeltaHandler | None = None,
     ) -> str: ...
 
     def reason(
@@ -35,9 +44,16 @@ class ProviderRouter:
             )
 
     def chat(
-        self, message: str, model: str, controller: CancellationController | None = None
+        self,
+        message: str,
+        model: str,
+        controller: CancellationController | None = None,
+        *,
+        on_delta: AnswerDeltaHandler | None = None,
     ) -> str:
-        return self._provider_for_model(model).chat(message, model, controller)
+        return self._provider_for_model(model).chat(
+            message, model, controller, on_delta=on_delta
+        )
 
     def reason(
         self, prompt: str, model: str, controller: CancellationController | None = None
@@ -64,10 +80,17 @@ class DeepSeekProvider:
         self.settings = settings
 
     def chat(
-        self, message: str, model: str, controller: CancellationController | None = None
+        self,
+        message: str,
+        model: str,
+        controller: CancellationController | None = None,
+        *,
+        on_delta: AnswerDeltaHandler | None = None,
     ) -> str:
         if not self.settings.deepseek_api_key:
             return MISSING_DEEPSEEK_API_KEY_MESSAGE
+        if on_delta is not None:
+            return self._chat_http_stream(message, model, on_delta, controller)
         if controller is not None:
             return self._chat_http_cancellable(message, model, controller)
         return self._chat_http(message, model)
@@ -123,6 +146,31 @@ class DeepSeekProvider:
             await cancel_task
         return request_task.result()
 
+    def _chat_http_stream(
+        self,
+        message: str,
+        model: str,
+        on_delta: AnswerDeltaHandler,
+        controller: CancellationController | None = None,
+    ) -> str:
+        parts: list[str] = []
+        with httpx.stream(
+            "POST",
+            f"{self.settings.deepseek_base_url.rstrip('/')}/chat/completions",
+            headers={"Authorization": f"Bearer {self.settings.deepseek_api_key}"},
+            json={**self._chat_payload(message, model), "stream": True},
+            timeout=self.settings.deepseek_timeout_seconds,
+        ) as response:
+            response.raise_for_status()
+            for delta in self._iter_stream_deltas(response.iter_lines()):
+                if controller is not None and controller.is_cancelled():
+                    raise RuntimeError("模型调用已取消")
+                parts.append(delta)
+                on_delta(delta)
+        if controller is not None and controller.is_cancelled():
+            raise RuntimeError("模型调用已取消")
+        return "".join(parts)
+
     async def _chat_http_async(self, message: str, model: str) -> str:
         async with httpx.AsyncClient(timeout=self.settings.deepseek_timeout_seconds) as client:
             response = await client.post(
@@ -150,6 +198,30 @@ class DeepSeekProvider:
     def _extract_content(response: httpx.Response) -> str:
         data = response.json()
         return str(data["choices"][0]["message"]["content"])
+
+    @staticmethod
+    def _iter_stream_deltas(lines: Iterable[str | bytes]) -> Iterable[str]:
+        for line in lines:
+            text = line.decode("utf-8", errors="ignore") if isinstance(line, bytes) else line
+            text = text.strip()
+            if not text or not text.startswith("data:"):
+                continue
+            payload = text.removeprefix("data:").strip()
+            if payload == "[DONE]":
+                break
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            choices = data.get("choices")
+            if not isinstance(choices, list):
+                continue
+            for choice in choices:
+                if not isinstance(choice, dict):
+                    continue
+                delta = choice.get("delta")
+                if isinstance(delta, dict) and isinstance(delta.get("content"), str):
+                    yield delta["content"]
 
 
 async def wait_until_cancelled(controller: CancellationController) -> None:

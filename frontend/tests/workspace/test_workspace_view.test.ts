@@ -279,6 +279,78 @@ test("buildLiveLogItems pairs tool events and keeps one active status row", () =
   });
 });
 
+test("buildLiveLogItems excludes assistant stream chunks from progress rows", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "answer-start",
+        type: "answer_generation_started",
+        title: "正在生成回答。",
+        live: {
+          schemaVersion: 1,
+          kind: "answer_status",
+          stage: "generating_answer",
+          agentName: "search_agent",
+          parameterItems: [],
+        },
+      },
+      {
+        id: "stream-1",
+        type: "assistant_answer_delta",
+        title: "AI 回复生成中。",
+        live: {
+          schemaVersion: 1,
+          kind: "answer_status",
+          stage: "generating_answer",
+          agentName: "search_agent",
+          parameterItems: [],
+        },
+        answerStream: {
+          schemaVersion: 1,
+          streamIndex: 1,
+          content: "第一段",
+        },
+      },
+      {
+        id: "stream-2",
+        type: "assistant_answer_delta",
+        title: "AI 回复生成中。",
+        live: {
+          schemaVersion: 1,
+          kind: "answer_status",
+          stage: "generating_answer",
+          agentName: "search_agent",
+          parameterItems: [],
+        },
+        answerStream: {
+          schemaVersion: 1,
+          streamIndex: 2,
+          content: "第一段\n第二段",
+        },
+      },
+      {
+        id: "answer-complete",
+        type: "search_synthesis_completed",
+        title: "已根据搜索结果生成最终回答。",
+        live: {
+          schemaVersion: 1,
+          kind: "answer_status",
+          stage: "completed",
+          agentName: "search_agent",
+          parameterItems: [],
+          resultStatus: "success",
+        },
+      },
+    ],
+    "complete",
+  );
+
+  assert.deepEqual(
+    items.map((item) => (item.kind === "status" ? item.text : item.title)),
+    ["正在生成回答...", "回答已完成"],
+  );
+});
+
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
   const items = buildLiveLogItems([
     {
@@ -503,6 +575,10 @@ test("workspace CSS keeps live tool rows dense and copy feedback as a coral chec
   );
   assert.match(
     cssSource,
+    /\.liveToolCard summary\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto 10px;/,
+  );
+  assert.match(
+    cssSource,
     /\.copyButton-copied,\s*\n\.copyButton-copied:hover:not\(:disabled\)\s*\{[\s\S]*?border-color: rgba\(204, 120, 92, 0\.52\);[\s\S]*?color: var\(--primary-active\);/,
   );
   assert.match(
@@ -530,6 +606,7 @@ test("workspace CSS keeps live tool rows dense and copy feedback as a coral chec
   assert.match(cssSource, /\.copyButton\.userCopyButton\.copyButton-copied span::before\s*\{[\s\S]*?display: none;/);
   assert.equal(cssSource.includes("color: #8bd899;"), false);
   assert.equal(cssSource.includes("box-shadow: 3px -3px 0"), false);
+  assert.equal(cssSource.includes(".liveToolIcon"), false);
 });
 
 test("workspace CSS hides user copy controls until hover or focus", () => {
@@ -545,8 +622,12 @@ test("workspace CSS hides user copy controls until hover or focus", () => {
   );
 });
 
-test("workspace CSS uses the reference robot sender avatar treatment", () => {
+test("workspace CSS keeps only the row-level robot sender avatar", () => {
   const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+  const conversationSource = readFileSync(
+    new URL("../../components/chat/TaskConversation.tsx", import.meta.url),
+    "utf-8",
+  );
 
   assert.match(
     cssSource,
@@ -556,7 +637,11 @@ test("workspace CSS uses the reference robot sender avatar treatment", () => {
     cssSource,
     /\.robotAvatarIcon\s*\{[\s\S]*?width: 20px;[\s\S]*?height: 20px;/,
   );
-  assert.match(cssSource, /\.messageBotIcon\s*\{[\s\S]*?color: #2563eb;/);
+  assert.equal(cssSource.includes(".messageBotIcon"), false);
+  assert.equal(cssSource.includes(".documentIcon"), false);
+  assert.equal(conversationSource.includes('variant="title"'), false);
+  assert.equal(conversationSource.includes("documentIcon"), false);
+  assert.equal(conversationSource.includes("liveToolIcon"), false);
 });
 
 test("assistant replies render Markdown with GFM but no raw HTML plugin", () => {
@@ -570,6 +655,7 @@ test("assistant replies render Markdown with GFM but no raw HTML plugin", () => 
   assert.equal(conversationSource.includes("rehype-raw"), false);
   assert.equal(conversationSource.includes("markdownBody"), true);
   assert.equal(conversationSource.includes("messageArtifactFooter"), true);
+  assert.equal(conversationSource.includes("answerStreamCursor"), true);
 });
 
 test("empty workspace hero wordmark is text-only", () => {
@@ -992,6 +1078,7 @@ test("message panel helpers map assistant notices to TenderWord-like card states
   const warningMessage = { id: "m2", role: "assistant" as const, content: "提醒", level: "warning" as const };
   const systemMessage = { id: "m3", role: "system" as const, content: "系统" };
   const okMessage = { id: "m4", role: "assistant" as const, content: "完成" };
+  const streamingMessage = { id: "m5", role: "assistant" as const, content: "生成中", streaming: true };
 
   assert.equal(getMessagePanelTone(errorMessage), "error");
   assert.equal(formatMessagePanelStatus(errorMessage), "生成失败");
@@ -1005,6 +1092,7 @@ test("message panel helpers map assistant notices to TenderWord-like card states
   assert.equal(getMessagePanelTone(okMessage), "default");
   assert.equal(formatMessagePanelStatus(okMessage), "已完成");
   assert.equal(formatMessagePanelTitle(okMessage), "AI回复");
+  assert.equal(formatMessagePanelStatus(streamingMessage), "生成中");
 });
 
 test("formatRunLogStatus uses log-card labels for terminal states", () => {
@@ -1045,6 +1133,66 @@ test("buildConversationStreamItems places run activity before the assistant repl
     items.map((item) => item.id),
     ["message:m1", "run:run-1", "message:m2", "message:m3", "run:run-2"],
   );
+});
+
+test("buildConversationStreamItems renders a streamed assistant draft while a run is active", () => {
+  const groups = buildRunActivityGroups(
+    [
+      {
+        id: "run-1",
+        status: "running" as const,
+        startedAt: "2026-04-27T08:00:00.000Z",
+        artifactNames: [],
+      },
+    ],
+    [
+      {
+        id: "event-1",
+        title: "正在生成回答。",
+        runId: "run-1",
+        createdAt: "2026-04-27T08:01:00.000Z",
+      },
+      {
+        id: "stream-1",
+        type: "assistant_answer_delta",
+        title: "AI 回复生成中。",
+        runId: "run-1",
+        createdAt: "2026-04-27T08:01:01.000Z",
+        answerStream: {
+          schemaVersion: 1,
+          streamIndex: 1,
+          content: "第一段",
+        },
+      },
+      {
+        id: "stream-2",
+        type: "assistant_answer_delta",
+        title: "AI 回复生成中。",
+        runId: "run-1",
+        createdAt: "2026-04-27T08:01:02.000Z",
+        answerStream: {
+          schemaVersion: 1,
+          streamIndex: 2,
+          content: "第一段\n第二段",
+        },
+      },
+    ],
+    [],
+  );
+  const items = buildConversationStreamItems(
+    [{ id: "m1", role: "user", content: "写一段回复", runId: "run-1" }],
+    groups,
+  );
+
+  assert.deepEqual(
+    items.map((item) => item.id),
+    ["message:m1", "run:run-1", "message:stream:run-1"],
+  );
+  const streamedItem = items[2];
+  assert.equal(streamedItem.kind, "message");
+  assert.equal(streamedItem.kind === "message" ? streamedItem.message.content : "", "第一段\n第二段");
+  assert.equal(streamedItem.kind === "message" ? streamedItem.message.streaming : false, true);
+  assert.equal(streamedItem.kind === "message" ? streamedItem.groupTitle : "", "第 1 轮");
 });
 
 test("buildConversationStreamItems attaches run artifacts to the assistant reply", () => {
