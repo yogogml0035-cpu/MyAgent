@@ -508,6 +508,9 @@ def sanitize_file_tool_reason(reason: str, workspace_root: Path) -> str:
     return "文件访问失败"
 
 
+ALLOWED_SEARCH_SUFFIXES = {".md", ".json", ".txt"}
+
+
 class WorkspaceTools:
     def __init__(
         self,
@@ -536,6 +539,8 @@ class WorkspaceTools:
         return path.read_text(encoding="utf-8")
 
     def full_text_search(self, query: str, suffix: str = ".md") -> list[dict[str, Any]]:
+        if suffix not in ALLOWED_SEARCH_SUFFIXES:
+            raise ValueError(f"不支持的搜索后缀：{suffix}")
         self.controller.raise_if_cancelled()
         results: list[dict[str, Any]] = []
         for path in self.workspace_root.rglob(f"*{suffix}"):
