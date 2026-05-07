@@ -512,12 +512,12 @@ class DeepAgentRuntime:
     def _invoke_agent(self, agent: Any, request: DeepAgentRunRequest) -> Any:
         payload = self._agent_payload(request)
         config = self._agent_config(request)
-        if hasattr(agent, "invoke"):
+        if hasattr(agent, "invoke") and callable(getattr(agent, "invoke")):
             try:
                 return agent.invoke(payload, config=config)
             except TypeError:
                 return agent.invoke(payload)
-        if hasattr(agent, "run"):
+        if hasattr(agent, "run") and callable(getattr(agent, "run")):
             return agent.run(payload)
         if callable(agent):
             try:
