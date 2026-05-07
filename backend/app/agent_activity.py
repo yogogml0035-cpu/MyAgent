@@ -805,6 +805,13 @@ def _path_items(value: Any) -> list[str]:
 
 
 def _agent_id_from_path(path: Sequence[str]) -> str | None:
+    for item in path:
+        if isinstance(item, str) and item.startswith("tools:"):
+            sanitized, _ = _sanitize_activity_text(
+                item, max_chars=FIELD_LIMITS["agent_id"]
+            )
+            if sanitized:
+                return sanitized
     for item in reversed(path):
         sanitized, _ = _sanitize_activity_text(item, max_chars=FIELD_LIMITS["agent_id"])
         if sanitized and sanitized not in {"updates", "messages"}:
