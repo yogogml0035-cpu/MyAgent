@@ -444,6 +444,9 @@ class DeepAgentActivityProjector:
         if mode == "updates":
             self._observe_update_data(data, subgraph_path)
             return
+        if mode == "custom":
+            self._observe_custom_data(data, subgraph_path)
+            return
         self.emit(
             activity_kind="progress",
             phase="reasoning",
@@ -533,6 +536,32 @@ class DeepAgentActivityProjector:
             title="DeepAgent 进度更新",
             summary="DeepAgent 已更新运行状态。",
             subgraph_path=subgraph_path,
+        )
+
+    def _observe_custom_data(self, data: Any, subgraph_path: list[str]) -> None:
+        agent_name = _agent_name_from_path(subgraph_path)
+        title = "自定义进度"
+        summary = "收到自定义进度事件。"
+        if isinstance(data, Mapping):
+            status = str(data.get("status") or "")
+            if status:
+                title = f"自定义进度：{status}"
+            topic = str(data.get("topic") or data.get("message") or "")
+            if topic:
+                summary = topic[:200]
+        elif isinstance(data, str):
+            summary = data[:200]
+        self.emit(
+            activity_kind="progress",
+            phase="tool_use",
+            status="running",
+            title=title,
+            summary=summary,
+            subgraph_path=subgraph_path,
+            live=build_live_status_metadata(
+                agent_name=agent_name,
+                stage="using_tool",
+            ),
         )
 
     def _observe_message_data(self, data: Any, subgraph_path: list[str]) -> None:

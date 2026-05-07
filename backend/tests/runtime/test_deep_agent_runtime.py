@@ -676,7 +676,7 @@ def test_deep_agent_runtime_streams_with_required_options_and_activity_events(
     }
     assert agent.kwargs["subgraphs"] is True
     assert agent.kwargs["version"] == "v2"
-    assert agent.kwargs["stream_mode"] == ["updates", "messages"]
+    assert agent.kwargs["stream_mode"] == ["updates", "messages", "custom"]
     assert [event["status"] for event in activity_events] == [
         "started",
         "running",

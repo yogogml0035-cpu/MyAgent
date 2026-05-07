@@ -490,7 +490,7 @@ class DeepAgentRuntime:
                 config=config,
                 subgraphs=True,
                 version="v2",
-                stream_mode=["updates", "messages"],
+                stream_mode=["updates", "messages", "custom"],
             )
         except TypeError:
             return None
