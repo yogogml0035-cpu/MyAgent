@@ -111,3 +111,30 @@ class TestDeepAgentActivityProjectorCustom:
         assert len(sink_calls) == 1
         payload = sink_calls[0]
         assert payload["title"] == "自定义进度"
+
+
+class TestAgentIdFromPath:
+    def test_tools_prefix_first(self):
+        from app.agent_activity import _agent_id_from_path
+
+        assert _agent_id_from_path(["tools:abc123"]) == "tools:abc123"
+
+    def test_tools_prefix_among_others(self):
+        from app.agent_activity import _agent_id_from_path
+
+        assert _agent_id_from_path(["tools:abc123", "model_request:def456"]) == "tools:abc123"
+
+    def test_empty_path_returns_none(self):
+        from app.agent_activity import _agent_id_from_path
+
+        assert _agent_id_from_path([]) is None
+
+    def test_fallback_without_tools_prefix(self):
+        from app.agent_activity import _agent_id_from_path
+
+        assert _agent_id_from_path(["some_node"]) == "some_node"
+
+    def test_skips_updates_and_messages(self):
+        from app.agent_activity import _agent_id_from_path
+
+        assert _agent_id_from_path(["updates", "real_node"]) == "real_node"
