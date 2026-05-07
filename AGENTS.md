@@ -82,6 +82,29 @@
 - 上述文件名是建议路由；若 `asset/README.md` 已存在更合适主包，以索引为准。
 - 若新规则会影响未来多数需求，再把它从知识包提升写回 `AGENTS.md`。
 
+## 前后端字段映射表
+
+后端 API 使用 `snake_case`，前端状态层统一转换为 `camelCase`。核心字段映射如下：
+
+| 后端字段 | 前端字段 | 说明 |
+|---------|---------|------|
+| `task_id` | `id` | 任务唯一标识 |
+| `created_at` | `createdAt` | 创建时间 |
+| `updated_at` | `updatedAt` | 更新时间 |
+| `active_run_id` | `activeRunId` | 当前运行 ID |
+| `run_count` | `runCount` | 运行次数 |
+| `upload_count` | `uploadCount` | 上传文件数 |
+| `artifact_names` | `artifactNames` | 产物名称列表 |
+| `needs_input` | `needsInput` | 等待输入状态 |
+
+## runner-storage 耦合说明
+
+`TaskRunner` 和 `TaskStorage` 存在隐式耦合：
+
+- `TaskRunner` 通过 `storage.append_event`、`storage.update_task_if_status` 等接口写入状态
+- `TaskStorage` 不感知 runner 存在，但 runner 的并发操作依赖 storage 的 RLock 保证线程安全
+- 任何直接操作 storage 的代码都应假设 runner 可能在并发写入
+
 ## 本地开发参考与建议
 
 - 默认后端开发端口为 `8001`，默认前端开发端口为 `3001`；前端 `auto` API base 默认按页面 hostname 访问后端 `8001`。
