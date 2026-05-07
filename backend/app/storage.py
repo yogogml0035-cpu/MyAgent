@@ -222,6 +222,8 @@ class TaskStorage:
         self._lock = threading.RLock()
 
     def task_dir(self, task_id: str) -> Path:
+        if not task_id or task_id in {".", ".."}:
+            raise ValueError("任务 ID 不能为空或相对路径")
         path = (self.task_root / task_id).resolve()
         if self.task_root not in path.parents and path != self.task_root:
             raise ValueError("任务路径超出任务根目录")
