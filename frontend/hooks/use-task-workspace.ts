@@ -69,6 +69,8 @@ export function useTaskWorkspace() {
   const [errorLevel, setErrorLevel] = useState<"warning" | "error">("error");
   const [copiedCopyKey, setCopiedCopyKey] = useState("");
   const copyFeedbackTimerRef = useRef<number | null>(null);
+  const logsRef = useRef<ExecutionLog[]>([]);
+  logsRef.current = logs;
 
   const canSend = input.trim().length > 0 || selectedFiles.length > 0;
   const activeTask = isTaskActive(status);
@@ -191,12 +193,12 @@ export function useTaskWorkspace() {
       if (!id) {
         return;
       }
-      const incoming = await fetchTaskEvents(id, logs.at(-1)?.id);
+      const incoming = await fetchTaskEvents(id, logsRef.current.at(-1)?.id);
       if (incoming.length > 0) {
         setLogs((current) => mergeExecutionLogs(current, incoming));
       }
     },
-    [logs, taskId],
+    [taskId],
   );
 
   useEffect(() => {
@@ -327,12 +329,15 @@ export function useTaskWorkspace() {
       setError("");
       setInput("");
       setSelectedFiles([]);
+      setIsBusy(true);
 
       try {
         await refreshTask(id);
       } catch (caught) {
         setErrorLevel("error");
         setError(formatTaskApiFailure(caught));
+      } finally {
+        setIsBusy(false);
       }
     },
     [isBusy, refreshTask, taskId],

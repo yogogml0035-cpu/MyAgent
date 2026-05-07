@@ -86,12 +86,17 @@ export async function createTask(model: string): Promise<{ id: string; state: Ta
 
 export async function fetchTask(id: string, options: { includeEvents?: boolean } = {}) {
   const query = options.includeEvents === false ? "?include_events=false" : "";
-  return normalizeTaskState(await requestTaskJson<unknown>(`/api/tasks/${id}${query}`), id);
+  return normalizeTaskState(
+    await requestTaskJson<unknown>(`/api/tasks/${encodeURIComponent(id)}${query}`),
+    id,
+  );
 }
 
 export async function fetchTaskEvents(id: string, afterId?: string): Promise<ExecutionLog[]> {
   const query = afterId ? `?after_id=${encodeURIComponent(afterId)}` : "";
-  return normalizeEventRecords(await requestTaskJson<unknown>(`/api/tasks/${id}/events${query}`));
+  return normalizeEventRecords(
+    await requestTaskJson<unknown>(`/api/tasks/${encodeURIComponent(id)}/events${query}`),
+  );
 }
 
 export async function uploadTaskFiles(id: string, files: File[]) {
@@ -102,27 +107,29 @@ export async function uploadTaskFiles(id: string, files: File[]) {
   const formData = new FormData();
   files.forEach((file) => formData.append("files", file));
 
-  await requestTaskJson<unknown>(`/api/tasks/${id}/files`, {
+  await requestTaskJson<unknown>(`/api/tasks/${encodeURIComponent(id)}/files`, {
     method: "POST",
     body: formData,
   });
 }
 
 export async function postTaskMessage(id: string, content: string, model: string) {
-  await requestTaskJson<unknown>(`/api/tasks/${id}/messages`, {
+  await requestTaskJson<unknown>(`/api/tasks/${encodeURIComponent(id)}/messages`, {
     method: "POST",
     body: JSON.stringify(buildMessageRequestPayload(content, model)),
   });
 }
 
 export async function cancelTask(id: string) {
-  await requestTaskJson<unknown>(`/api/tasks/${id}/cancel`, { method: "POST" });
+  await requestTaskJson<unknown>(`/api/tasks/${encodeURIComponent(id)}/cancel`, {
+    method: "POST",
+  });
 }
 
 export async function fetchArtifactBlob(artifact: Artifact, taskId: string) {
   const request = buildArtifactRequest(
     artifact,
-    taskId,
+    encodeURIComponent(taskId),
     TASK_API_BASE_URL,
     TASK_API_ACCESS_TOKEN,
   );
