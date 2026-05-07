@@ -579,7 +579,10 @@ class SubAgentWorker:
             "metadata_clues": inspect_metadata_clues,
             "common_deviations": inspect_common_deviations,
         }
-        return functions[self.spec.category](self.tender_docs, self.bidder_docs)
+        func = functions.get(self.spec.category)
+        if func is None:
+            raise ValueError(f"未知分析类别：{self.spec.category}")
+        return func(self.tender_docs, self.bidder_docs)
 
     def _model_reasoning(self) -> str:
         context = "\n".join(

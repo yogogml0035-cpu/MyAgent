@@ -218,7 +218,14 @@ class DeepSeekProvider:
     @staticmethod
     def _extract_content(response: httpx.Response) -> str:
         data = response.json()
-        return str(data["choices"][0]["message"]["content"])
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("响应缺少 choices 字段")
+        message = choices[0].get("message", {})
+        content = message.get("content")
+        if content is None:
+            raise ValueError("响应缺少 content 字段")
+        return str(content)
 
     @staticmethod
     def _iter_stream_deltas(lines: Iterable[str | bytes]) -> Iterable[str]:
