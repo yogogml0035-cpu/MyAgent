@@ -6,7 +6,7 @@ import subprocess
 import time
 from concurrent.futures import Future
 from subprocess import Popen
-from threading import Event, RLock
+from threading import Event, RLock, Thread
 
 
 class CancellationController:
@@ -80,6 +80,14 @@ def _wait_short(process: Popen, timeout: float) -> None:
         time.sleep(0.05)
 
 
+def _drain_pipe(pipe, accumulator: list[str]) -> None:
+    while True:
+        chunk = pipe.read(4096)
+        if not chunk:
+            break
+        accumulator.append(chunk)
+
+
 def run_cancellable_command(
     command: list[str],
     *,
@@ -97,6 +105,14 @@ def run_cancellable_command(
         start_new_session=os.name != "nt",
     )
     controller.register_process(process)
+
+    stdout_parts: list[str] = []
+    stderr_parts: list[str] = []
+    stdout_thread = Thread(target=_drain_pipe, args=(process.stdout, stdout_parts))
+    stderr_thread = Thread(target=_drain_pipe, args=(process.stderr, stderr_parts))
+    stdout_thread.start()
+    stderr_thread.start()
+
     try:
         deadline = time.monotonic() + timeout
         while process.poll() is None:
@@ -107,9 +123,12 @@ def run_cancellable_command(
                 controller.cancel()
                 raise TimeoutError(f"命令执行超过 {timeout} 秒限制")
             time.sleep(0.05)
-        stdout, stderr = process.communicate()
+        stdout_thread.join(timeout=2.0)
+        stderr_thread.join(timeout=2.0)
         if controller.is_cancelled():
             raise RuntimeError("命令已取消")
-        return subprocess.CompletedProcess(command, process.returncode or 0, stdout, stderr)
+        return subprocess.CompletedProcess(
+            command, process.returncode or 0, "".join(stdout_parts), "".join(stderr_parts)
+        )
     finally:
         controller.unregister_process(process)
