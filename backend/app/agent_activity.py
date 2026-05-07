@@ -20,7 +20,7 @@ ActivitySink: TypeAlias = Callable[[dict[str, Any]], Any]
 ACTIVITY_KINDS = {"lifecycle", "progress"}
 ACTIVITY_PHASES = {"planning", "reasoning", "tool_use", "file_operation", "finalizing"}
 ACTIVITY_STATUSES = {"started", "running", "completed", "failed", "skipped"}
-STREAM_MODES = {"updates", "messages"}
+STREAM_MODES = {"updates", "messages", "custom"}
 BOUNDARY_STATUSES = {"started", "completed", "failed", "skipped"}
 SENSITIVE_KEY_PATTERN = re.compile(
     r"(?:api[_-]?key|secret|token|authorization|password|credential|content|prompt|body|result)",
@@ -728,6 +728,12 @@ def activity_payload_from_file_audit(
 
 
 def _split_stream_chunk(chunk: Any) -> tuple[str | None, Any, list[str]]:
+    if isinstance(chunk, Mapping):
+        chunk_type = chunk.get("type")
+        if chunk_type in STREAM_MODES:
+            return chunk_type, chunk.get("data"), _path_items(chunk.get("ns"))
+        if chunk_type is not None:
+            return None, chunk, []
     if isinstance(chunk, tuple):
         if len(chunk) == 3 and isinstance(chunk[1], str) and chunk[1] in STREAM_MODES:
             return chunk[1], chunk[2], _path_items(chunk[0])
@@ -752,8 +758,6 @@ def _infer_mode(data: Any) -> str | None:
         return "messages"
     if _looks_like_message(data):
         return "messages"
-    if isinstance(data, Mapping):
-        return "updates"
     return None
 
 
