@@ -1090,7 +1090,10 @@ def utc_now() -> str:
 def build_input_manifest(uploads: list[Path]) -> list[dict[str, Any]]:
     manifest: list[dict[str, Any]] = []
     for path in uploads:
-        stat = path.stat()
+        try:
+            stat = path.stat()
+        except FileNotFoundError:
+            continue
         manifest.append(
             {
                 "filename": path.name,
