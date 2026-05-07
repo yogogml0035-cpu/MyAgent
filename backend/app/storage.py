@@ -982,7 +982,11 @@ class TaskStorage:
             return self._resolve_run_artifact_path(task_id, run, name)
 
     def _read_state(self, task_id: str, *, synthesize_legacy: bool = False) -> TaskState:
-        data = json.loads((self.task_dir(task_id) / "state.json").read_text(encoding="utf-8"))
+        state_path = self.task_dir(task_id) / "state.json"
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8"))
+        except JSONDecodeError as exc:
+            raise ValueError(f"任务 {task_id} 的状态文件损坏：{exc}") from exc
         data.pop("events", None)
         data.pop("artifacts", None)
         state = TaskState(**data)
