@@ -1061,7 +1061,7 @@ def similar_paragraph_pairs(
             comparisons += 1
             if comparisons > MAX_SIMILARITY_COMPARISONS_PER_PAIR:
                 return sorted(pairs, key=lambda item: item["score"], reverse=True)[:4]
-            if comparisons % 500 == 0 and controller is not None and controller.is_cancelled():
+            if comparisons % 100 == 0 and controller is not None and controller.is_cancelled():
                 raise CancelledError()
             score = SequenceMatcher(
                 None, normalize_text(left_text), normalize_text(right_text)
