@@ -293,7 +293,7 @@ git diff --check
 ## 运行边界
 
 - Provider 凭据只能作为后端 `.env` 值保存。
-- 前端只发送安全模型 ID，例如 `deepseek-reasoner`。
+- 前端只发送安全模型 ID，例如 `deepseek:deepseek-chat`。
 - 上传文件、任务计划、证据、摘要、日志和 HTML 报告会存储在本地任务目录中。
 - 文件访问和命令执行辅助能力默认限定在任务工作区内。
 - 上传和 JSON 请求大小限制由后端环境变量控制。

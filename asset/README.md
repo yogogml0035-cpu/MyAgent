@@ -8,10 +8,6 @@
 - `asset/bid_analysis_workflow_knowledge_pack.md`: 招投标分析工作流指导，覆盖 PDF 招投标对比的业务规则、输入输出、边界条件和回归风险。
 - `asset/tender_workflow_breakdown.md`: 招标工作流分解，按阶段拆解招标分析的完整流程。
 
-## Archived Knowledge Packs
-
-- `asset/task_workspace_runtime_knowledge_pack.md`: 已被 `deepagents_platform_knowledge_pack.md` 完整替代，仅保留作为历史参考，不再主动维护。
-
 ## Registration Rules
 
 - One shared rule has one main package. Other packages should reference it instead of duplicating the same boundary.
