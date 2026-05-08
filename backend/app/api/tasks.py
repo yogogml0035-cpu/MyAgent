@@ -48,8 +48,7 @@ def get_task(task_id: str, request: Request) -> TaskState:
 
 
 @router.get("/{task_id}/events", response_model=list[EventRecord])
-def get_events(task_id: str, after_id: str | None = None, request: Request | None = None) -> list[EventRecord]:
-    assert request is not None  # FastAPI always provides the request
+def get_events(task_id: str, request: Request, after_id: str | None = None) -> list[EventRecord]:
     storage = _storage(request)
     state = storage.get_task(task_id, include_events=False)
     if state.status == "idle" and not state.messages:
