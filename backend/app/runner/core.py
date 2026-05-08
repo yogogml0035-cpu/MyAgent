@@ -43,10 +43,13 @@ class TaskRunner:
         run_id = str(uuid.uuid4())
         model_id = model or self.settings.default_model
 
+        task_workspace = self.settings.workspace_root / task_id
+        tools = get_platform_tools(self.settings, task_workspace=task_workspace)
+
         agent = build_agent(
             self.settings,
             model=model_id,
-            tools=get_platform_tools(self.settings),
+            tools=tools,
             skills=list(self.settings.skills_dirs),
         )
 
