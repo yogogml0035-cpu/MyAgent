@@ -63,10 +63,14 @@ def fake_tool_registry() -> dict[str, Any]:
     def write_file(_relative_path: str, _content: str) -> dict[str, Any]:
         return {}
 
+    def tavily_search(_query: str, _max_results: int = 5) -> dict[str, Any]:
+        return {}
+
     return {
         "list_dir": list_dir,
         "read_file": read_file,
         "write_file": write_file,
+        "tavily_search": tavily_search,
     }
 
 
@@ -88,7 +92,7 @@ def test_agent_profile_registry_validates_static_bid_profile() -> None:
     ]
     assert [item["name"] for item in compiled] == profile.planned_subagents
     assert all(
-        tool_names(item["tools"]) == {"list_dir", "read_file", "write_file"}
+        tool_names(item["tools"]) == {"list_dir", "read_file", "write_file", "tavily_search"}
         for item in compiled
     )
 
@@ -170,7 +174,7 @@ def test_deep_agent_mock_factory_gets_audited_file_tools_without_raw_filesystem(
         assert backend.virtual_mode is True
         assert isinstance(backend, deep_agent_runtime.AuditedDeepAgentBackend)
         tool_map = {tool.__name__: tool for tool in tools}
-        assert set(tool_map) == {"list_dir", "read_file", "write_file"}
+        assert set(tool_map) == {"list_dir", "read_file", "write_file", "tavily_search"}
         assert all(not hasattr(tool, "__self__") for tool in tools)
         assert tool_names(subagents[0]["tools"]) == set(tool_map)
 

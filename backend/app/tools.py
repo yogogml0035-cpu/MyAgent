@@ -511,6 +511,23 @@ def sanitize_file_tool_reason(reason: str, workspace_root: Path) -> str:
 ALLOWED_SEARCH_SUFFIXES = {".md", ".json", ".txt"}
 
 
+def _raw_tavily_search(
+    query: str,
+    api_key: str | None,
+    max_results: int = 5,
+) -> dict[str, Any]:
+    """Shared Tavily API helper — no controller, no side effects."""
+    if not api_key:
+        return {"results": [], "warning": "未配置 TAVILY_API_KEY"}
+    response = httpx.post(
+        "https://api.tavily.com/search",
+        json={"api_key": api_key, "query": query, "max_results": max_results},
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 class WorkspaceTools:
     def __init__(
         self,
@@ -598,16 +615,9 @@ class WorkspaceTools:
 
     def tavily_search(self, query: str, max_results: int = 5) -> dict[str, Any]:
         self.controller.raise_if_cancelled()
-        if not self.tavily_api_key:
-            return {"results": [], "warning": "未配置 TAVILY_API_KEY"}
-        response = httpx.post(
-            "https://api.tavily.com/search",
-            json={"api_key": self.tavily_api_key, "query": query, "max_results": max_results},
-            timeout=20,
-        )
+        result = _raw_tavily_search(query, self.tavily_api_key, max_results)
         self.controller.raise_if_cancelled()
-        response.raise_for_status()
-        return response.json()
+        return result
 
     def _resolve(self, relative_path: str) -> Path:
         path = (self.workspace_root / relative_path).resolve()

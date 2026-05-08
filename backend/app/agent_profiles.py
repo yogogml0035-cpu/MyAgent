@@ -14,7 +14,7 @@ ToolRegistry = Mapping[str, Callable[..., Any]]
 
 DEFAULT_AGENT_PROFILE_ID = "default_file_agent"
 BID_MULTI_AGENT_PROFILE_ID = "bid_multi_agent"
-FILE_TOOL_ALIASES = ("list_dir", "read_file", "write_file")
+FILE_TOOL_ALIASES = ("list_dir", "read_file", "write_file", "tavily_search")
 SAFE_TOOL_ALIASES = set(FILE_TOOL_ALIASES)
 SAFE_MODEL_IDS = {str(item["id"]) for item in MODEL_REGISTRY}
 SAFE_PROFILE_ID_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -41,7 +41,7 @@ class AgentProfile:
     reason_code: str
     system_prompt_fragment: str
     subagents: tuple[SubAgentSpec, ...]
-    allowed_tool_aliases: tuple[str, ...] = ("list_dir", "read_file", "write_file")
+    allowed_tool_aliases: tuple[str, ...] = ("list_dir", "read_file", "write_file", "tavily_search")
     model_override_policy: ModelOverridePolicy = "inherit_only"
     expected_outputs: tuple[str, ...] = ()
     observability_labels: dict[str, str] = field(default_factory=dict)

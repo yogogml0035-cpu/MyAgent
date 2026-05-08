@@ -18,6 +18,7 @@ from .runtime import CancellationController
 from .tools import (
     AuditedWorkspaceTools,
     AuditOperation,
+    _raw_tavily_search,
     is_windows_absolute_path,
 )
 
@@ -30,6 +31,11 @@ try:
     from deepagents.backends.protocol import BackendProtocol as ImportedBackendProtocol
 except ImportError:  # pragma: no cover - optional integration dependency.
     ImportedBackendProtocol = object
+
+try:
+    from langgraph.config import get_stream_writer as _get_stream_writer
+except ImportError:
+    _get_stream_writer = None  # type: ignore[assignment]
 
 
 @dataclass
@@ -383,10 +389,12 @@ class DeepAgentRuntime:
         *,
         agent_factory: AgentFactory | None = None,
         activity_sink: ActivitySink | None = None,
+        tavily_api_key: str = "",
     ) -> None:
         self.file_tools = file_tools
         self.agent_factory = agent_factory if agent_factory is not None else _DEFAULT_AGENT_FACTORY
         self.activity_sink = activity_sink
+        self._tavily_api_key = tavily_api_key
 
     @property
     def is_available(self) -> bool:
@@ -405,7 +413,27 @@ class DeepAgentRuntime:
             """Write a UTF-8 file under records/ or outputs/ in the run workspace."""
             return self.file_tools.write_file(relative_path, content)
 
-        return [list_dir, read_file, write_file]
+        def tavily_search(query: str, max_results: int = 5) -> dict[str, Any]:
+            """Search the web using Tavily API for real-time information."""
+            try:
+                if _get_stream_writer is not None:
+                    writer = _get_stream_writer()
+                    writer({"status": "searching", "query": query, "tool": "tavily_search"})
+            except Exception:
+                pass
+            self.file_tools.controller.raise_if_cancelled()
+            result = _raw_tavily_search(query, self._tavily_api_key, max_results)
+            self.file_tools.controller.raise_if_cancelled()
+            try:
+                if _get_stream_writer is not None:
+                    writer = _get_stream_writer()
+                    result_count = len(result.get("results", []))
+                    writer({"status": "search_complete", "result_count": result_count, "tool": "tavily_search"})
+            except Exception:
+                pass
+            return result
+
+        return [list_dir, read_file, write_file, tavily_search]
 
     def run(
         self,
