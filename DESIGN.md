@@ -1,3 +1,5 @@
+> **注意**：本文件为外部设计系统参考（Anthropic Claude 产品设计规范），非 MyAgent 项目的设计文档。仅作为视觉风格参考保留。
+
 ---
 version: alpha
 name: Claude

@@ -70,9 +70,24 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 
 ## Related Test Paths
 
-- Unit tests: `backend/tests/unit/models/`, `backend/tests/unit/tools/`, `backend/tests/unit/agent/`, `backend/tests/unit/skills/`, `backend/tests/unit/streaming/`
+- Unit tests:
+  - `backend/tests/unit/agent/`
+  - `backend/tests/unit/models/`
+  - `backend/tests/unit/tools/`
+  - `backend/tests/unit/skills/`
+  - `backend/tests/unit/streaming/`
+  - `backend/tests/unit/runner/`
+  - `backend/tests/unit/api/`
+  - `backend/tests/unit/security/`
+  - `backend/tests/unit/storage/`
+  - `backend/tests/unit/session/`
 - Integration tests: `backend/tests/integration/`
 - E2E tests: `backend/tests/e2e/` (empty, for future)
+- Frontend tests:
+  - `frontend/tests/state/`
+  - `frontend/tests/workspace/`
+  - `frontend/tests/upload/`
+  - `frontend/tests/model/`
 - Test fixture: `backend/tests/conftest.py` (provides `test_settings` fixture with tmp_path)
 
 ## Verification Commands

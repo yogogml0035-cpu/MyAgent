@@ -34,7 +34,7 @@ Copy `.env.example` to `.env` and configure:
 - `MYAGENT_CORS_ORIGINS`
 - `MYAGENT_TASK_ROOT`
 
-The default model registry exposes `deepseek-reasoner`.
+The default model registry exposes `deepseek:deepseek-chat`.
 The backend loads `backend/.env` on startup before reading process environment values.
 Task APIs accept local loopback clients by default. If `MYAGENT_ACCESS_TOKEN` is set,
 all task APIs require either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
