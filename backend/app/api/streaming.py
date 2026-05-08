@@ -47,9 +47,10 @@ async def _event_stream(task_id: str, request: Request) -> AsyncGenerator[str, N
 @router.get("/{task_id}/stream")
 def stream_task(task_id: str, request: Request) -> StreamingResponse:
     storage = _storage(request)
-    state = storage.get_task(task_id, include_events=False)
-    if state.status == "idle" and not state.messages:
-        raise HTTPException(status_code=404, detail="任务不存在")
+    try:
+        storage.get_task(task_id, include_events=False)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在") from None
     return StreamingResponse(
         _event_stream(task_id, request),
         media_type="text/event-stream",
