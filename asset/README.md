@@ -5,6 +5,8 @@
 ## Current Knowledge Packs
 
 - `asset/deepagents_platform_knowledge_pack.md`: 主知识包，覆盖 DeepAgents 通用 Agent 平台架构——包括 create_deep_agent 工厂、多模型 Provider（init_chat_model）、中间件栈、流式 SSE 输出、SubAgent 子智能体、Skill 加载、文件系统工具、联网搜索工具、TaskRunner 运行时、API 路由、前端 SSE 适配、安全边界、测试布局及已知坑点。
+- `asset/bid_analysis_workflow_knowledge_pack.md`: 招投标分析工作流指导，覆盖 PDF 招投标对比的业务规则、输入输出、边界条件和回归风险。
+- `asset/tender_workflow_breakdown.md`: 招标工作流分解，按阶段拆解招标分析的完整流程。
 
 ## Archived Knowledge Packs
 
