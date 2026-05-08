@@ -30,7 +30,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.state.settings = resolved
 
     storage = TaskStorage(resolved.task_root)
-    runner = TaskRunner(resolved)
+    runner = TaskRunner(resolved, storage)
     app.state.storage = storage
     app.state.runner = runner
 
