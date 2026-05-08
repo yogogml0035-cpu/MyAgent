@@ -39,9 +39,6 @@ class Settings:
     max_upload_request_bytes: int = 101 * 1024 * 1024
     max_json_request_bytes: int = 64 * 1024
 
-    # Deprecated but kept for backward compatibility
-    deepseek_timeout_seconds: float = 15.0
-
 
 MODEL_REGISTRY = [
     {
@@ -130,7 +127,6 @@ def load_settings() -> Settings:
             64 * 1024,
             "AGENT_CHAT_MAX_JSON_REQUEST_BYTES",
         ),
-        deepseek_timeout_seconds=read_float_env("DEEPSEEK_TIMEOUT_SECONDS", 15.0),
     )
 
 
