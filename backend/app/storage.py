@@ -636,7 +636,7 @@ class TaskStorage:
         return events
 
     def create_session(self, metadata: dict[str, Any]) -> SessionSnapshot:
-        model = str(metadata.get("model") or "deepseek-reasoner")
+        model = str(metadata.get("model") or "deepseek:deepseek-chat")
         state = self.create_task(None, model)
         return self.get_session(state.task_id)
 
