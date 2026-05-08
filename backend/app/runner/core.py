@@ -59,11 +59,17 @@ class TaskRunner:
         seq = 0
 
         try:
-            async for event in stream_agent(agent, messages, config=config):
-                record = convert_stream_event(event, task_id, run_id, seq=seq)
-                if record is not None:
-                    collected.append(record)
-                    seq += 1
+            async with asyncio.timeout(self.settings.agent_timeout_seconds):
+                async for event in stream_agent(agent, messages, config=config):
+                    record = convert_stream_event(event, task_id, run_id, seq=seq)
+                    if record is not None:
+                        collected.append(record)
+                        seq += 1
+        except TimeoutError:
+            logger.warning(
+                "Run %s for task %s timed out after %.1fs",
+                run_id, task_id, self.settings.agent_timeout_seconds,
+            )
         except asyncio.CancelledError:
             logger.info("Run %s for task %s was cancelled", run_id, task_id)
             raise

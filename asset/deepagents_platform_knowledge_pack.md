@@ -9,6 +9,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 ## Business Rules
 
 - The platform uses `create_deep_agent()` from the `deepagents` SDK as the sole execution engine. It returns a `CompiledStateGraph` ready for `.invoke()` or `.stream()`.
+- `build_agent()` (in `agent/factory.py`) is the default builder; it passes `checkpointer`, `store`, and `max_concurrent_subagents` directly to `create_deep_agent()`.
+- `build_agent_with_middleware()` is an alternative builder that also assembles extra middleware (SkillsMiddleware, SubAgentMiddleware, SummarizationMiddleware) via `agent/middleware.py` before calling `create_deep_agent()`.
 - `create_deep_agent()` auto-injects `TodoListMiddleware`, `FilesystemMiddleware`, `SummarizationMiddleware`, and `PatchToolCallsMiddleware`. Do NOT pass these via the `middleware` parameter — it causes duplicate middleware assertion errors.
 - Skills and SubAgents are passed via `create_deep_agent(skills=..., subagents=...)` keyword arguments, not via the middleware parameter.
 - Multi-model support uses `langchain.chat_models.init_chat_model` with `provider:model-name` format (e.g., `deepseek:deepseek-chat`, `openai:gpt-4o`, `anthropic:claude-sonnet-4-20250514`).
@@ -21,7 +23,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Skills follow the DeepAgents SKILL.md convention: YAML frontmatter with `name` and `description`, plus Markdown instructions. Loaded from directories listed in `settings.skills_dirs`.
 - Streaming uses `agent.astream(input, stream_mode=["messages", "updates"])` via the v2 adapter. Events are converted to `EventRecord` objects via `event_converter.py`.
 - SSE endpoint at `GET /api/tasks/{task_id}/stream` provides real-time output. Frontend uses `EventSource` API with token as query parameter.
-- `TaskRunner` manages agent lifecycle: build agent → stream events → convert → collect results. Supports background execution via `start_background()` and cancellation via `cancel()`.
+- `TaskRunner` manages agent lifecycle: build agent → stream events → convert → collect results. Supports background execution via `start_background()` and cancellation via `cancel()`. Enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`.
 - Task API routes follow REST conventions: `POST /api/tasks` (create), `GET /api/tasks` (list), `GET /api/tasks/{id}` (read), `POST /api/tasks/{id}/messages` (send message), `POST /api/tasks/{id}/cancel` (cancel).
 - Auth middleware enforces loopback-only access by default; non-local access requires `MYAGENT_ACCESS_TOKEN`.
 
@@ -48,6 +50,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **EventSource auth**: Browser `EventSource` API doesn't support custom headers; token must be passed as query parameter for SSE.
 - **storage.py coupling**: TaskStorage is deeply coupled to old contracts/reasoning_trace types via compatibility shims. A future storage rewrite should use native DeepAgents state management.
 - **Single-process runtime**: The platform uses in-process runner and local JSON storage. Multi-worker deployment will break.
+- **Timeout enforcement**: `TaskRunner.start()` enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`. If the deepagents SDK or LLM call hangs, the run is terminated after the configured timeout and a warning is logged.
+- **checkpointer/store passthrough**: `build_agent()` passes `checkpointer` and `store` to `create_deep_agent()`, but the current deployment uses no checkpointer (state is managed by TaskStorage in JSON files). To enable LangGraph-native persistence, pass an `InMemorySaver` or `PostgresSaver` instance when constructing the agent.
 
 ## Related Code Paths
 
@@ -92,3 +96,5 @@ npm test
 - storage.py breakage if compatibility shims are deleted without rewriting storage.
 - Model format mismatch if frontend sends old-style `deepseek-reasoner` instead of `deepseek:deepseek-chat`.
 - SSE auth bypass if EventSource query param is removed without alternative auth.
+- Timeout breakage if `asyncio.timeout()` is removed without an alternative mechanism to prevent runaway agent runs.
+- Concurrency risk if `max_concurrent_subagents` is changed without testing subagent parallel execution limits.

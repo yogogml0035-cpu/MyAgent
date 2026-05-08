@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from langgraph.graph.state import CompiledStateGraph
 
+from app.agent.middleware import build_full_middleware
 from app.config import Settings
 
 if TYPE_CHECKING:
@@ -50,6 +51,61 @@ def build_agent(
         subagents=subagents,
         checkpointer=checkpointer,
         store=store,
+    )
+
+
+def build_agent_with_middleware(
+    settings: Settings,
+    *,
+    model: str | None = None,
+    tools: Sequence[BaseTool | Callable | dict] | None = None,
+    skills: list[str] | None = None,
+    subagents: Sequence | None = None,
+    checkpointer=None,
+    store=None,
+) -> CompiledStateGraph:
+    """Build a compiled DeepAgent graph with platform defaults and extra middleware.
+
+    Unlike :func:`build_agent`, this function also assembles additional middleware
+    (skills, subagents, summarization) via :func:`app.agent.middleware.build_middleware`
+    and passes them to ``create_deep_agent``.
+
+    Use this when you need middleware that is NOT auto-injected by
+    ``create_deep_agent()``.
+    """
+    model_id = model or settings.default_model
+    chat_model = _create_model(model_id, settings)
+
+    extra_middleware = _build_extra_middleware(
+        settings,
+        model=chat_model,
+        skills_sources=skills,
+        subagents=subagents,
+    )
+
+    return create_deep_agent(
+        model=chat_model,
+        tools=tools or [],
+        middleware=extra_middleware,
+        skills=skills,
+        subagents=subagents,
+        checkpointer=checkpointer,
+        store=store,
+    )
+
+
+def _build_extra_middleware(
+    settings: Settings,
+    *,
+    model,
+    skills_sources: list[str] | None = None,
+    subagents: Sequence | None = None,
+) -> list:
+    return build_full_middleware(
+        settings,
+        model=model,
+        skills_sources=skills_sources,
+        subagents=list(subagents) if subagents is not None else None,
     )
 
 
