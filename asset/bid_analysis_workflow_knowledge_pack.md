@@ -12,7 +12,7 @@
 - 新增 skill 版本选择、图像证据预核验、证据锚点、PDF 聚焦框预览。
 - 新增 compare 结果页、人工复核覆盖记录、阶段重跑或追加投标文件。
 
-本文件只作为当前 Agent 项目的改造指导。任务 API、安全边界、run-scoped artifacts、事件脱敏、前端 Hook/API 分层仍以 `asset/task_workspace_runtime_knowledge_pack.md` 中已有规则为准。
+本文件只作为当前 Agent 项目的改造指导。任务 API、安全边界、run-scoped artifacts、事件脱敏、前端 Hook/API 分层仍以 `asset/deepagents_platform_knowledge_pack.md` 中已有规则为准。
 
 ## 业务规则
 
@@ -125,15 +125,15 @@ skill 引用建议结构：
 
 - `backend/app/main.py`：任务 API 边界，未来 PDF 上传、stage rerun、append bid、evidence preview API 可在此接入。
 - `backend/app/storage.py`：run-scoped artifact、事件、路径安全和 artifact 访问。
-- `backend/app/runner.py`：任务生命周期、路由、事件顺序和产物推广。
-- `backend/app/analysis.py`：现有 Markdown/JSON 招投标分析兼容路径和 evidence 归一化。
-- `backend/app/agent_profiles.py`：现有后端托管的 bid multi-agent profile 和安全 subagent spec。
-- `backend/app/deep_agent_runtime.py`：DeepAgent 审计文件工作区和产物推广。
-- `backend/app/tools.py`：审计 workspace 文件工具，未来 PDF stage 不应绕过该边界。
+- `backend/app/runner/core.py`：任务生命周期、路由、事件顺序和产物推广。
+- `backend/app/agent/profiles.py`：现有后端托管的 bid multi-agent profile 和安全 subagent spec（目前仅有占位文档字符串）。
+- `backend/app/tools/registry.py`：审计 workspace 文件工具注册，未来 PDF stage 不应绕过该边界。
 - `frontend/app/page.tsx`：任务工作区挂载。
 - `frontend/hooks/use-task-workspace.ts`：任务状态、轮询、上传和 artifact 操作。
 - `frontend/lib/task-api.ts`：token-aware API 调用和 artifact fetch。
 - `frontend/app/workspace-view.ts`：run 分组日志和 artifact 渲染。
+
+注：分析逻辑分布在 `backend/app/tools/` 和 `backend/app/subagents/` 模块中，不再有独立的 `analysis.py` 或 `deep_agent_runtime.py` 文件。
 
 未来若实现 PDF compare，可考虑新增：
 
@@ -145,9 +145,9 @@ skill 引用建议结构：
 
 ## 关联测试路径
 
-- `backend/tests/workflow/test_workflow.py`：当前招投标工作流和 artifact 期望。
-- `backend/tests/runtime/test_deep_agent_runtime.py`：DeepAgent 安全工具和 profile 行为。
-- `backend/tests/security/test_secret_boundary.py`：密钥和路径泄漏测试。
+- `backend/tests/unit/agent/test_factory.py`：Agent 工厂和 profile 行为测试。
+- `backend/tests/unit/tools/test_registry.py`：工具注册和安全边界测试。
+- `backend/tests/integration/test_agent_build.py`：Agent 构建集成测试。
 - `frontend/tests/state/test_task_state.test.ts`：日志、artifact、reasoning、orchestration payload 归一化。
 - `frontend/tests/workspace/test_workspace_view.test.ts`：artifact 和 run card 渲染。
 - `frontend/tests/upload/test_file_upload.test.ts`：上传过滤和校验行为。

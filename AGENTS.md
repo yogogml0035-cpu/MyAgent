@@ -7,10 +7,12 @@
 - 后端：`backend/`，FastAPI + `uv`，入口为 `backend/app/main.py`。
 - 前端：`frontend/`，Next.js app router，主界面由 `frontend/app/page.tsx` 挂载，聊天工作区组件在 `frontend/components/chat/`，任务状态编排在 `frontend/hooks/use-task-workspace.ts`，API 封装在 `frontend/lib/task-api.ts`。
 - 默认任务存储：`backend/storage/sessions/`。
-- 后端测试：`backend/tests/`，当前任务工作流集成套件在 `backend/tests/workflow/test_workflow.py`。
+- 后端测试：`backend/tests/`，按 `unit/`（agent、models、tools、skills、streaming、runner）、`integration/`、`e2e/`（预留）分目录，文件名必须以 `test_` 开头。
 - 前端测试：`frontend/tests/`，按 `state/`、`workspace/`、`upload/`、`model/` 分类，文件名必须以 `test_` 开头。
 - 长期知识包索引：`asset/README.md`。
-- 当前唯一长期主知识包：`asset/task_workspace_runtime_knowledge_pack.md`，覆盖任务运行、前端工作区、前端架构边界、机器人头像、模型提供方、安全边界、上传限制、产物访问和测试布局。
+- 当前长期主知识包：`asset/deepagents_platform_knowledge_pack.md`，覆盖 DeepAgents 通用 Agent 平台架构、create_deep_agent 工厂、多模型 Provider、中间件栈、流式 SSE 输出、SubAgent 子智能体、Skill 加载、文件系统工具、联网搜索工具、TaskRunner 运行时、API 路由、前端 SSE 适配、安全边界、测试布局及已知坑点。
+- 主题知识包：`asset/bid_analysis_workflow_knowledge_pack.md`（招投标分析工作流）、`asset/tender_workflow_breakdown.md`（招标工作流分解）。
+- 已归档：`asset/task_workspace_runtime_knowledge_pack.md`（已被 `deepagents_platform_knowledge_pack.md` 完整替代，不再主动维护）。
 
 ## 工作前必须读取
 
@@ -34,7 +36,7 @@
 - 前端行为变化至少补或更新表单、状态转换器、URL 映射、产物请求或注册表测试。
 - 影响关键用户路径时，再补创建任务、上传文件、发送消息、事件轮询、完成状态、产物打开/下载的集成验证；必要时补 E2E。
 - 所有新增、拆分或重命名的测试文件名称必须以 `test_` 开头。Python 测试使用 `test_*.py`；前端 Node 测试使用 `test_*.test.ts`。
-- 测试文件必须按测试类型分类到对应模块目录。后端当前集成/工作流测试放在 `backend/tests/workflow/`；新增窄域测试按 `api/`、`runtime/`、`storage/`、`security/`、`analysis/` 等模块建目录。前端当前分类为 `frontend/tests/state/`、`frontend/tests/workspace/`、`frontend/tests/upload/`、`frontend/tests/model/`。
+- 测试文件必须按测试类型分类到对应模块目录。后端当前测试按 `backend/tests/unit/`（agent、models、tools、skills、streaming、runner）、`backend/tests/integration/`、`backend/tests/e2e/`（预留）分目录。前端当前分类为 `frontend/tests/state/`、`frontend/tests/workspace/`、`frontend/tests/upload/`、`frontend/tests/model/`。
 - 调整测试目录或命名时，必须同步测试 runner、`README.md`、`asset/README.md`、相关知识包和本文件中的测试路径。
 - 只改文档时至少运行 `git diff --check`，并说明未运行代码测试的理由。
 
@@ -71,13 +73,16 @@
 
 ### 当前有效知识包
 
-- `asset/task_workspace_runtime_knowledge_pack.md`：任务 API、状态机、runner、事件日志、版本化产物、本地 JSON 存储、前端任务工作区、前端组件/Hook/API 分层、文件上传、消息提交、状态轮询、日志合并、产物打开、机器人头像、provider 密钥、环境变量、访问令牌、CORS、本地优先安全边界、上传/JSON 限制和测试布局。
+- `asset/deepagents_platform_knowledge_pack.md`：主知识包，覆盖 DeepAgents 通用 Agent 平台架构——包括 create_deep_agent 工厂、多模型 Provider（init_chat_model）、中间件栈、流式 SSE 输出、SubAgent 子智能体、Skill 加载、文件系统工具、联网搜索工具、TaskRunner 运行时、API 路由、前端 SSE 适配、安全边界、测试布局及已知坑点。
+- `asset/bid_analysis_workflow_knowledge_pack.md`：招投标分析工作流指导，覆盖 PDF 招投标对比的业务规则、输入输出、边界条件和回归风险。
+- `asset/tender_workflow_breakdown.md`：招标工作流分解。
+- 已归档：`asset/task_workspace_runtime_knowledge_pack.md`（已被 `deepagents_platform_knowledge_pack.md` 完整替代，不再主动维护）。
 - `asset/README.md` 是唯一有效索引；新增、删除或改名知识包时必须同步更新。
 
 ### 需求修改后的知识回写路由
 
-- 改后端任务 API、状态机、任务 runner、取消/中断、事件日志、产物下载、本地存储、前端任务创建、文件上传、消息提交、状态轮询、日志合并、产物 URL、模型提供方、环境变量、访问令牌、CORS、本地优先安全边界、上传/JSON 限制或测试布局：优先沉淀到 `asset/task_workspace_runtime_knowledge_pack.md`。
-- 改 Markdown/JSON 招投标文档分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：默认先更新 `asset/task_workspace_runtime_knowledge_pack.md` 中的相关稳定边界；若形成独立长期主题，先在 `asset/README.md` 登记，再新增或更新 `asset/bid_analysis_workflow_knowledge_pack.md`。
+- 改后端任务 API、状态机、任务 runner、取消/中断、事件日志、产物下载、本地存储、前端任务创建、文件上传、消息提交、状态轮询、日志合并、产物 URL、模型提供方、环境变量、访问令牌、CORS、本地优先安全边界、上传/JSON 限制或测试布局：优先沉淀到 `asset/deepagents_platform_knowledge_pack.md`。
+- 改 Markdown/JSON 招投标文档分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：默认先更新 `asset/deepagents_platform_knowledge_pack.md` 中的相关稳定边界；若形成独立长期主题，先在 `asset/README.md` 登记，再新增或更新 `asset/bid_analysis_workflow_knowledge_pack.md`。
 - 改本地启动脚本、WSL 端口清理或开发终端启动方式：通常只更新 `README.md` 和本文件的本地开发建议；只有脚本演进为跨需求复用的稳定子系统时，才单独新增知识包。
 - 上述文件名是建议路由；若 `asset/README.md` 已存在更合适主包，以索引为准。
 - 若新规则会影响未来多数需求，再把它从知识包提升写回 `AGENTS.md`。
