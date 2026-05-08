@@ -209,9 +209,12 @@ export function useTaskWorkspace() {
 
     let disposed = false;
     let es: EventSource | null = null;
+    let retryTimeoutId: number | null = null;
+    let retryCount = 0;
 
     function startSSE() {
       if (disposed) return;
+      retryCount = 0;
 
       es = createTaskEventSource(
         taskId,
@@ -238,10 +241,12 @@ export function useTaskWorkspace() {
           es = null;
           void Promise.all([refreshTaskSummary(), refreshTaskEvents()]).catch(() => {});
           if (!disposed) {
-            const retry = window.setTimeout(() => {
+            const backoffMs = Math.min(3000 * Math.pow(2, retryCount), 30000);
+            retryCount++;
+            retryTimeoutId = window.setTimeout(() => {
+              retryTimeoutId = null;
               if (!disposed) startSSE();
-            }, 3000);
-            return () => window.clearTimeout(retry);
+            }, backoffMs);
           }
         },
       );
@@ -252,6 +257,9 @@ export function useTaskWorkspace() {
     return () => {
       disposed = true;
       es?.close();
+      if (retryTimeoutId !== null) {
+        window.clearTimeout(retryTimeoutId);
+      }
     };
   }, [activeTask, refreshTaskEvents, refreshTaskSummary, taskId]);
 
