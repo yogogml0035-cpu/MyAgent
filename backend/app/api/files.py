@@ -21,9 +21,10 @@ def _runner(request: Request):
 def upload_files(task_id: str, files: list[UploadFile], request: Request) -> TaskState:
     storage = _storage(request)
     runner = _runner(request)
-    state = storage.get_task(task_id, include_events=False)
-    if state.status == "idle" and not state.messages:
-        raise HTTPException(status_code=404, detail="任务不存在")
+    try:
+        storage.get_task(task_id, include_events=False)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在") from None
     if runner.is_running(task_id):
         raise HTTPException(status_code=409, detail="任务运行中不能上传文件")
     settings = request.app.state.settings
