@@ -2,15 +2,14 @@
 
 from __future__ import annotations
 
+from typing import cast
+
 from app.config import MODEL_REGISTRY, Settings
+from app.models.provider import _PROVIDER_KEY_ATTR
 
-_PROVIDER_KEY_ATTR: dict[str, str] = {
-    "deepseek": "deepseek_api_key",
-    "openai": "openai_api_key",
-    "anthropic": "anthropic_api_key",
+_MODEL_INDEX: dict[str, dict] = {
+    cast(str, entry["id"]): entry for entry in MODEL_REGISTRY
 }
-
-_MODEL_INDEX: dict[str, dict] = {entry["id"]: entry for entry in MODEL_REGISTRY}
 
 
 def validate_model(model_id: str) -> bool:
@@ -31,7 +30,7 @@ def list_available_models(settings: Settings) -> list[dict]:
     """
     results: list[dict] = []
     for entry in MODEL_REGISTRY:
-        provider = entry["provider"]
+        provider = cast(str, entry["provider"])
         key_attr = _PROVIDER_KEY_ATTR.get(provider)
         has_key = bool(key_attr and getattr(settings, key_attr, None))
         results.append({

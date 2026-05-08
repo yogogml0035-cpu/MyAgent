@@ -27,7 +27,7 @@ def build_agent(
     settings: Settings,
     *,
     model: str | None = None,
-    tools: list[BaseTool | Callable | dict] | None = None,
+    tools: Sequence[BaseTool | Callable | dict] | None = None,
     skills: list[str] | None = None,
     subagents: Sequence | None = None,
     checkpointer=None,

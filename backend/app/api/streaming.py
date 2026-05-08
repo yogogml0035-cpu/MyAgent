@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncGenerator
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import StreamingResponse
@@ -22,7 +23,7 @@ def _runner(request: Request):
     return request.app.state.runner
 
 
-async def _event_stream(task_id: str, request: Request) -> str:
+async def _event_stream(task_id: str, request: Request) -> AsyncGenerator[str, None]:
     storage = _storage(request)
     runner = _runner(request)
     last_event_id: str | None = None

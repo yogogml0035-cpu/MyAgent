@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, Literal, cast
 
 from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
 logger = logging.getLogger(__name__)
@@ -47,10 +48,13 @@ async def stream_agent(
     input_payload: dict[str, Any] = {"messages": messages}
     run_config = config or {}
 
+    _V2_MODES: list[Literal["messages", "updates"]] = ["messages", "updates"]
+
     async for mode, payload in agent.astream(
         input_payload,
-        config=run_config,
-        stream_mode=["messages", "updates"],
+        cast("RunnableConfig", run_config),
+        stream_mode=_V2_MODES,
+        version="v2",
     ):
         if mode == "messages":
             async for event in _handle_messages_mode(payload):
