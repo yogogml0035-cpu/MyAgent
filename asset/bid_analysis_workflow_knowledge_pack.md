@@ -126,7 +126,8 @@ skill 引用建议结构：
 - `backend/app/main.py`：任务 API 边界，未来 PDF 上传、stage rerun、append bid、evidence preview API 可在此接入。
 - `backend/app/storage.py`：run-scoped artifact、事件、路径安全和 artifact 访问。
 - `backend/app/runner/core.py`：任务生命周期、路由、事件顺序和产物推广。
-- `backend/app/agent/profiles.py`：现有后端托管的 bid multi-agent profile 和安全 subagent spec（目前仅有占位文档字符串）。
+- `backend/app/subagents/definitions.py`：内置 SubAgent 定义（researcher、coder、file-analyst），覆盖招投标分析场景的 subagent 配置。
+- `backend/app/subagents/registry.py`：SubAgent 查找和注册。
 - `backend/app/tools/registry.py`：审计 workspace 文件工具注册，未来 PDF stage 不应绕过该边界。
 - `frontend/app/page.tsx`：任务工作区挂载。
 - `frontend/hooks/use-task-workspace.ts`：任务状态、轮询、上传和 artifact 操作。
