@@ -92,4 +92,6 @@ async def cancel_task(task_id: str, request: Request) -> TaskState:
     if not runner.is_running(task_id):
         raise HTTPException(status_code=409, detail="任务未在运行中")
     await runner.cancel(task_id)
+    storage.update_task_if_status({"running"}, status="cancelled")
+    storage.append_event(task_id, "task_cancelled", "任务已取消。", {"previous_status": "running"})
     return storage.get_task(task_id)
