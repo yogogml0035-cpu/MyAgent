@@ -4,10 +4,10 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from .intent import InputScope, TaskMode
-
 MAX_MESSAGE_CHARS = 8_000
 
+TaskMode = Literal["auto", "chat", "analysis"]
+InputScope = Literal["auto", "documents_only", "chat_only"]
 TaskStatus = Literal[
     "idle", "running", "complete", "failed", "cancelled", "needs_input", "interrupted"
 ]
@@ -15,12 +15,12 @@ TaskStatus = Literal[
 
 class TaskCreateRequest(BaseModel):
     message: str | None = Field(default=None, max_length=MAX_MESSAGE_CHARS)
-    model: str = "deepseek-reasoner"
+    model: str = "deepseek:deepseek-chat"
 
 
 class MessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_CHARS)
-    model: str = "deepseek-reasoner"
+    model: str = "deepseek:deepseek-chat"
     mode: TaskMode = "auto"
     input_scope: InputScope = "auto"
 

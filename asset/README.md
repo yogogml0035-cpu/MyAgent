@@ -4,7 +4,11 @@
 
 ## Current Knowledge Packs
 
-- `asset/task_workspace_runtime_knowledge_pack.md`: the single main package for backend task runtime, DeepAgent multi-agent profile routing, frontend task workspace, user-facing live log projection, streamed `AI回复` result panels, frontend architecture boundaries, frontend visual-token boundaries, text-only empty-state wordmark, row-level robot avatar treatment, composer/message-card alignment, clipboard feedback, model-provider security, upload limits, local-first access boundaries, artifact handling, and test layout.
+- `asset/deepagents_platform_knowledge_pack.md`: 主知识包，覆盖 DeepAgents 通用 Agent 平台架构——包括 create_deep_agent 工厂、多模型 Provider（init_chat_model）、中间件栈、流式 SSE 输出、SubAgent 子智能体、Skill 加载、文件系统工具、联网搜索工具、TaskRunner 运行时、API 路由、前端 SSE 适配、安全边界、测试布局及已知坑点。
+
+## Archived Knowledge Packs
+
+- `asset/task_workspace_runtime_knowledge_pack.md`: 已被 `deepagents_platform_knowledge_pack.md` 完整替代，仅保留作为历史参考，不再主动维护。
 
 ## Registration Rules
 
@@ -46,4 +50,4 @@ Each knowledge pack should include:
 
 These filenames are suggested routes, not current packages:
 
-- `asset/bid_analysis_workflow_knowledge_pack.md` for Markdown document classification, bid-collusion analysis categories, sub-agent assignment, evidence normalization, and report generation.
+- `asset/multi_user_knowledge_pack.md` for multi-user session management, user authentication, and per-user task isolation when the platform evolves beyond single-user local mode.

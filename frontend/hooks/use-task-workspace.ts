@@ -12,6 +12,7 @@ import {
   formatNeedsInput,
   isTaskActive,
   mergeExecutionLogs,
+  normalizeEventRecords,
 } from "../app/task-state";
 import {
   buildModelDisplayOptions,
@@ -30,6 +31,7 @@ import {
   TASK_API_BASE_URL,
   cancelTask,
   createTask,
+  createTaskEventSource,
   fetchArtifactBlob,
   fetchModelOptions,
   fetchTask,
@@ -206,12 +208,52 @@ export function useTaskWorkspace() {
       return;
     }
 
-    const timer = window.setInterval(() => {
-      void refreshTaskSummary();
-      void refreshTaskEvents();
-    }, 700);
+    let disposed = false;
+    let es: EventSource | null = null;
 
-    return () => window.clearInterval(timer);
+    function startSSE() {
+      if (disposed) return;
+
+      es = createTaskEventSource(
+        taskId,
+        (event) => {
+          if (disposed) return;
+          try {
+            const payload = JSON.parse(event.data);
+            if (payload && (payload.type === "log" || payload.type === "tool_call" || payload.type === "tool_result" || Array.isArray(payload))) {
+              const incoming = normalizeEventRecords(Array.isArray(payload) ? payload : [payload]);
+              if (incoming.length > 0) {
+                setLogs((current) => mergeExecutionLogs(current, incoming));
+              }
+            }
+            if (!payload || payload.type === "state" || payload.type === "done") {
+              void refreshTaskSummary();
+            }
+          } catch {
+            void refreshTaskSummary();
+          }
+        },
+        () => {
+          if (disposed) return;
+          es?.close();
+          es = null;
+          void Promise.all([refreshTaskSummary(), refreshTaskEvents()]).catch(() => {});
+          if (!disposed) {
+            const retry = window.setTimeout(() => {
+              if (!disposed) startSSE();
+            }, 3000);
+            return () => window.clearTimeout(retry);
+          }
+        },
+      );
+    }
+
+    startSSE();
+
+    return () => {
+      disposed = true;
+      es?.close();
+    };
   }, [activeTask, refreshTaskEvents, refreshTaskSummary, taskId]);
 
   useEffect(() => {

@@ -1,41 +1,49 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from hmac import compare_digest
 from ipaddress import ip_address
-from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
-from .model_provider import ProviderRouter
-from .runner import TaskRunner
-from .schemas import (
-    EventRecord,
-    MessageRequest,
-    ModelOption,
-    TaskCreateRequest,
-    TaskState,
-    TaskSummary,
-)
-from .settings import MODEL_REGISTRY, Settings, enforce_single_process_runtime, load_settings
-from .storage import TaskStorage, UploadConflictError, UploadLimitError
+from .api.files import router as files_router
+from .api.models import router as models_router
+from .api.streaming import router as streaming_router
+from .api.tasks import router as tasks_router
+from .config import Settings, enforce_single_process_runtime, load_settings
+from .runner.core import TaskRunner
+from .storage import TaskStorage
+
+logger = logging.getLogger(__name__)
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
-    resolved_settings = settings or load_settings()
+    resolved = settings or load_settings()
     enforce_single_process_runtime()
-    storage = TaskStorage(resolved_settings.task_root)
-    storage.interrupt_running_tasks("后端启动或重载时中断了任务。")
-    runner = TaskRunner(storage, ProviderRouter(resolved_settings), resolved_settings)
 
-    app = FastAPI(title="MyAgent Backend", version="0.1.0")
-    app.state.settings = resolved_settings
+    app = FastAPI(title="MyAgent Backend", version="0.2.0")
+    app.state.settings = resolved
+
+    storage = TaskStorage(resolved.task_root)
+    runner = TaskRunner(resolved)
     app.state.storage = storage
     app.state.runner = runner
+
+    @app.on_event("startup")
+    def on_startup() -> None:
+        interrupted = storage.interrupt_running_tasks("后端启动或重载时中断了任务。")
+        if interrupted:
+            logger.info("Startup interrupted %d running task(s): %s", len(interrupted), interrupted)
+
+    app.include_router(tasks_router)
+    app.include_router(files_router)
+    app.include_router(streaming_router)
+    app.include_router(models_router)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_exception_handler(
@@ -50,30 +58,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def enforce_request_limits_and_task_access(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        if request.url.path.startswith("/api/tasks") and request.method != "OPTIONS":
-            access_response = authorize_task_request(request, resolved_settings)
+        if request.url.path.startswith("/api/") and request.method != "OPTIONS":
+            access_response = authorize_task_request(request, resolved)
             if access_response is not None:
                 return access_response
-
-        if request.method == "POST" and request.url.path.endswith("/files"):
-            content_length = request.headers.get("content-length")
-            if (
-                content_length is not None
-                and content_length.isdigit()
-                and int(content_length) > resolved_settings.max_upload_request_bytes
-            ):
-                return JSONResponse(
-                    status_code=413,
-                    content={
-                        "detail": (
-                            "上传请求超过 "
-                            f"{resolved_settings.max_upload_request_bytes} 字节总量限制"
-                        )
-                    },
-                )
         if request.method in {"POST", "PUT", "PATCH"} and is_json_request(request):
             json_limit_response = await enforce_json_body_limit(
-                request, resolved_settings.max_json_request_bytes
+                request, resolved.max_json_request_bytes
             )
             if json_limit_response is not None:
                 return json_limit_response
@@ -81,7 +72,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=list(resolved_settings.cors_origins),
+        allow_origins=list(resolved.cors_origins),
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "Authorization", "X-MyAgent-Token", "X-Agent-Chat-Token"],
@@ -91,135 +82,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.get("/api/models", response_model=list[ModelOption])
-    def list_models() -> list[dict[str, object]]:
-        return MODEL_REGISTRY
-
-    @app.post("/api/tasks", response_model=TaskState)
-    def create_task(request: TaskCreateRequest) -> TaskState:
-        validate_model(request.model)
-        if request.message is not None:
-            raise HTTPException(
-                status_code=400,
-                detail="请先创建不含初始消息的任务，再通过 /messages 发送消息。",
-            )
-        return storage.create_task(None, request.model)
-
-    @app.get("/api/tasks", response_model=list[TaskSummary])
-    def list_tasks() -> list[TaskSummary]:
-        return storage.list_task_summaries()
-
-    @app.get("/api/tasks/{task_id}", response_model=TaskState)
-    def get_task(task_id: str, include_events: bool = Query(True)) -> TaskState:
-        return require_task(storage, task_id, include_events=include_events)
-
-    @app.get("/api/tasks/{task_id}/events", response_model=list[EventRecord])
-    def get_task_events(task_id: str, after_id: str | None = None) -> list[EventRecord]:
-        require_task(storage, task_id, include_events=False)
-        return storage.read_events(task_id, after_id=after_id)
-
-    @app.post("/api/tasks/{task_id}/files", response_model=TaskState)
-    def upload_files(task_id: str, files: list[UploadFile] = File(...)) -> TaskState:
-        state = require_task(storage, task_id)
-        if state.status == "running" and not runner.is_running(task_id):
-            storage.mark_interrupted_if_running(
-                task_id, "任务已中断：当前没有运行器接管该任务。"
-            )
-            state = storage.get_task(task_id)
-        if state.status == "running" or runner.is_running(task_id):
-            raise HTTPException(
-                status_code=409,
-                detail="任务运行中不能上传文件",
-            )
-        try:
-            storage.save_uploads(
-                task_id,
-                files,
-                max_files=resolved_settings.max_upload_files,
-                max_file_bytes=resolved_settings.max_upload_file_bytes,
-                max_request_bytes=resolved_settings.max_upload_request_bytes,
-            )
-        except UploadLimitError as exc:
-            raise HTTPException(status_code=413, detail=str(exc)) from exc
-        except UploadConflictError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        return storage.get_task(task_id)
-
-    @app.post("/api/tasks/{task_id}/messages", response_model=TaskState)
-    def send_message(task_id: str, request: MessageRequest) -> TaskState:
-        require_task(storage, task_id)
-        validate_model(request.model)
-        try:
-            runner.start(
-                task_id,
-                request.message,
-                request.model,
-                mode=request.mode,
-                input_scope=request.input_scope,
-            )
-        except RuntimeError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from exc
-        return storage.get_task(task_id)
-
-    @app.post("/api/tasks/{task_id}/cancel", response_model=TaskState)
-    def cancel_task(task_id: str) -> TaskState:
-        require_task(storage, task_id)
-        runner.cancel(task_id)
-        return storage.get_task(task_id)
-
-    @app.get("/api/tasks/{task_id}/runs/{run_id}/artifacts/{artifact_name}")
-    def get_run_artifact(task_id: str, run_id: str, artifact_name: str) -> FileResponse:
-        require_task(storage, task_id)
-        try:
-            path = storage.resolve_run_artifact(task_id, run_id, artifact_name)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="未找到产物") from None
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="未找到产物")
-        media_type = media_type_for(path)
-        return FileResponse(path, media_type=media_type, filename=path.name)
-
-    @app.get("/api/tasks/{task_id}/artifacts/{artifact_name}")
-    def get_artifact(task_id: str, artifact_name: str) -> FileResponse:
-        require_task(storage, task_id)
-        try:
-            path = storage.resolve_artifact(task_id, artifact_name)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except FileNotFoundError:
-            raise HTTPException(status_code=404, detail="未找到产物") from None
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="未找到产物")
-        media_type = media_type_for(path)
-        return FileResponse(path, media_type=media_type, filename=path.name)
-
     return app
-
-
-def validate_model(model: str) -> None:
-    if model not in {item["id"] for item in MODEL_REGISTRY}:
-        raise HTTPException(status_code=400, detail=f"不支持的模型：{model}")
-
-
-def require_task(storage: TaskStorage, task_id: str, *, include_events: bool = True) -> TaskState:
-    try:
-        return storage.get_task(task_id, include_events=include_events)
-    except (FileNotFoundError, ValueError):
-        raise HTTPException(status_code=404, detail="未找到任务") from None
-
-
-def media_type_for(path: Path) -> str:
-    if path.suffix.lower() == ".html":
-        return "text/html"
-    if path.suffix.lower() == ".md":
-        return "text/markdown"
-    if path.suffix.lower() == ".json":
-        return "application/json"
-    return "text/plain"
 
 
 def is_json_request(request: Request) -> bool:
@@ -235,7 +98,7 @@ async def enforce_json_body_limit(request: Request, max_bytes: int) -> JSONRespo
                 status_code=413,
                 content={"detail": f"JSON 请求超过 {max_bytes} 字节限制"},
             )
-    request._body = bytes(body)  # noqa: SLF001 - Starlette reuses this for downstream parsing.
+    request._body = bytes(body)  # noqa: SLF001
     return None
 
 

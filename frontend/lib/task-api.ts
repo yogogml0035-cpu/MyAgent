@@ -126,6 +126,28 @@ export async function cancelTask(id: string) {
   });
 }
 
+export function createTaskEventSource(
+  taskId: string,
+  onEvent: (event: MessageEvent) => void,
+  onError?: (error: Event) => void,
+): EventSource {
+  const url = new URL(
+    `${TASK_API_BASE_URL}/api/tasks/${encodeURIComponent(taskId)}/stream`,
+    window.location.origin,
+  );
+
+  if (TASK_API_ACCESS_TOKEN) {
+    url.searchParams.set("token", TASK_API_ACCESS_TOKEN);
+  }
+
+  const es = new EventSource(url.toString());
+  es.onmessage = onEvent;
+  if (onError) {
+    es.onerror = onError;
+  }
+  return es;
+}
+
 export async function fetchArtifactBlob(artifact: Artifact, taskId: string) {
   const request = buildArtifactRequest(
     artifact,
