@@ -48,7 +48,11 @@ export function TaskConversation({
     if (!canvas) {
       return;
     }
-    canvas.scrollTo({ top: canvas.scrollHeight, behavior: "smooth" });
+    const threshold = 120;
+    const distanceFromBottom = canvas.scrollHeight - canvas.scrollTop - canvas.clientHeight;
+    if (distanceFromBottom < threshold) {
+      canvas.scrollTo({ top: canvas.scrollHeight, behavior: "smooth" });
+    }
   }, [conversationStreamItems, hasConversation, noticeMessages]);
 
   function artifactCanOpen(artifact: Artifact) {

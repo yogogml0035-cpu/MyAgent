@@ -45,7 +45,11 @@ export async function requestTaskJson<T>(path: string, init?: RequestInit): Prom
     throw new Error(formatHttpErrorMessage(response.status, response.statusText, text));
   }
 
-  return response.json() as Promise<T>;
+  try {
+    return (await response.json()) as T;
+  } catch {
+    throw new Error("后端返回了非预期的响应格式。");
+  }
 }
 
 export function formatTaskApiFailure(caught: unknown) {
