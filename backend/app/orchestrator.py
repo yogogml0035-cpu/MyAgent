@@ -50,6 +50,7 @@ class DeepAgentOrchestrator:
         agent_profile: AgentProfile = DEFAULT_FILE_AGENT_PROFILE,
         read_chunk_chars: int = 1024 * 1024,
         write_chunk_chars: int = 1024 * 1024,
+        tavily_api_key: str = "",
     ) -> None:
         self.storage = storage
         self.task_id = task_id
@@ -75,6 +76,7 @@ class DeepAgentOrchestrator:
             self.file_tools,
             agent_factory=agent_factory,
             activity_sink=self._append_activity,
+            tavily_api_key=tavily_api_key,
         )
 
     def run(self, message: str) -> DeepAgentRunResult:

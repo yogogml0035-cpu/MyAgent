@@ -1102,7 +1102,7 @@ def test_auto_bid_prompt_selects_bid_multi_agent_profile(
         "report-writing-agent",
     ]
     assert all(
-        names == {"list_dir", "read_file", "write_file"}
+        names == {"list_dir", "read_file", "write_file", "tavily_search"}
         for names in captured_subagent_tool_names
     )
     assert run_manifest["agent_profile"]["id"] == BID_MULTI_AGENT_PROFILE_ID

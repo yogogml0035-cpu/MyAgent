@@ -444,6 +444,7 @@ class TaskRunner:
                         controller=controller,
                         uploads=selected_uploads,
                         agent_profile=agent_profile,
+                        tavily_api_key=self.settings.tavily_api_key,
                     )
                     deep_agent_result = orchestrator.run(message)
                     artifact_names = deep_agent_result.metadata.get("promoted_artifacts")
