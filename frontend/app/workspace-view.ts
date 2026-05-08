@@ -438,45 +438,6 @@ function formatLegacyLiveSummary(log: ExecutionLog) {
   return "";
 }
 
-export function formatAgentActivityKindLabel(kind: NonNullable<ExecutionLog["agentActivity"]>["activityKind"]) {
-  switch (kind) {
-    case "lifecycle":
-      return "生命周期";
-    case "progress":
-      return "进展";
-  }
-}
-
-export function formatAgentActivityPhaseLabel(phase: NonNullable<ExecutionLog["agentActivity"]>["phase"]) {
-  switch (phase) {
-    case "planning":
-      return "规划";
-    case "reasoning":
-      return "推理";
-    case "tool_use":
-      return "工具调用";
-    case "file_operation":
-      return "文件操作";
-    case "finalizing":
-      return "收尾";
-  }
-}
-
-export function formatAgentActivityStatusLabel(status: NonNullable<ExecutionLog["agentActivity"]>["status"]) {
-  switch (status) {
-    case "started":
-      return "已开始";
-    case "running":
-      return "进行中";
-    case "completed":
-      return "已完成";
-    case "failed":
-      return "失败";
-    case "skipped":
-      return "已跳过";
-  }
-}
-
 export function formatReasoningPhaseLabel(phase: NonNullable<ExecutionLog["reasoning"]>["phase"]) {
   switch (phase) {
     case "plan":
@@ -492,44 +453,6 @@ export function formatReasoningPhaseLabel(phase: NonNullable<ExecutionLog["reaso
     case "risk":
       return "风险";
   }
-}
-
-export function formatFileAuditOperationLabel(operation: string) {
-  switch (operation) {
-    case "list":
-      return "列目录";
-    case "read":
-      return "读文件";
-    case "write":
-      return "写文件";
-    case "edit":
-      return "编辑文件";
-    case "glob":
-      return "匹配文件";
-    case "grep":
-      return "检索文件";
-    default:
-      return operation;
-  }
-}
-
-export function formatFileAuditStatusLabel(status: string) {
-  switch (status) {
-    case "success":
-      return "成功";
-    case "denied":
-      return "被拒绝";
-    case "cancelled":
-      return "已取消";
-    case "failed":
-      return "失败";
-    default:
-      return status;
-  }
-}
-
-export function countReasoningLogs(logs: ExecutionLog[]) {
-  return logs.filter((log) => Boolean(log.reasoning)).length;
 }
 
 export function partitionVisibleLogs(
@@ -573,17 +496,6 @@ export function formatLogLevelLabel(level: ExecutionLog["level"] = "info") {
     case "info":
     default:
       return "信息";
-  }
-}
-
-export function formatSearchTraceKindLabel(kind: NonNullable<ExecutionLog["searchTrace"]>["kind"]) {
-  switch (kind) {
-    case "tool_call":
-      return "工具调用";
-    case "tool_result":
-      return "工具结果";
-    case "synthesis":
-      return "结果合成";
   }
 }
 

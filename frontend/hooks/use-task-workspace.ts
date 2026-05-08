@@ -28,7 +28,6 @@ import {
   buildWorkspaceNoticeMessages,
 } from "../app/workspace-view";
 import {
-  TASK_API_BASE_URL,
   cancelTask,
   createTask,
   createTaskEventSource,
@@ -473,7 +472,6 @@ export function useTaskWorkspace() {
   );
 
   return {
-    apiBaseUrl: TASK_API_BASE_URL,
     activeTask,
     canSend,
     copiedCopyKey,
