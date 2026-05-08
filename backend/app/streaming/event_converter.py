@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Literal
 
 from app.schemas import EventRecord
 
@@ -17,7 +17,7 @@ _TYPE_MAP: dict[str, str] = {
 }
 
 # Default level per event type.
-_LEVEL_MAP: dict[str, str] = {
+_LEVEL_MAP: dict[str, Literal["info", "success", "warning", "error"]] = {
     "agent_message": "info",
     "tool_call": "info",
     "tool_result": "info",
@@ -36,10 +36,10 @@ def convert_stream_event(
 
     Returns ``None`` for unrecognized event types.
     """
-    event_type = event.get("type")
+    event_type: str | None = event.get("type")
     data = event.get("data", {})
 
-    record_type = _TYPE_MAP.get(event_type)
+    record_type = _TYPE_MAP.get(event_type) if event_type is not None else None
     if record_type is None:
         return None
 

@@ -7,7 +7,7 @@ middleware that should be layered on top.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 if TYPE_CHECKING:
     from langchain.agents.middleware.types import AgentMiddleware
@@ -15,6 +15,7 @@ if TYPE_CHECKING:
     from app.config import Settings
 
 try:
+    from deepagents.backends import StateBackend
     from deepagents.middleware.skills import SkillsMiddleware
     from deepagents.middleware.subagents import SubAgentMiddleware
     from deepagents.middleware.summarization import create_summarization_middleware
@@ -38,20 +39,27 @@ def build_middleware(
     additional middleware the platform needs.
     """
     stack: list[AgentMiddleware] = []
+    backend = StateBackend()
 
     if skills_sources:
         stack.append(
-            SkillsMiddleware(
-                backend=None,
-                sources=skills_sources,
+            cast(
+                AgentMiddleware,
+                SkillsMiddleware(
+                    backend=backend,
+                    sources=skills_sources,
+                ),
             )
         )
 
     if subagents:
         stack.append(
-            SubAgentMiddleware(
-                backend=None,
-                subagents=subagents,
+            cast(
+                AgentMiddleware,
+                SubAgentMiddleware(
+                    backend=backend,
+                    subagents=subagents,
+                ),
             )
         )
 
@@ -69,6 +77,8 @@ def build_full_middleware(
     stack = build_middleware(settings, skills_sources=skills_sources, subagents=subagents)
 
     if model is not None:
-        stack.append(create_summarization_middleware(model=model, backend=None))
+        from langchain_core.language_models.chat_models import BaseChatModel
+
+        stack.append(create_summarization_middleware(model=cast(BaseChatModel, model), backend=StateBackend()))
 
     return stack
