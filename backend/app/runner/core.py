@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import uuid
 from typing import Any
 
 from langchain_core.messages import HumanMessage
@@ -13,6 +12,7 @@ from langchain_core.messages import HumanMessage
 from app.agent.factory import build_agent
 from app.config import Settings
 from app.schemas import EventRecord
+from app.storage import TaskStorage
 from app.streaming.event_converter import convert_stream_event
 from app.streaming.v2_adapter import stream_agent
 from app.tools.registry import get_platform_tools
@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 class TaskRunner:
     """Orchestrates agent execution for a task: build, stream, convert, collect."""
 
-    def __init__(self, settings: Settings) -> None:
+    def __init__(self, settings: Settings, storage: TaskStorage | None = None) -> None:
         self.settings = settings
+        self.storage = storage
         self._active_runs: dict[str, asyncio.Task[None]] = {}
 
     async def start(
@@ -33,6 +34,7 @@ class TaskRunner:
         message: str,
         *,
         model: str | None = None,
+        run_id: str,
     ) -> list[EventRecord]:
         """Start an agent run for a task and collect all emitted events.
 
@@ -40,7 +42,6 @@ class TaskRunner:
         :func:`app.streaming.event_converter.convert_stream_event`, and returns
         the collected :class:`EventRecord` list.
         """
-        run_id = str(uuid.uuid4())
         model_id = model or self.settings.default_model
 
         task_workspace = self.settings.workspace_root / task_id
@@ -73,6 +74,7 @@ class TaskRunner:
                 "Run %s for task %s timed out after %.1fs",
                 run_id, task_id, self.settings.agent_timeout_seconds,
             )
+            raise
         except asyncio.CancelledError:
             logger.info("Run %s for task %s was cancelled", run_id, task_id)
             raise
@@ -88,14 +90,40 @@ class TaskRunner:
         message: str,
         *,
         model: str | None = None,
+        run_id: str,
     ) -> None:
         """Fire-and-forget start — runs :meth:`start` in a managed ``asyncio.Task``."""
         if task_id in self._active_runs:
             raise RuntimeError(f"Task {task_id} already has an active run")
 
         async def _run() -> None:
+            assert self.storage is not None
             try:
-                await self.start(task_id, message, model=model)
+                collected = await self.start(task_id, message, model=model, run_id=run_id)
+                for record in collected:
+                    self.storage.append_event(
+                        task_id,
+                        record.type,
+                        record.message,
+                        record.payload,
+                        run_id=record.run_id,
+                        level=record.level,
+                    )
+                self.storage.update_task_if_status(task_id, {"running"}, status="complete", run_id=run_id)
+            except TimeoutError:
+                self.storage.update_task_if_status(
+                    task_id,
+                    {"running"},
+                    status="failed",
+                    error=f"运行超时（{self.settings.agent_timeout_seconds}秒）",
+                    run_id=run_id,
+                )
+            except asyncio.CancelledError:
+                self.storage.update_task_if_status(task_id, {"running"}, status="cancelled", run_id=run_id)
+                raise
+            except Exception as exc:
+                self.storage.update_task_if_status(task_id, {"running"}, status="failed", error=str(exc), run_id=run_id)
+                raise
             finally:
                 self._active_runs.pop(task_id, None)
 
