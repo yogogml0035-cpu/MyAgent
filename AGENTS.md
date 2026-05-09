@@ -6,10 +6,10 @@
 
 - 后端：`backend/`，FastAPI + `uv`，入口为 `backend/app/main.py`。
 - 前端：`frontend/`，Next.js app router，主界面由 `frontend/app/page.tsx` 挂载，聊天工作区组件在 `frontend/components/chat/`，任务状态编排在 `frontend/hooks/use-task-workspace.ts`，API 封装在 `frontend/lib/task-api.ts`。
+- 前端 E2E 验收目录：`frontend/e2e-playwright/`，用于浏览器端严格 E2E 验收、Playwright 相关资产和网页端截图证据。
 - 默认任务存储：`backend/storage/sessions/`。
 - 后端测试：`backend/tests/`，按 `unit/`（agent、models、tools、skills、streaming、runner、api、security、storage、session）、`integration/`、`e2e/`（预留）分目录，文件名必须以 `test_` 开头。
 - 前端测试：`frontend/tests/`，按 `state/`、`workspace/`、`upload/`、`model/` 分类，文件名必须以 `test_` 开头。
-- 长期知识包索引：`asset/README.md`。
 - 当前长期主知识包：`asset/deepagents_platform_knowledge_pack.md`，覆盖 DeepAgents 通用 Agent 平台架构、create_deep_agent 工厂、多模型 Provider、中间件栈、流式 SSE 输出、SubAgent 子智能体、Skill 加载、文件系统工具、联网搜索工具、TaskRunner 运行时、API 路由、前端 SSE 适配、安全边界、测试布局及已知坑点。
 - 主题知识包：`asset/bid_analysis_workflow_knowledge_pack.md`（招投标分析工作流）、`asset/tender_workflow_breakdown.md`（招标工作流分解）。
 
@@ -17,13 +17,13 @@
 
 - 涉及后端任务生命周期、API、存储、权限、模型或分析流程时，先读相关 `backend/app/` 代码和 `backend/tests/`。
 - 涉及前端表单、任务状态、URL 映射、产物打开或轮询时，先读 `frontend/app/page.tsx`、`frontend/hooks/use-task-workspace.ts`、`frontend/lib/task-api.ts`、`frontend/app/task-state.ts` 和 `frontend/tests/`。
-- 涉及长期规则或已形成稳定主题边界时，先读 `asset/README.md`，再读索引中列出的相关知识包。
+- 涉及 bug 修复、功能新增、交互改动或其他行为变更时，先确认 `frontend/e2e-playwright/` 中是否已有可复用的 E2E 场景和截图约定；若没有覆盖本次需求，需在同次修改中补齐。
+- 涉及长期规则或已形成稳定主题边界时，直接读取 `asset/` 下与当前主题最相关的知识包。
 - 搜索优先用 `rg` 或 `rg --files`。
 
 ## 知识包读取与同步
 
 - 影响稳定业务规则、输入输出、用户路径、运行边界或测试入口时，必须在 `asset/` 下新增或更新对应知识包。
-- 更新知识包前，优先更新 `asset/README.md` 中的索引。
 - 优先更新已有主题包；只有形成独立长期边界且无法并入现有主题时，才允许新建知识包。
 - 知识包只沉淀稳定边界、同步面、验证入口与回归风险，不保留单次排障时间线、临时脚本路径或已删除文件名。
 - 知识包至少包含：背景与范围、业务规则、输入输出样例、边界条件、已知坑点、关联代码路径、关联测试路径。
@@ -33,16 +33,21 @@
 
 - 后端行为变化至少补或更新 API、任务生命周期、存储、权限、模型路由或分析服务测试。
 - 前端行为变化至少补或更新表单、状态转换器、URL 映射、产物请求或注册表测试。
-- 影响关键用户路径时，再补创建任务、上传文件、发送消息、事件轮询、完成状态、产物打开/下载的集成验证；必要时补 E2E。
+- 任何 bug 修复、功能新增或其他行为变更，除对应单元/集成测试外，必须执行严格的浏览器端 E2E 验证；单测、集成测试、接口自测或静态代码检查都不能替代该验收。
+- 行为变更的 E2E 至少覆盖与本次需求相关的关键用户路径；创建任务、上传文件、发送消息、事件轮询、完成状态、产物打开/下载等链路中受影响的环节必须实跑。
+- E2E 验收必须基于实际启动的前后端服务，在网页端完成，并保留截图作为验收依据。
+- 验收截图统一存放在 `frontend/e2e-playwright/` 下，按需求或场景建立子目录；该目录必须保留 `README.md` 说明用途、命名建议和脱敏要求。
+- 若当前仓库尚未存在可覆盖本次需求的浏览器端 E2E 用例或执行入口，必须在同次需求中补齐后再交付。
 - 所有新增、拆分或重命名的测试文件名称必须以 `test_` 开头。Python 测试使用 `test_*.py`；前端 Node 测试使用 `test_*.test.ts`。
 - 测试文件必须按测试类型分类到对应模块目录。后端当前测试按 `backend/tests/unit/`（agent、models、tools、skills、streaming、runner、api、security、storage、session）、`backend/tests/integration/`、`backend/tests/e2e/`（预留）分目录。前端当前分类为 `frontend/tests/state/`、`frontend/tests/workspace/`、`frontend/tests/upload/`、`frontend/tests/model/`。
-- 调整测试目录或命名时，必须同步测试 runner、`README.md`、`asset/README.md`、相关知识包和本文件中的测试路径。
-- 只改文档时至少运行 `git diff --check`，并说明未运行代码测试的理由。
+- 调整测试目录或命名时，必须同步测试 runner、`README.md`、相关知识包和本文件中的测试路径。
+- 只改文档时至少运行 `git diff --check`，并说明未运行代码测试与未做 E2E 截图验收的理由。
 
 ## 最低交付标准
 
-- 对行为变更，代码、测试、知识包三者缺一不可。
-- 只补代码，不补测试或知识包，视为未完成。
+- 对 bug 修复、功能新增或任何行为变更，代码、测试、浏览器端 E2E 验收、截图证据、知识包五者缺一不可。
+- 只补代码，不补测试、E2E 截图证据或知识包，视为未完成。
+- 未运行实际网页端验收，或未在 `frontend/e2e-playwright/` 留存截图证据的行为变更，视为未完成。
 - 如果某次修改确实不需要知识包，必须在交付说明中明确原因，例如“仅修正文案/格式，未改变稳定业务规则或运行边界”。
 
 ## `asset/` 的使用规范
@@ -64,7 +69,7 @@
 ### 经验回写抽象准则
 
 - 修正完成后，只将未来会反复影响需求判断的通用经验写入 `asset/`；单次排障过程、临时脚本、具体调参记录或只服务某个文件的处理不进入长期知识。
-- 经验写入前先按 `asset/README.md` 路由到现有主包；只有形成独立稳定主题且无法并入现有主包时，才新增知识包并同步索引。
+- 经验写入前先判断能否并入现有主包；只有形成独立稳定主题且无法并入现有主包时，才新增知识包。
 - 经验应优先说明错误背后的原则或边界，而不是记录某次修改的具体值。具体数值、颜色、状态名、字段名只有已经成为稳定契约、输入输出样例或验证信号时才保留。
 - 经验应优先描述容易复发的模式，例如 API 状态转换、前端布局对齐、事件日志安全、产物访问或测试分类边界，而不是绑定某个页面、组件、函数或测试文件；必要路径只放在“关联代码路径”和“关联测试路径”中。
 - 写入前做可迁移性检查：去掉本次任务名、页面名、样例数据和具体数值后，这条经验仍能指导下一次同类决策，才值得沉淀到 `asset/`。
@@ -75,14 +80,13 @@
 - `asset/deepagents_platform_knowledge_pack.md`：主知识包，覆盖 DeepAgents 通用 Agent 平台架构——包括 create_deep_agent 工厂、多模型 Provider（init_chat_model）、中间件栈、流式 SSE 输出、SubAgent 子智能体、Skill 加载、文件系统工具、联网搜索工具、TaskRunner 运行时、API 路由、前端 SSE 适配、安全边界、测试布局及已知坑点。
 - `asset/bid_analysis_workflow_knowledge_pack.md`：招投标分析工作流指导，覆盖 PDF 招投标对比的业务规则、输入输出、边界条件和回归风险。
 - `asset/tender_workflow_breakdown.md`：招标工作流分解。
-- `asset/README.md` 是唯一有效索引；新增、删除或改名知识包时必须同步更新。
 
 ### 需求修改后的知识回写路由
 
 - 改后端任务 API、状态机、任务 runner、取消/中断、事件日志、产物下载、本地存储、前端任务创建、文件上传、消息提交、状态轮询、日志合并、产物 URL、模型提供方、环境变量、访问令牌、CORS、本地优先安全边界、上传/JSON 限制或测试布局：优先沉淀到 `asset/deepagents_platform_knowledge_pack.md`。
-- 改 Markdown/JSON 招投标文档分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：默认先更新 `asset/deepagents_platform_knowledge_pack.md` 中的相关稳定边界；若形成独立长期主题，先在 `asset/README.md` 登记，再新增或更新 `asset/bid_analysis_workflow_knowledge_pack.md`。
+- 改 Markdown/JSON 招投标文档分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：默认先更新 `asset/deepagents_platform_knowledge_pack.md` 中的相关稳定边界；若形成独立长期主题，再新增或更新 `asset/bid_analysis_workflow_knowledge_pack.md`。
 - 改本地启动脚本、WSL 端口清理或开发终端启动方式：通常只更新 `README.md` 和本文件的本地开发建议；只有脚本演进为跨需求复用的稳定子系统时，才单独新增知识包。
-- 上述文件名是建议路由；若 `asset/README.md` 已存在更合适主包，以索引为准。
+- 上述文件名是建议路由；若已有更合适的知识包，以实际主题边界为准。
 - 若新规则会影响未来多数需求，再把它从知识包提升写回 `AGENTS.md`。
 
 ## 前后端字段映射表
@@ -115,6 +119,7 @@
 - 修改本地脚本时至少运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -Help`、`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -DryRun`、`bash -n scripts/dev-terminal-runner.sh`、`bash -n scripts/stop-dev-ports.sh`、`./scripts/stop-dev-ports.sh --dry-run` 和 `git diff --check`。
 - 前端开发服务必须使用隔离的 `NEXT_DIST_DIR=.next-dev`，生产构建保留 `.next`；不要让 `next dev` 和 `next build` 写同一个目录。
 - 同一个前端开发产物目录只运行一个 `next dev`；并行开发服务可能污染生成产物。
+- 浏览器端验收截图统一放在 `frontend/e2e-playwright/`；该目录必须保留用途说明，不得沉淀客户敏感截图、密钥或访问令牌。
 - 启动脚本不得嵌入 provider 密钥、访问令牌、客户文档路径或本机私密绝对路径。非 loopback 访问仍必须遵守访问令牌与 CORS 边界。
 
 ## 运行与验证命令
@@ -143,6 +148,12 @@ npm run build
 ```bash
 git diff --check
 ```
+
+行为变更额外验收（必跑）：
+
+- 启动实际后端与前端服务实例，而不是只跑离线测试。
+- 执行当前仓库为本次需求准备的浏览器端 E2E 用例；若缺失则先补齐，再交付行为修改。
+- 在网页端完成人工复核并截图，截图存入 `frontend/e2e-playwright/`。
 
 ## 安全与运行边界
 
@@ -192,5 +203,7 @@ git diff --check
 
 - 说明改了哪些文件和为什么。
 - 说明运行了哪些验证命令。
+- 说明执行了哪些 E2E 场景、访问了哪些页面或 URL、截图证据保存到了哪些 `frontend/e2e-playwright/` 路径。
 - 若未补测试或知识包，说明原因。
+- 若未做 E2E 或未提供截图证据，必须明确说明这是纯文档变更；除纯文档/纯注释类修改外，不接受缺失。
 - 若发现用户需求本身会引入错误边界、过度设计或安全风险，必须直接指出并给出更稳妥的替代方案。

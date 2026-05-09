@@ -32,6 +32,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Auth middleware enforces loopback-only access by default; non-local access requires `MYAGENT_ACCESS_TOKEN`.
 - Frontend local development keeps `next dev` output in `.next-dev` and production builds in `.next` via `NEXT_DIST_DIR`, so dev caches and production build artifacts never share one output directory.
 - Frontend type checking runs `next typegen && tsc --noEmit`; `next-env.d.ts` is generated and ignored instead of being version-controlled.
+- Any bug fix, feature, or other behavior change must pass live browser E2E acceptance against a running frontend and backend, and screenshot evidence must be stored under `frontend/e2e-playwright/`. Unit, integration, API, lint, or build checks do not replace this requirement.
+- `frontend/e2e-playwright/` must keep a `README.md` comment file that explains the directory purpose, screenshot evidence role, and redaction expectations. If the repo lacks an E2E entrypoint for the changed scenario, add it in the same change before considering the work complete.
 - Repository-wide line-ending normalization is enforced with a root `.gitattributes`: text files default to LF, while PowerShell scripts use CRLF on checkout.
 
 ## Input And Output Examples
@@ -82,6 +84,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Frontend CI workflow: `.github/workflows/frontend-ci.yml`
 - Backend CI workflow: `.github/workflows/backend-ci.yml`
 - Frontend type generation and ignore rules: `frontend/package.json`, `frontend/.gitignore`, `frontend/tsconfig.json`
+- Browser E2E acceptance evidence: `frontend/e2e-playwright/README.md`
 - Repository line-ending policy: `.gitattributes`
 
 ## Related Test Paths
@@ -104,6 +107,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
   - `frontend/tests/workspace/`
   - `frontend/tests/upload/`
   - `frontend/tests/model/`
+- Browser E2E acceptance directory: `frontend/e2e-playwright/`
 - Test fixture: `backend/tests/conftest.py` (provides `test_settings` fixture with tmp_path)
 
 ## Verification Commands
@@ -124,6 +128,8 @@ npm run lint
 npm run build
 ```
 
+For any behavior-changing task, also run the relevant live browser E2E flow against the started app and save acceptance screenshots under `frontend/e2e-playwright/`. If the repo does not yet expose the needed E2E entrypoint for that flow, add it in the same change before closing the task.
+
 ## Frontend Stream Accumulation And Dynamic States
 
 - `workspace-view.ts:accumulateStreamedAnswer` concatenates all `assistant_answer_delta` chunks by `streamIndex` order. Do NOT revert to `latestStreamedAnswer` (which only kept the last delta) — that caused isolated punctuation characters to appear as the full AI reply.
@@ -141,3 +147,4 @@ npm run build
 - Concurrency risk if `max_concurrent_subagents` is changed without testing subagent parallel execution limits.
 - SSE event loss if `last_event_id` in `streaming.py` is reverted to `""` — the empty string causes `read_events(after_id="")` to return nothing because `after_id is None` is `False` and no event matches `id == ""`. E2E test `test_sse_drains_remaining_events_before_done` guards this.
 - Stream accumulation regression if `accumulateStreamedAnswer` is reverted to taking only the last delta — this would re-introduce the isolated punctuation card bug.
+- Acceptance drift if future changes rely only on unit/integration results and skip live browser E2E plus screenshot evidence; this repository now treats that as an incomplete delivery for behavior changes.

@@ -37,6 +37,14 @@ backend port, update `NEXT_PUBLIC_MYAGENT_API_BASE_URL` and backend
 
 The legacy `NEXT_PUBLIC_API_BASE_URL` name is still accepted for migrated local setups.
 
+## E2E Acceptance
+
+For every bug fix, feature, or other behavior change, run browser-side E2E against the live app and save screenshot evidence under `frontend/e2e-playwright/`.
+
+- Keep `frontend/e2e-playwright/README.md` in place as the directory comment.
+- Create subdirectories per scenario or task when storing screenshots.
+- Do not store screenshots that expose customer-sensitive documents, tokens, or secrets.
+
 Expected backend endpoints:
 
 - `POST /api/tasks` creates a task.

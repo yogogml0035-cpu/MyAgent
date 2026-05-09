@@ -33,3 +33,4 @@ backend/storage/tasks/*
 
 audits/
 .playwright-mcp/
+frontend/e2e-playwright/

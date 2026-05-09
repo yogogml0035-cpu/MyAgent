@@ -20,7 +20,8 @@ backend/storage/sessions/ 默认本地任务和产物存储目录
 frontend/                Next.js app-router 前端
 frontend/app/            UI 和任务状态映射代码
 frontend/tests/          前端测试，按 state/workspace/upload/model 分类
-asset/                   面向后续智能体协作的长期知识包索引
+frontend/e2e-playwright/ 浏览器端 E2E 与网页验收截图证据目录
+asset/                   面向后续智能体协作的长期知识包目录
 ```
 
 ## 环境要求
@@ -208,6 +209,16 @@ http://localhost:3001
 ```bash
 curl http://localhost:8001/health
 ```
+
+## 测试与验收要求
+
+对每次 bug 修复、功能新增或其他行为变更，除了对应的单元、集成、类型、lint 和构建验证外，还必须：
+
+1. 启动实际后端与前端服务。
+2. 运行与本次需求对应的浏览器端 E2E 场景；如果仓库里没有现成入口，需要在同次修改中补齐。
+3. 在网页端完成验收截图，并将图片证据保存到 `frontend/e2e-playwright/`。
+
+`frontend/e2e-playwright/README.md` 负责说明这个目录的用途、命名建议和脱敏要求。
 
 ## 本机部署与启动
 
