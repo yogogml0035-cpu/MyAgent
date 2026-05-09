@@ -23,7 +23,9 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Skills follow the DeepAgents SKILL.md convention: YAML frontmatter with `name` and `description`, plus Markdown instructions. Loaded from directories listed in `settings.skills_dirs`.
 - Streaming uses `agent.astream(input, stream_mode=["messages", "updates"])` via the v2 adapter. Events are converted to `EventRecord` objects via `event_converter.py`.
 - SSE endpoint at `GET /api/tasks/{task_id}/stream` provides real-time output. Frontend uses `EventSource` API with token as query parameter.
-- `TaskRunner` manages agent lifecycle: build agent → stream events → convert → collect results. Supports background execution via `start_background()` and cancellation via `cancel()`. Enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`.
+- `TaskRunner` manages agent lifecycle: build agent → stream events → convert → collect → persist events to storage → update task status. `TaskRunner.__init__` requires both `settings` and `storage` (injected from `main.py`). `start_background()` accepts `run_id` from `storage.start_run()` to ensure unified run_id across storage and streaming events. After agent execution, events are persisted via `storage.append_event()` and task status is updated to terminal state (`complete`/`failed`/`cancelled`). Supports cancellation via `cancel()`. Enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`.
+- API endpoints `create_task` and `send_message` are `async def` to allow `asyncio.create_task` on the event loop. `cancel_task` syncs storage status after `runner.cancel()`.
+- Filesystem tools are scoped to per-task workspace (`settings.workspace_root / task_id`), not the global sessions root. This prevents cross-task file access.
 - Task API routes follow REST conventions: `POST /api/tasks` (create), `GET /api/tasks` (list), `GET /api/tasks/{id}` (read), `POST /api/tasks/{id}/messages` (send message), `POST /api/tasks/{id}/cancel` (cancel).
 - Auth middleware enforces loopback-only access by default; non-local access requires `MYAGENT_ACCESS_TOKEN`.
 

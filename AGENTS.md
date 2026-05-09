@@ -152,6 +152,42 @@ git diff --check
 - 当前后端使用进程内 runner 和本地 JSON 任务存储，不允许多 worker 部署；不要绕过 `WEB_CONCURRENCY`、`UVICORN_WORKERS`、`GUNICORN_WORKERS` 的单进程保护。
 - 不要把上传的真实客户文档、生成的敏感报告、密钥、令牌或本地绝对私密路径写入文档、测试夹具或知识包。
 
+## 审查收敛的运行时边界
+
+以下边界从 2025-05-09 全仓审查修复中提取，适用于所有未来涉及任务生命周期的变更。
+
+### TaskRunner 生命周期
+
+- `TaskRunner.__init__` 必须同时接收 `settings` 和 `storage`，由 `main.py` 在 `create_app()` 中注入到 `app.state`。
+- `TaskRunner.start_background()` 必须接收 `run_id` 参数（来自 `storage.start_run()`），确保 storage 层和 streaming 层的 run_id 一致。
+- Agent 运行产出的事件必须通过 `storage.append_event()` 持久化到 `events.jsonl`，不可丢弃。
+- Agent 运行结束后必须调用 `storage.update_task_if_status()` 将任务状态更新为终态（`complete`/`failed`/`cancelled`）。
+- 任何修改 TaskRunner 的变更必须同步验证 `backend/tests/unit/runner/` 中的测试覆盖。
+
+### 异步端点约束
+
+- `create_task` 和 `send_message` 端点必须是 `async def`，因为内部调用 `asyncio.create_task()` 调度 runner。
+- 将这些端点改回同步 `def` 会导致 `create_task` 在非异步上下文中执行，运行时必定失败。
+- 新增需要异步调度的 API 端点时，必须声明为 `async def`。
+
+### 文件系统工具作用域
+
+- 文件系统工具（`read_file`、`write_file`、`list_files`）必须限定在当前任务工作区（`workspace_root / task_id`）内，不允许访问全局 sessions 根或其他任务目录。
+- `get_platform_tools(settings)` 接收全局 settings，但在 runner 调用时必须用 per-task workspace 覆盖默认的 `workspace_root`。
+- 任何新增文件系统工具都必须遵守同样的 per-task 作用域限制。
+
+### SSE 防御性处理
+
+- `streaming.py` 中的 `_event_stream` 生成器必须包含 try-except，捕获 storage 读取异常后发送 SSE error 事件和 `done` 信号，防止连接断裂无提示。
+- `cancel_task` 端点在调用 `runner.cancel()` 后必须同步 storage 状态，否则前端拿到的任务状态与实际运行状态不一致。
+- SSE token 通过 URL query param 传递（因浏览器 EventSource API 不支持自定义 header），后端 auth 中间件目前不读取 query param 中的 token——这是已知的待决策事项，修改 auth 链路时需一并考虑。
+
+### 前端 SSE 与滚动
+
+- 前端 SSE 重连必须使用指数退避策略，设置最大重试次数，防止网络异常时无限重连。
+- 任务对话自动滚动应使用 smart scroll 模式：仅在用户未手动上滚时自动滚动到底部，不中断用户浏览历史消息。
+- `requestTaskJson` 等 API 调用必须对非 JSON 的 200 响应做防御性处理。
+
 ## 交付说明要求
 
 - 说明改了哪些文件和为什么。
