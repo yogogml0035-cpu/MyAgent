@@ -14,6 +14,15 @@ _TYPE_MAP: dict[str, str] = {
     "tool_call": "tool_call",
     "tool_result": "tool_result",
     "state_update": "status_update",
+    "values_snapshot": "values_snapshot",
+}
+
+_LEVEL_MAP: dict[str, Literal["info", "success", "warning", "error"]] = {
+    "assistant_answer_delta": "info",
+    "tool_call": "info",
+    "tool_result": "info",
+    "status_update": "info",
+    "values_snapshot": "info",
 }
 
 # Default level per event type.
@@ -52,6 +61,8 @@ def convert_stream_event(
             "stream_index": seq or 0,
             "content": data.get("content", ""),
         }
+    elif record_type == "values_snapshot":
+        payload = {"snapshot_keys": list(data.keys()) if isinstance(data, dict) else []}
     else:
         payload = data
 
@@ -81,4 +92,6 @@ def _build_message(record_type: str, data: dict[str, Any]) -> str:
     if record_type == "status_update":
         node = data.get("node", "unknown")
         return f"State update: {node}"
+    if record_type == "values_snapshot":
+        return "State snapshot"
     return ""

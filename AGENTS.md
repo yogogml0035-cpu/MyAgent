@@ -6,7 +6,7 @@
 
 - 后端：`backend/`，FastAPI + `uv`，入口为 `backend/app/main.py`。
 - 前端：`frontend/`，Next.js app router，主界面由 `frontend/app/page.tsx` 挂载，聊天工作区组件在 `frontend/components/chat/`，任务状态编排在 `frontend/hooks/use-task-workspace.ts`，API 封装在 `frontend/lib/task-api.ts`。
-- 前端 E2E 验收目录：`frontend/e2e-playwright/`，用于浏览器端严格 E2E 验收、Playwright 相关资产和网页端截图证据。
+- 前端 E2E 验收目录：`frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`，用于浏览器端严格 E2E 验收、Playwright 相关资产和网页端截图证据，其中 `YYYYMMDDHHMMSS` 为验收时间戳。
 - 默认任务存储：`backend/storage/sessions/`。
 - 后端测试：`backend/tests/`，按 `unit/`（agent、models、tools、skills、streaming、runner、api、security、storage、session）、`integration/`、`e2e/`（预留）分目录，文件名必须以 `test_` 开头。
 - 前端测试：`frontend/tests/`，按 `state/`、`workspace/`、`upload/`、`model/` 分类，文件名必须以 `test_` 开头。
@@ -17,7 +17,7 @@
 
 - 涉及后端任务生命周期、API、存储、权限、模型或分析流程时，先读相关 `backend/app/` 代码和 `backend/tests/`。
 - 涉及前端表单、任务状态、URL 映射、产物打开或轮询时，先读 `frontend/app/page.tsx`、`frontend/hooks/use-task-workspace.ts`、`frontend/lib/task-api.ts`、`frontend/app/task-state.ts` 和 `frontend/tests/`。
-- 涉及 bug 修复、功能新增、交互改动或其他行为变更时，先确认 `frontend/e2e-playwright/` 中是否已有可复用的 E2E 场景和截图约定；若没有覆盖本次需求，需在同次修改中补齐。
+- 涉及 bug 修复、功能新增、交互改动或其他行为变更时，必须计划进行E2E测试，并在`frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 增加E2E 场景和截图约定。
 - 涉及长期规则或已形成稳定主题边界时，直接读取 `asset/` 下与当前主题最相关的知识包。
 - 搜索优先用 `rg` 或 `rg --files`。
 
@@ -36,7 +36,7 @@
 - 任何 bug 修复、功能新增或其他行为变更，除对应单元/集成测试外，必须执行严格的浏览器端 E2E 验证；单测、集成测试、接口自测或静态代码检查都不能替代该验收。
 - 行为变更的 E2E 至少覆盖与本次需求相关的关键用户路径；创建任务、上传文件、发送消息、事件轮询、完成状态、产物打开/下载等链路中受影响的环节必须实跑。
 - E2E 验收必须基于实际启动的前后端服务，在网页端完成，并保留截图作为验收依据。
-- 验收截图统一存放在 `frontend/e2e-playwright/` 下，按需求或场景建立子目录；该目录必须保留 `README.md` 说明用途、命名建议和脱敏要求。
+- 验收截图统一存放在 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 下，按需求或场景建立子目录。
 - 若当前仓库尚未存在可覆盖本次需求的浏览器端 E2E 用例或执行入口，必须在同次需求中补齐后再交付。
 - 所有新增、拆分或重命名的测试文件名称必须以 `test_` 开头。Python 测试使用 `test_*.py`；前端 Node 测试使用 `test_*.test.ts`。
 - 测试文件必须按测试类型分类到对应模块目录。后端当前测试按 `backend/tests/unit/`（agent、models、tools、skills、streaming、runner、api、security、storage、session）、`backend/tests/integration/`、`backend/tests/e2e/`（预留）分目录。前端当前分类为 `frontend/tests/state/`、`frontend/tests/workspace/`、`frontend/tests/upload/`、`frontend/tests/model/`。
@@ -47,7 +47,7 @@
 
 - 对 bug 修复、功能新增或任何行为变更，代码、测试、浏览器端 E2E 验收、截图证据、知识包五者缺一不可。
 - 只补代码，不补测试、E2E 截图证据或知识包，视为未完成。
-- 未运行实际网页端验收，或未在 `frontend/e2e-playwright/` 留存截图证据的行为变更，视为未完成。
+- 未运行实际网页端验收，或未在 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 留存截图证据的行为变更，视为未完成。
 - 如果某次修改确实不需要知识包，必须在交付说明中明确原因，例如“仅修正文案/格式，未改变稳定业务规则或运行边界”。
 
 ## `asset/` 的使用规范
@@ -119,7 +119,7 @@
 - 修改本地脚本时至少运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -Help`、`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -DryRun`、`bash -n scripts/dev-terminal-runner.sh`、`bash -n scripts/stop-dev-ports.sh`、`./scripts/stop-dev-ports.sh --dry-run` 和 `git diff --check`。
 - 前端开发服务必须使用隔离的 `NEXT_DIST_DIR=.next-dev`，生产构建保留 `.next`；不要让 `next dev` 和 `next build` 写同一个目录。
 - 同一个前端开发产物目录只运行一个 `next dev`；并行开发服务可能污染生成产物。
-- 浏览器端验收截图统一放在 `frontend/e2e-playwright/`；该目录必须保留用途说明，不得沉淀客户敏感截图、密钥或访问令牌。
+- 浏览器端验收截图统一放在 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`；该目录必须保留用途说明。
 - 启动脚本不得嵌入 provider 密钥、访问令牌、客户文档路径或本机私密绝对路径。非 loopback 访问仍必须遵守访问令牌与 CORS 边界。
 
 ## 运行与验证命令
@@ -153,7 +153,7 @@ git diff --check
 
 - 启动实际后端与前端服务实例，而不是只跑离线测试。
 - 执行当前仓库为本次需求准备的浏览器端 E2E 用例；若缺失则先补齐，再交付行为修改。
-- 在网页端完成人工复核并截图，截图存入 `frontend/e2e-playwright/`。
+- 在网页端完成人工复核并截图，截图存入 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`。
 
 ## 安全与运行边界
 
@@ -203,7 +203,7 @@ git diff --check
 
 - 说明改了哪些文件和为什么。
 - 说明运行了哪些验证命令。
-- 说明执行了哪些 E2E 场景、访问了哪些页面或 URL、截图证据保存到了哪些 `frontend/e2e-playwright/` 路径。
+- 说明执行了哪些 E2E 场景、访问了哪些页面或 URL、截图证据保存到了哪些 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 路径。
 - 若未补测试或知识包，说明原因。
 - 若未做 E2E 或未提供截图证据，必须明确说明这是纯文档变更；除纯文档/纯注释类修改外，不接受缺失。
 - 若发现用户需求本身会引入错误边界、过度设计或安全风险，必须直接指出并给出更稳妥的替代方案。

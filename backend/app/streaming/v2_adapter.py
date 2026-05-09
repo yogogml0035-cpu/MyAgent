@@ -10,7 +10,7 @@ import logging
 from collections.abc import AsyncGenerator
 from typing import Any, Literal, cast
 
-from langchain_core.messages import AIMessageChunk, ToolMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, ToolMessage
 from langchain_core.runnables import RunnableConfig
 from langgraph.graph.state import CompiledStateGraph
 
@@ -18,6 +18,27 @@ logger = logging.getLogger(__name__)
 
 # Type alias for the normalized event dicts yielded by the adapter.
 StreamEvent = dict[str, Any]
+
+
+def extract_final_answer(state: dict[str, Any]) -> str:
+    """Extract the final AI answer from a completed graph state.
+
+    Walks ``state["messages"]`` in reverse order and returns the content
+    of the last :class:`AIMessage` that has text content and **no**
+    ``tool_calls``.  This is the authoritative final answer, as opposed
+    to intermediate tool-calling or sub-agent messages.
+
+    Returns an empty string if no suitable message is found.
+    """
+    messages = state.get("messages", [])
+    for msg in reversed(messages):
+        if (
+            isinstance(msg, AIMessage)
+            and getattr(msg, "content", None)
+            and not getattr(msg, "tool_calls", None)
+        ):
+            return msg.content
+    return ""
 
 
 async def stream_agent(
@@ -28,8 +49,9 @@ async def stream_agent(
 ) -> AsyncGenerator[StreamEvent, None]:
     """Stream events from a compiled LangGraph agent.
 
-    Uses ``stream_mode=["messages", "updates"]`` so we receive both
-    token-level message chunks and node-level state updates.
+    Uses ``stream_mode=["messages", "updates", "values"]`` so we receive
+    token-level message chunks, node-level state updates, and the full
+    state snapshot after each superstep.
 
     Args:
         agent: A compiled LangGraph ``CompiledStateGraph``.
@@ -44,11 +66,16 @@ async def stream_agent(
         - ``tool_call`` — tool invocation started.
         - ``tool_result`` — tool execution finished.
         - ``state_update`` — a node completed and emitted state.
+        - ``values_snapshot`` — full state snapshot (latest ``values``).
     """
     input_payload: dict[str, Any] = {"messages": messages}
     run_config = config or {}
 
-    _V2_MODES: list[Literal["messages", "updates"]] = ["messages", "updates"]
+    _V2_MODES: list[Literal["messages", "updates", "values"]] = [
+        "messages",
+        "updates",
+        "values",
+    ]
 
     async for chunk in agent.astream(
         input_payload,
@@ -72,6 +99,9 @@ async def stream_agent(
                 yield event
         elif mode == "updates":
             async for event in _handle_updates_mode(payload):
+                yield event
+        elif mode == "values":
+            async for event in _handle_values_mode(payload):
                 yield event
         else:
             logger.debug("Ignoring unknown stream mode %s", mode)
@@ -145,6 +175,17 @@ async def _handle_updates_mode(
                 "state_keys": list(state.keys()) if isinstance(state, dict) else [],
             },
         }
+
+
+async def _handle_values_mode(
+    payload: Any,
+) -> AsyncGenerator[StreamEvent, None]:
+    if not isinstance(payload, dict):
+        return
+    yield {
+        "type": "values_snapshot",
+        "data": payload,
+    }
 
 
 def _extract_text_content(content: Any) -> str:

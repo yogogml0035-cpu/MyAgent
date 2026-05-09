@@ -15,7 +15,7 @@ from app.config import Settings
 from app.schemas import ChatMessage, EventRecord
 from app.storage import TaskStorage
 from app.streaming.event_converter import convert_stream_event
-from app.streaming.v2_adapter import stream_agent
+from app.streaming.v2_adapter import extract_final_answer, stream_agent
 from app.tools.registry import get_platform_tools
 
 logger = logging.getLogger(__name__)
@@ -37,12 +37,12 @@ class TaskRunner:
         model: str | None = None,
         run_id: str,
         on_event: Callable[[EventRecord], None] | None = None,
-    ) -> list[EventRecord]:
+    ) -> tuple[list[EventRecord], dict[str, Any]]:
         """Start an agent run for a task and collect all emitted events.
 
         Builds the agent, starts streaming, converts events via
         :func:`app.streaming.event_converter.convert_stream_event`, and returns
-        the collected :class:`EventRecord` list.
+        the collected :class:`EventRecord` list and the latest graph state dict.
         """
         model_id = model or self.settings.default_model
 
@@ -62,11 +62,14 @@ class TaskRunner:
         }
 
         collected: list[EventRecord] = []
+        latest_state: dict[str, Any] = {}
         seq = 0
 
         try:
             async with asyncio.timeout(self.settings.agent_timeout_seconds):
                 async for event in stream_agent(agent, messages, config=config):
+                    if event.get("type") == "values_snapshot":
+                        latest_state = event.get("data", {})
                     record = convert_stream_event(event, task_id, run_id, seq=seq)
                     if record is not None:
                         collected.append(record)
@@ -86,7 +89,7 @@ class TaskRunner:
             logger.exception("Run %s for task %s failed", run_id, task_id)
             raise
 
-        return collected
+        return collected, latest_state
 
     def start_background(
         self,
@@ -104,6 +107,7 @@ class TaskRunner:
             assert self.storage is not None
             storage = self.storage
             collected: list[EventRecord] = []
+            final_state: dict[str, Any] = {}
 
             def _append_event(record: EventRecord) -> None:
                 collected.append(record)
@@ -117,20 +121,17 @@ class TaskRunner:
                 )
 
             try:
-                await self.start(task_id, message, model=model, run_id=run_id, on_event=_append_event)
+                collected, final_state = await self.start(
+                    task_id, message, model=model, run_id=run_id, on_event=_append_event,
+                )
 
-                answer_parts: list[str] = []
-                for record in collected:
-                    if record.type == "assistant_answer_delta":
-                        content = record.payload.get("content", "")
-                        if content:
-                            answer_parts.append(content)
+                final_answer = extract_final_answer(final_state)
 
                 append_message: ChatMessage | None = None
-                if answer_parts:
+                if final_answer:
                     append_message = ChatMessage(
                         role="assistant",
-                        content="".join(answer_parts),
+                        content=final_answer,
                         created_at="",
                         run_id=run_id,
                     )

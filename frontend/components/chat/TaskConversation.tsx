@@ -19,6 +19,7 @@ import { RobotAvatar } from "./RobotAvatar";
 import { TypewriterText } from "./TypewriterText";
 
 type TaskConversationProps = {
+  activeTask: boolean;
   conversationStreamItems: ConversationStreamItem[];
   copiedCopyKey: string;
   hasConversation: boolean;
@@ -30,6 +31,7 @@ type TaskConversationProps = {
 };
 
 export function TaskConversation({
+  activeTask,
   conversationStreamItems,
   copiedCopyKey,
   hasConversation,
@@ -147,12 +149,14 @@ export function TaskConversation({
 
           {tone !== "error" ? (
             <div className="messageCardBody markdownBody">
-              {message.streaming ? (
+              {message.streaming && activeTask ? (
                 <TypewriterText text={message.content} />
               ) : (
                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
               )}
-              {message.streaming ? <span className="answerStreamCursor" aria-hidden="true" /> : null}
+              {message.streaming && activeTask ? (
+                <span className="answerStreamCursor" aria-hidden="true" />
+              ) : null}
             </div>
           ) : null}
 
@@ -257,6 +261,9 @@ export function TaskConversation({
     ]
       .filter(Boolean)
       .join(" ");
+
+    const logListId = `logList:${group.runId}`;
+
     return (
       <section className="traceRow" aria-label={`${group.title}进度日志`} key={item.id}>
         <RobotAvatar />
@@ -283,7 +290,18 @@ export function TaskConversation({
             </button>
           </header>
 
-          <div className="logList">
+          <div
+            className="logList"
+            id={logListId}
+            ref={(el) => {
+              if (!el) return;
+              const threshold = 60;
+              const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+              if (distanceFromBottom < threshold) {
+                el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+              }
+            }}
+          >
             {liveItems.length === 0 ? (
               <p className="emptyLog">任务直播会显示在这里。</p>
             ) : (

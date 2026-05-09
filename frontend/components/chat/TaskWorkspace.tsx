@@ -18,6 +18,7 @@ export function TaskWorkspace() {
 
       <section className={workspace.hasConversation ? "chatWorkspace hasConversation" : "chatWorkspace isEmpty"}>
         <TaskConversation
+          activeTask={workspace.activeTask}
           conversationStreamItems={workspace.conversationStreamItems}
           copiedCopyKey={workspace.copiedCopyKey}
           hasConversation={workspace.hasConversation}
