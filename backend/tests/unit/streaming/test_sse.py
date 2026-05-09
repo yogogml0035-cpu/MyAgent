@@ -8,15 +8,15 @@ from app.streaming.sse import format_sse_done, format_sse_event, format_sse_mess
 class TestFormatSseEvent:
     def test_structure(self):
         result = format_sse_event("status", {"progress": 50})
-        assert result.startswith("event: status\n")
-        assert "data: " in result
+        assert result.startswith("data: ")
         assert result.endswith("\n\n")
+        assert "event:" not in result
 
     def test_data_is_valid_json(self):
         result = format_sse_event("status", {"key": "value"})
         data_line = result.split("data: ", 1)[1].rstrip("\n")
         parsed = json.loads(data_line)
-        assert parsed == {"key": "value"}
+        assert parsed == {"type": "status", "key": "value"}
 
     def test_unicode_content(self):
         result = format_sse_event("msg", {"text": "中文内容"})
@@ -38,10 +38,11 @@ class TestFormatSseMessage:
 class TestFormatSseDone:
     def test_event_type_is_done(self):
         result = format_sse_done()
-        assert result.startswith("event: done\n")
+        assert result.startswith("data: ")
+        assert "event:" not in result
 
-    def test_data_is_empty_object(self):
+    def test_data_has_done_type(self):
         result = format_sse_done()
         data_line = result.split("data: ", 1)[1].rstrip("\n")
         parsed = json.loads(data_line)
-        assert parsed == {}
+        assert parsed == {"type": "done"}

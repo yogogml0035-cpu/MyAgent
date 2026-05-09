@@ -5,13 +5,14 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Callable
 from typing import Any
 
 from langchain_core.messages import HumanMessage
 
 from app.agent.factory import build_agent
 from app.config import Settings
-from app.schemas import EventRecord
+from app.schemas import ChatMessage, EventRecord
 from app.storage import TaskStorage
 from app.streaming.event_converter import convert_stream_event
 from app.streaming.v2_adapter import stream_agent
@@ -35,6 +36,7 @@ class TaskRunner:
         *,
         model: str | None = None,
         run_id: str,
+        on_event: Callable[[EventRecord], None] | None = None,
     ) -> list[EventRecord]:
         """Start an agent run for a task and collect all emitted events.
 
@@ -68,6 +70,8 @@ class TaskRunner:
                     record = convert_stream_event(event, task_id, run_id, seq=seq)
                     if record is not None:
                         collected.append(record)
+                        if on_event is not None:
+                            on_event(record)
                         seq += 1
         except TimeoutError:
             logger.warning(
@@ -98,18 +102,46 @@ class TaskRunner:
 
         async def _run() -> None:
             assert self.storage is not None
+            storage = self.storage
+            collected: list[EventRecord] = []
+
+            def _append_event(record: EventRecord) -> None:
+                collected.append(record)
+                storage.append_event(
+                    task_id,
+                    record.type,
+                    record.message,
+                    record.payload,
+                    run_id=record.run_id,
+                    level=record.level,
+                )
+
             try:
-                collected = await self.start(task_id, message, model=model, run_id=run_id)
+                await self.start(task_id, message, model=model, run_id=run_id, on_event=_append_event)
+
+                answer_parts: list[str] = []
                 for record in collected:
-                    self.storage.append_event(
-                        task_id,
-                        record.type,
-                        record.message,
-                        record.payload,
-                        run_id=record.run_id,
-                        level=record.level,
+                    if record.type == "assistant_answer_delta":
+                        content = record.payload.get("content", "")
+                        if content:
+                            answer_parts.append(content)
+
+                append_message: ChatMessage | None = None
+                if answer_parts:
+                    append_message = ChatMessage(
+                        role="assistant",
+                        content="".join(answer_parts),
+                        created_at="",
+                        run_id=run_id,
                     )
-                self.storage.update_task_if_status(task_id, {"running"}, status="complete", run_id=run_id)
+
+                self.storage.update_task_if_status(
+                    task_id,
+                    {"running"},
+                    status="complete",
+                    run_id=run_id,
+                    append_message=append_message,
+                )
             except TimeoutError:
                 self.storage.update_task_if_status(
                     task_id,

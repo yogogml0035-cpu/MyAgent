@@ -50,7 +50,7 @@ async def stream_agent(
 
     _V2_MODES: list[Literal["messages", "updates"]] = ["messages", "updates"]
 
-    async for mode, payload in agent.astream(
+    async for _namespace, mode, payload in agent.astream(
         input_payload,
         cast("RunnableConfig", run_config),
         stream_mode=_V2_MODES,

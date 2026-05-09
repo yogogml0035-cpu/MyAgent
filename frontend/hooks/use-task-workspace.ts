@@ -222,8 +222,20 @@ export function useTaskWorkspace() {
           if (disposed) return;
           try {
             const payload = JSON.parse(event.data);
-            if (payload && (payload.type === "log" || payload.type === "tool_call" || payload.type === "tool_result" || Array.isArray(payload))) {
-              const incoming = normalizeEventRecords(Array.isArray(payload) ? payload : [payload]);
+            const recognizedTypes = [
+              "log",
+              "tool_call",
+              "tool_result",
+              "assistant_answer_delta",
+              "status_update",
+            ];
+            if (
+              payload &&
+              (recognizedTypes.includes(payload.type) || Array.isArray(payload))
+            ) {
+              const incoming = normalizeEventRecords(
+                Array.isArray(payload) ? payload : [payload],
+              );
               if (incoming.length > 0) {
                 setLogs((current) => mergeExecutionLogs(current, incoming));
               }

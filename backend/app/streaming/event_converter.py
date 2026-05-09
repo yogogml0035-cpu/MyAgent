@@ -10,7 +10,7 @@ from app.schemas import EventRecord
 
 # Mapping from adapter event type to EventRecord type string.
 _TYPE_MAP: dict[str, str] = {
-    "message_chunk": "agent_message",
+    "message_chunk": "assistant_answer_delta",
     "tool_call": "tool_call",
     "tool_result": "tool_result",
     "state_update": "status_update",
@@ -18,7 +18,7 @@ _TYPE_MAP: dict[str, str] = {
 
 # Default level per event type.
 _LEVEL_MAP: dict[str, Literal["info", "success", "warning", "error"]] = {
-    "agent_message": "info",
+    "assistant_answer_delta": "info",
     "tool_call": "info",
     "tool_result": "info",
     "status_update": "info",
@@ -46,6 +46,15 @@ def convert_stream_event(
     message = _build_message(record_type, data)
     level = _LEVEL_MAP.get(record_type, "info")
 
+    if record_type == "assistant_answer_delta":
+        payload = {
+            "schema_version": 1,
+            "stream_index": seq or 0,
+            "content": data.get("content", ""),
+        }
+    else:
+        payload = data
+
     return EventRecord(
         id=str(uuid.uuid4()),
         session_id=task_id,
@@ -53,14 +62,14 @@ def convert_stream_event(
         type=record_type,
         message=message,
         created_at=datetime.now(tz=timezone.utc).isoformat(),
-        payload=data,
+        payload=payload,
         run_id=run_id,
         level=level,
     )
 
 
 def _build_message(record_type: str, data: dict[str, Any]) -> str:
-    if record_type == "agent_message":
+    if record_type == "assistant_answer_delta":
         return data.get("content", "")
     if record_type == "tool_call":
         name = data.get("name", "unknown")
