@@ -32,3 +32,4 @@ backend/storage/tasks/*
 .DS_Store
 
 audits/
+.playwright-mcp/

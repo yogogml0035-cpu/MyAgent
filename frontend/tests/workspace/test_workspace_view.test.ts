@@ -11,6 +11,7 @@ import {
   buildStateNoticeMessages,
   buildWorkspaceNoticeMessages,
   calculateLogProgress,
+  formatAgentActivityPhase,
   formatFileSize,
   formatLogLevelLabel,
   formatMessagePanelStatus,
@@ -1190,7 +1191,7 @@ test("buildConversationStreamItems renders a streamed assistant draft while a ru
   );
   const streamedItem = items[2];
   assert.equal(streamedItem.kind, "message");
-  assert.equal(streamedItem.kind === "message" ? streamedItem.message.content : "", "第一段\n第二段");
+  assert.equal(streamedItem.kind === "message" ? streamedItem.message.content : "", "第一段第一段\n第二段");
   assert.equal(streamedItem.kind === "message" ? streamedItem.message.streaming : false, true);
   assert.equal(streamedItem.kind === "message" ? streamedItem.groupTitle : "", "第 1 轮");
 });
@@ -1252,4 +1253,138 @@ test("buildConversationStreamItems keeps artifact cards after run logs without a
     items.map((item) => item.id),
     ["message:m1", "run:run-1", "artifact:run-1:report.html"],
   );
+});
+
+test("accumulateStreamedAnswer concatenates delta chunks by streamIndex", () => {
+  const groups = buildRunActivityGroups(
+    [{ id: "run-1", status: "running", artifactNames: [] }],
+    [
+      { id: "s1", type: "assistant_answer_delta" as const, runId: "run-1", title: "", answerStream: { schemaVersion: 1, streamIndex: 2, content: " world" } },
+      { id: "s2", type: "assistant_answer_delta" as const, runId: "run-1", title: "", answerStream: { schemaVersion: 1, streamIndex: 0, content: "Hello" } },
+      { id: "s3", type: "assistant_answer_delta" as const, runId: "run-1", title: "", answerStream: { schemaVersion: 1, streamIndex: 1, content: "," } },
+    ],
+    [],
+  );
+  assert.equal(groups[0].streamedAnswer, "Hello, world");
+});
+
+test("hasMeaningfulContent rejects punctuation-only content", () => {
+  const groups = buildRunActivityGroups(
+    [{ id: "run-1", status: "running", artifactNames: [] }],
+    [
+      { id: "s1", type: "assistant_answer_delta" as const, runId: "run-1", title: "", answerStream: { schemaVersion: 1, streamIndex: 0, content: "。" } },
+    ],
+    [],
+  );
+  const items = buildConversationStreamItems(
+    [{ id: "m1", role: "user" as const, content: "test", runId: "run-1" }],
+    groups,
+  );
+  assert.equal(items.some(i => i.kind === "message" && "streaming" in i.message && i.message.streaming), false);
+});
+
+test("hasMeaningfulContent allows content with punctuation and meaningful text", () => {
+  const groups = buildRunActivityGroups(
+    [{ id: "run-1", status: "complete", artifactNames: [] }],
+    [
+      { id: "s1", type: "assistant_answer_delta" as const, runId: "run-1", title: "", answerStream: { schemaVersion: 1, streamIndex: 0, content: "，你好。" } },
+    ],
+    [],
+  );
+  assert.equal(groups[0].streamedAnswer, "，你好。");
+  const items = buildConversationStreamItems(
+    [{ id: "m1", role: "user" as const, content: "test", runId: "run-1" }],
+    groups,
+  );
+  assert.equal(items.some(i => i.kind === "message" && "streaming" in i.message && i.message.streaming), true);
+});
+
+test("formatAgentActivityPhase maps agent activity phases to Chinese", () => {
+  assert.equal(formatAgentActivityPhase("planning"), "正在规划任务...");
+  assert.equal(formatAgentActivityPhase("reasoning"), "AI正在思考...");
+  assert.equal(formatAgentActivityPhase("tool_use"), "正在调用工具...");
+  assert.equal(formatAgentActivityPhase("file_operation"), "正在处理文件...");
+  assert.equal(formatAgentActivityPhase("finalizing"), "AI正在生成结果...");
+});
+
+test("formatAgentActivityPhase returns empty for unknown phase", () => {
+  assert.equal(formatAgentActivityPhase(undefined), "");
+});
+
+test("buildLiveLogItems uses agentActivity phase over live stage", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "act-1",
+        title: "DeepAgent activity",
+        agentActivity: {
+          schemaVersion: 1,
+          source: "deepagents",
+          activityKind: "progress",
+          phase: "reasoning",
+          status: "running",
+          title: "思考中",
+          summary: "AI正在分析。",
+          subgraphPath: [],
+          truncated: false,
+        },
+        live: {
+          schemaVersion: 1,
+          kind: "think",
+          stage: "analyzing_intent",
+          parameterItems: [],
+        },
+      },
+    ],
+    "running",
+  );
+  
+  const activeItem = items.find(i => i.kind === "status" && i.active);
+  assert.ok(activeItem, "should have an active status item");
+  if (activeItem && activeItem.kind === "status") {
+    assert.equal(activeItem.text, "AI正在思考...");
+  }
+});
+
+test("buildLiveLogItems falls back to live stage when agentActivity absent", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "status-1",
+        title: "Status",
+        live: {
+          schemaVersion: 1,
+          kind: "status",
+          stage: "selecting_tool",
+          parameterItems: [],
+        },
+      },
+    ],
+    "running",
+  );
+  
+  const activeItem = items.find(i => i.kind === "status" && i.active);
+  assert.ok(activeItem, "should have an active status item");
+  if (activeItem && activeItem.kind === "status") {
+    assert.equal(activeItem.text, "正在选择合适工具...");
+  }
+});
+
+test("buildLiveLogItems default fallback is AI thinking", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "legacy-1",
+        type: "unknown_type",
+        title: "Something happened",
+      },
+    ],
+    "running",
+  );
+  
+  const activeItem = items.find(i => i.kind === "status" && i.active);
+  assert.ok(activeItem, "should have an active status item");
+  if (activeItem && activeItem.kind === "status") {
+    assert.equal(activeItem.text, "AI正在思考...");
+  }
 });

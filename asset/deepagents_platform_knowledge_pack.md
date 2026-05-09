@@ -21,8 +21,9 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Filesystem tools validate paths stay within `workspace_root` for security.
 - SubAgents are `SubAgent` TypedDicts with `name`, `description`, `system_prompt`, and optional `model`/`tools`/`skills`. Three built-in: `researcher`, `coder`, `file-analyst`.
 - Skills follow the DeepAgents SKILL.md convention: YAML frontmatter with `name` and `description`, plus Markdown instructions. Loaded from directories listed in `settings.skills_dirs`.
-- Streaming uses `agent.astream(input, stream_mode=["messages", "updates"])` via the v2 adapter. Events are converted to `EventRecord` objects via `event_converter.py`.
+- Streaming uses `agent.astream(input, stream_mode=["messages", "updates"], version="v2")` via the v2 adapter (`v2_adapter.py`). LangGraph v2 returns chunks as **dicts** with keys `{type, ns, data}`, not `(namespace, mode, payload)` tuples. The adapter must handle both formats for robustness. Events are converted to `EventRecord` objects via `event_converter.py`.
 - SSE endpoint at `GET /api/tasks/{task_id}/stream` provides real-time output. Frontend uses `EventSource` API with token as query parameter.
+- SSE `_event_stream` polls `storage.read_events(task_id, after_id=last_event_id)` every 0.5s. `last_event_id` must be initialized to `None` (not `""`) so the first poll returns all existing events. An empty string causes `read_events` to skip every event because `after_id is None` evaluates to `False` and no event has `id == ""`.
 - `TaskRunner` manages agent lifecycle: build agent → stream events → convert → collect → persist events to storage → update task status. `TaskRunner.__init__` requires both `settings` and `storage` (injected from `main.py`). `start_background()` accepts `run_id` from `storage.start_run()` to ensure unified run_id across storage and streaming events. After agent execution, events are persisted via `storage.append_event()` and task status is updated to terminal state (`complete`/`failed`/`cancelled`). Supports cancellation via `cancel()`. Enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`.
 - `create_app()` uses FastAPI `lifespan` instead of `@app.on_event("startup")`. Startup interruption of stale running tasks must stay inside that lifespan handler, and tests that need startup side effects must enter `TestClient` as a context manager (`with TestClient(app):`).
 - API endpoints `create_task` and `send_message` are `async def` to allow `asyncio.create_task` on the event loop. `cancel_task` syncs storage status after `runner.cancel()`.
@@ -60,6 +61,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **Timeout enforcement**: `TaskRunner.start()` enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`. If the deepagents SDK or LLM call hangs, the run is terminated after the configured timeout and a warning is logged.
 - **checkpointer/store passthrough**: `build_agent()` passes `checkpointer` and `store` to `create_deep_agent()`, but the current deployment uses no checkpointer (state is managed by TaskStorage in JSON files). To enable LangGraph-native persistence, pass an `InMemorySaver` or `PostgresSaver` instance when constructing the agent.
 - **LangGraph checkpoint source pin**: `backend/pyproject.toml` pins `langgraph-checkpoint` through `tool.uv.sources` to the `langchain-ai/langgraph` Git commit `2e5025ec1ac8d435840ed4a972097de87aaa2eab` (`libs/checkpoint`). This is intentional: the latest PyPI stable release still emits the startup `LangChainPendingDeprecationWarning`, while that upstream commit already switched `jsonplus.py` to `Reviver(allowed_objects="core")`.
+- **LangGraph v2 stream format**: `agent.astream(..., version="v2")` returns chunks as dicts `{type, ns, data}`, NOT tuples `(namespace, mode, payload)`. Unpacking as a 3-tuple silently iterates dict keys (`"type"`, `"ns"`, `"data"`), causing `mode = "ns"` to be logged and all events dropped. The v2_adapter must check `isinstance(chunk, dict)` and extract `chunk["type"]` / `chunk["data"]`.
 - **Generated Next type files**: `next-env.d.ts` and route types are generated artifacts. Do not review or commit them as source changes; rerun `npm run typecheck` if they are missing locally.
 
 ## Related Code Paths
@@ -96,7 +98,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
   - `backend/tests/unit/storage/`
   - `backend/tests/unit/session/`
 - Integration tests: `backend/tests/integration/`
-- E2E tests: `backend/tests/e2e/` (empty, for future)
+- E2E tests: `backend/tests/e2e/test_streaming_e2e.py`
 - Frontend tests:
   - `frontend/tests/state/`
   - `frontend/tests/workspace/`
@@ -122,6 +124,13 @@ npm run lint
 npm run build
 ```
 
+## Frontend Stream Accumulation And Dynamic States
+
+- `workspace-view.ts:accumulateStreamedAnswer` concatenates all `assistant_answer_delta` chunks by `streamIndex` order. Do NOT revert to `latestStreamedAnswer` (which only kept the last delta) — that caused isolated punctuation characters to appear as the full AI reply.
+- AI reply card only appears when content passes `hasMeaningfulContent` (≥1 non-punctuation, non-whitespace character after stripping Chinese and ASCII punctuation). This prevents a lone period "。" from triggering the card.
+- Dynamic loading status precedence: `agentActivity.phase` > `live.stage` > default fallback `"AI正在思考..."`. Phase mapping: `planning`→"正在规划任务...", `reasoning`→"AI正在思考...", `tool_use`→"正在调用工具...", `file_operation`→"正在处理文件...", `finalizing`→"AI正在生成结果...".
+- `buildLiveLogItems` checks `agentActivity.status` (`completed`/`failed`/`skipped`) as additional terminal condition alongside `isTerminalLiveStage(live.stage)`.
+
 ## Regression Risks
 
 - Middleware duplication if future developer re-adds default middleware to the stack.
@@ -130,3 +139,5 @@ npm run build
 - SSE auth bypass if EventSource query param support is removed without alternative auth.
 - Timeout breakage if `asyncio.timeout()` is removed without an alternative mechanism to prevent runaway agent runs.
 - Concurrency risk if `max_concurrent_subagents` is changed without testing subagent parallel execution limits.
+- SSE event loss if `last_event_id` in `streaming.py` is reverted to `""` — the empty string causes `read_events(after_id="")` to return nothing because `after_id is None` is `False` and no event matches `id == ""`. E2E test `test_sse_drains_remaining_events_before_done` guards this.
+- Stream accumulation regression if `accumulateStreamedAnswer` is reverted to taking only the last delta — this would re-introduce the isolated punctuation card bug.

@@ -50,12 +50,23 @@ async def stream_agent(
 
     _V2_MODES: list[Literal["messages", "updates"]] = ["messages", "updates"]
 
-    async for _namespace, mode, payload in agent.astream(
+    async for chunk in agent.astream(
         input_payload,
         cast("RunnableConfig", run_config),
         stream_mode=_V2_MODES,
         version="v2",
     ):
+        # LangGraph v2 streaming returns dicts with keys: type, ns, data.
+        # Older versions returned (namespace, mode, payload) tuples.
+        if isinstance(chunk, dict):
+            mode = chunk.get("type")
+            payload = chunk.get("data")
+        elif isinstance(chunk, tuple) and len(chunk) >= 3:
+            _, mode, payload = chunk[0], chunk[1], chunk[2]
+        else:
+            logger.debug("Skipping unrecognized stream chunk: %s", type(chunk).__name__)
+            continue
+
         if mode == "messages":
             async for event in _handle_messages_mode(payload):
                 yield event

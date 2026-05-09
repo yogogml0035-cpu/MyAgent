@@ -1,5 +1,7 @@
 import {
   isTaskActive,
+  translateKnownDisplayText,
+  type AgentActivityPhase,
   type Artifact,
   type ChatMessage,
   type ExecutionLog,
@@ -232,11 +234,19 @@ export function buildLiveLogItems(
       return;
     }
 
-    const text = formatLiveStatusText(live);
+    // Check agentActivity first (higher precedence), then fall back to live stage
+    const agentActivityText = log.agentActivity
+      ? formatAgentActivityPhase(log.agentActivity.phase)
+      : "";
+    const liveText = formatLiveStatusText(live);
+    const text = agentActivityText || liveText;
     if (!text) {
       return;
     }
-    if (isTerminalLiveStage(live.stage) || !isTaskActive(status)) {
+    // Determine if this is a terminal stage
+    const isAgentTerminal = log.agentActivity?.status === "completed" || log.agentActivity?.status === "failed" || log.agentActivity?.status === "skipped";
+    const isTerminal = isTerminalLiveStage(live.stage) || isAgentTerminal;
+    if (isTerminal || !isTaskActive(status)) {
       items.push({
         id: `status:${log.id}`,
         kind: "status",
@@ -256,7 +266,7 @@ export function buildLiveLogItems(
       kind: "status",
       createdAt: activeCreatedAt,
       level: "info",
-      text: activeText || "正在分析任务意图...",
+      text: activeText || "AI正在思考...",
       active: true,
     });
   }
@@ -375,6 +385,23 @@ function formatLiveToolResultText(live: NonNullable<ExecutionLog["live"]>) {
   }
 }
 
+export function formatAgentActivityPhase(phase: AgentActivityPhase | undefined): string {
+  switch (phase) {
+    case "planning":
+      return "正在规划任务...";
+    case "reasoning":
+      return "AI正在思考...";
+    case "tool_use":
+      return "正在调用工具...";
+    case "file_operation":
+      return "正在处理文件...";
+    case "finalizing":
+      return "AI正在生成结果...";
+    default:
+      return "";
+  }
+}
+
 function formatLiveStatusText(live: NonNullable<ExecutionLog["live"]>) {
   if (live.resultStatus === "cancelled") {
     return "任务已取消";
@@ -428,6 +455,13 @@ function formatLegacyLiveSummary(log: ExecutionLog) {
   }
   if (log.type === "reasoning_trace") {
     return "";
+  }
+  if (log.type === "assistant_answer_delta") {
+    return "";
+  }
+  if (log.type === "tool_call" || log.type === "tool_result" || log.type === "status_update") {
+    const translated = translateKnownDisplayText(log.title);
+    return translated || log.title;
   }
   if (log.level === "error") {
     return "处理遇到问题，正在调整处理方式";
@@ -657,18 +691,23 @@ function isSetupFallbackLog(log: ExecutionLog) {
   return log.type === "task_created" || log.type === "file_uploaded";
 }
 
-function latestStreamedAnswer(logs: ExecutionLog[]) {
+function accumulateStreamedAnswer(logs: ExecutionLog[]): string {
   const streamLogs = logs
     .filter((log) => Boolean(log.answerStream?.content))
     .sort((left, right) => {
       const leftIndex = left.answerStream?.streamIndex ?? 0;
       const rightIndex = right.answerStream?.streamIndex ?? 0;
-      if (leftIndex !== rightIndex) {
-        return leftIndex - rightIndex;
-      }
+      if (leftIndex !== rightIndex) return leftIndex - rightIndex;
       return byCreatedAt(left, right);
     });
-  return streamLogs.at(-1);
+  return streamLogs.map((log) => log.answerStream!.content).join("");
+}
+
+const PUNCTUATION_PATTERN = /[。，！？、；：""''（）【】《》.,!?;:"'()\[\]{}]/g;
+
+function hasMeaningfulContent(content: string): boolean {
+  const stripped = content.replace(PUNCTUATION_PATTERN, "");
+  return stripped.trim().length > 0;
 }
 
 export function buildRunActivityGroups(
@@ -713,7 +752,16 @@ export function buildRunActivityGroups(
           (runs.length === 1 && !log.runId && !isSetupFallbackLog(log)),
       )
       .sort(byCreatedAt);
-    const latestAnswerStream = latestStreamedAnswer(runLogs);
+    const accumulatedAnswer = accumulateStreamedAnswer(runLogs);
+    const lastStreamLog = runLogs
+      .filter((log) => Boolean(log.answerStream?.content))
+      .sort((left, right) => {
+        const leftIndex = left.answerStream?.streamIndex ?? 0;
+        const rightIndex = right.answerStream?.streamIndex ?? 0;
+        if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+        return byCreatedAt(left, right);
+      })
+      .at(-1);
 
     return {
       runId: run.id,
@@ -723,8 +771,8 @@ export function buildRunActivityGroups(
       completedAt: run.completedAt,
       logs: runLogs,
       artifacts: Array.from(artifactMap.values()),
-      streamedAnswer: latestAnswerStream?.answerStream?.content,
-      streamedAnswerCreatedAt: latestAnswerStream?.createdAt,
+      streamedAnswer: accumulatedAnswer || undefined,
+      streamedAnswerCreatedAt: lastStreamLog?.createdAt,
     };
   });
 
@@ -797,7 +845,7 @@ export function buildConversationStreamItems(
 
   function pushStreamedAnswerItem(group: RunActivityGroup) {
     const content = group.streamedAnswer?.trim();
-    if (!content) {
+    if (!content || !hasMeaningfulContent(content)) {
       return;
     }
     items.push({
