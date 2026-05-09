@@ -6,7 +6,7 @@
     "dev": "NEXT_DIST_DIR=.next-dev next dev -p 3001",
     "build": "next build",
     "start": "next start -p 3001",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "next typegen && tsc --noEmit",
     "test": "node --test --import tsx tests/*/test_*.test.ts",
     "lint": "eslint . --max-warnings=0"
   },

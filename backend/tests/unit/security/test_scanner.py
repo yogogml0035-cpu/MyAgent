@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from app.security.scanner import (
-    SecretScanFinding,
     SecretScanViolation,
     assert_no_secret_scan_findings,
     scan_text_for_secrets,

@@ -29,6 +29,9 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Filesystem tools are scoped to per-task workspace (`settings.workspace_root / task_id`), not the global sessions root. This prevents cross-task file access.
 - Task API routes follow REST conventions: `POST /api/tasks` (create), `GET /api/tasks` (list), `GET /api/tasks/{id}` (read), `POST /api/tasks/{id}/messages` (send message), `POST /api/tasks/{id}/cancel` (cancel).
 - Auth middleware enforces loopback-only access by default; non-local access requires `MYAGENT_ACCESS_TOKEN`.
+- Frontend local development keeps `next dev` output in `.next-dev` and production builds in `.next` via `NEXT_DIST_DIR`, so dev caches and production build artifacts never share one output directory.
+- Frontend type checking runs `next typegen && tsc --noEmit`; `next-env.d.ts` is generated and ignored instead of being version-controlled.
+- Repository-wide line-ending normalization is enforced with a root `.gitattributes`: text files default to LF, while PowerShell scripts use CRLF on checkout.
 
 ## Input And Output Examples
 
@@ -45,6 +48,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - `schemas.py` inlines `TaskMode` and `InputScope` Literal types (previously from deleted `intent.py`).
 - Missing API keys cause graceful errors in provider (not crashes). Tavily tool returns error string if key missing.
 - `SKILL.md` files without valid YAML frontmatter are silently skipped during discovery.
+- `next typegen` loads `next.config.mjs` with the production build phase; keep any required config inputs available before running frontend type checks in CI.
 
 ## Known Pitfalls
 
@@ -56,6 +60,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **Timeout enforcement**: `TaskRunner.start()` enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`. If the deepagents SDK or LLM call hangs, the run is terminated after the configured timeout and a warning is logged.
 - **checkpointer/store passthrough**: `build_agent()` passes `checkpointer` and `store` to `create_deep_agent()`, but the current deployment uses no checkpointer (state is managed by TaskStorage in JSON files). To enable LangGraph-native persistence, pass an `InMemorySaver` or `PostgresSaver` instance when constructing the agent.
 - **LangGraph checkpoint source pin**: `backend/pyproject.toml` pins `langgraph-checkpoint` through `tool.uv.sources` to the `langchain-ai/langgraph` Git commit `2e5025ec1ac8d435840ed4a972097de87aaa2eab` (`libs/checkpoint`). This is intentional: the latest PyPI stable release still emits the startup `LangChainPendingDeprecationWarning`, while that upstream commit already switched `jsonplus.py` to `Reviver(allowed_objects="core")`.
+- **Generated Next type files**: `next-env.d.ts` and route types are generated artifacts. Do not review or commit them as source changes; rerun `npm run typecheck` if they are missing locally.
 
 ## Related Code Paths
 
@@ -72,6 +77,10 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Entry point: `backend/app/main.py`
 - Skills directory: `backend/skills/web_research/SKILL.md`, `backend/skills/code_review/SKILL.md`
 - Compatibility shims: `backend/app/contracts/__init__.py`, `backend/app/reasoning_trace.py`
+- Frontend CI workflow: `.github/workflows/frontend-ci.yml`
+- Backend CI workflow: `.github/workflows/backend-ci.yml`
+- Frontend type generation and ignore rules: `frontend/package.json`, `frontend/.gitignore`, `frontend/tsconfig.json`
+- Repository line-ending policy: `.gitattributes`
 
 ## Related Test Paths
 
@@ -106,8 +115,11 @@ uv run python -c "from app.main import create_app; create_app()"
 
 ```bash
 cd /mnt/d/AgentProject/MyAgent/frontend
+npm ci
 npm run typecheck
 npm test
+npm run lint
+npm run build
 ```
 
 ## Regression Risks

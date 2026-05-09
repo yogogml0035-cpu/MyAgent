@@ -47,12 +47,18 @@ test("frontend dev server uses an isolated Next dist directory", () => {
     new URL("../../tsconfig.json", import.meta.url),
     "utf-8",
   );
+  const gitignoreSource = readFileSync(
+    new URL("../../.gitignore", import.meta.url),
+    "utf-8",
+  );
 
   assert.match(nextConfigSource, /distDir: process\.env\.NEXT_DIST_DIR \|\| "\.next"/);
   assert.match(packageSource, /"dev": "NEXT_DIST_DIR=\.next-dev next dev -p 3001"/);
+  assert.match(packageSource, /"typecheck": "next typegen && tsc --noEmit"/);
   assert.match(devRunnerSource, /export NEXT_DIST_DIR="\$\{NEXT_DIST_DIR:-\.next-dev\}"/);
   assert.match(eslintConfigSource, /"\.next-dev\/\*\*"/);
   assert.match(tsconfigSource, /"\.next-dev\/types\/\*\*\/\*\.ts"/);
+  assert.match(gitignoreSource, /^next-env\.d\.ts$/m);
 });
 
 test("robot avatar uses the same lucide Bot geometry as the reference frontend", () => {

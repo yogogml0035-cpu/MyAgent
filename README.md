@@ -43,6 +43,8 @@ cd /mnt/d/AgentProject/MyAgent
 
 前端依赖、Next 缓存和开发服务应在同一个环境内生成和运行。开发服务使用 `.next-dev`，生产构建使用 `.next`，两者不要互相复用。不要在 Windows 的 `D:\AgentProject\MyAgent\frontend` 下安装依赖后，再从 WSL 的 `/mnt/d/AgentProject/MyAgent/frontend` 启动 `npm run dev`；反向混用也一样会让 Next.js 的 React Client Manifest 同时出现 Windows 路径和 WSL 路径。
 
+前端类型检查通过 `next typegen && tsc --noEmit` 生成 Next 路由类型；`frontend/next-env.d.ts` 属于生成文件，不再纳入版本控制。
+
 如果已经混用过 Windows 和 WSL，请在 WSL 中清理前端产物并重新安装依赖：
 
 ```bash
@@ -153,6 +155,8 @@ cd D:\AgentProject\MyAgent
 - 前端：`NEXT_DIST_DIR=.next-dev next dev -p 3001 -H 0.0.0.0`
 
 启动后可以在各自终端中用 `Ctrl+C` 停止单个服务，也可以回到 WSL 仓库路径运行 `./scripts/stop-dev-ports.sh` 统一释放端口。启动脚本依赖 Windows 侧可调用的 `wt.exe` 和 `wsl.exe`。前端开发服务写入 `.next-dev`，因此运行 `npm run build` 验证生产构建时写入 `.next`，不会再覆盖正在热更新的开发缓存。
+
+仓库根目录的 `.gitattributes` 负责统一换行策略，避免在 Windows、WSL 和 GitHub Web 编辑器之间来回切换时，把 YAML、Shell、TypeScript 等文本文件意外改成 CRLF。
 
 如果 Windows 系统代理指向 `localhost` 或 `127.0.0.1`，WSL NAT 模式可能在新开 WSL 终端时报 `Wsl/Service/E_UNEXPECTED`。PowerShell 启动脚本会检测该情况，并在需要时写入 `%USERPROFILE%\.wslconfig` 的 `[wsl2] autoProxy=false` 后重启 WSL；已有自定义代理方案时可加 `-NoProxyRepair` 禁用自动修复。
 

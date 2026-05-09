@@ -16,6 +16,9 @@ path styles can make Next.js generate a React Client Manifest with Windows paths
 server resolves WSL paths. The dev server writes `.next-dev`; production builds write `.next`.
 Keep both directories environment-local and do not reuse them across Windows and WSL.
 
+Type checking runs `next typegen && tsc --noEmit`. The generated `next-env.d.ts` file is
+ignored and should not be committed.
+
 If that has happened, clean and reinstall from WSL:
 
 ```bash

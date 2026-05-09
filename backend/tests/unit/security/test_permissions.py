@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.permissions import ActionDecision, PermissionPolicy
+from app.permissions import PermissionPolicy
 
 
 class TestPermissionPolicyInit:
