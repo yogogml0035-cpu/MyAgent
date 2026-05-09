@@ -49,7 +49,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 
 - **Middleware duplication**: Never pass `TodoListMiddleware`, `FilesystemMiddleware`, `SummarizationMiddleware`, or `PatchToolCallsMiddleware` via the `middleware` param — `create_deep_agent` auto-injects them.
 - **Provider prefix**: Model IDs must include provider prefix (`deepseek:`, `openai:`, `anthropic:`). Raw model names will fail.
-- **EventSource auth**: Browser `EventSource` API doesn't support custom headers; token must be passed as query parameter for SSE.
+- **EventSource auth**: Browser `EventSource` API doesn't support custom headers; token must be passed as query parameter `?token=xxx` for SSE. Backend `authorize_task_request` reads token from headers (`X-MyAgent-Token`, `X-Agent-Chat-Token`, `Authorization: Bearer`) and query param.
 - **storage.py coupling**: TaskStorage is deeply coupled to old contracts/reasoning_trace types via compatibility shims. A future storage rewrite should use native DeepAgents state management.
 - **Single-process runtime**: The platform uses in-process runner and local JSON storage. Multi-worker deployment will break.
 - **Timeout enforcement**: `TaskRunner.start()` enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`. If the deepagents SDK or LLM call hangs, the run is terminated after the configured timeout and a warning is logged.
@@ -112,6 +112,6 @@ npm test
 - Middleware duplication if future developer re-adds default middleware to the stack.
 - storage.py breakage if compatibility shims are deleted without rewriting storage.
 - Model format mismatch if frontend sends old-style `deepseek-reasoner` instead of `deepseek:deepseek-chat`.
-- SSE auth bypass if EventSource query param is removed without alternative auth.
+- SSE auth bypass if EventSource query param support is removed without alternative auth.
 - Timeout breakage if `asyncio.timeout()` is removed without an alternative mechanism to prevent runaway agent runs.
 - Concurrency risk if `max_concurrent_subagents` is changed without testing subagent parallel execution limits.

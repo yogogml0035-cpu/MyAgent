@@ -107,6 +107,7 @@ def authorize_task_request(request: Request, settings: Settings) -> JSONResponse
         supplied_token = (
             request.headers.get("x-myagent-token")
             or request.headers.get("x-agent-chat-token")
+            or request.query_params.get("token")
             or bearer_token(request)
         )
         if supplied_token and compare_digest(supplied_token, settings.access_token):

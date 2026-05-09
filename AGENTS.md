@@ -180,7 +180,7 @@ git diff --check
 
 - `streaming.py` 中的 `_event_stream` 生成器必须包含 try-except，捕获 storage 读取异常后发送 SSE error 事件和 `done` 信号，防止连接断裂无提示。
 - `cancel_task` 端点在调用 `runner.cancel()` 后必须同步 storage 状态，否则前端拿到的任务状态与实际运行状态不一致。
-- SSE token 通过 URL query param 传递（因浏览器 EventSource API 不支持自定义 header），后端 auth 中间件目前不读取 query param 中的 token——这是已知的待决策事项，修改 auth 链路时需一并考虑。
+- SSE token 通过 URL query param `?token=xxx` 传递（因浏览器 EventSource API 不支持自定义 header），后端 auth 中间件已支持从 query param 读取 token。
 
 ### 前端 SSE 与滚动
 
