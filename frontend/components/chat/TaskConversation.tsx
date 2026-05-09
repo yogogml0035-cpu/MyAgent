@@ -16,6 +16,7 @@ import {
   getMessagePanelTone,
 } from "../../app/workspace-view";
 import { RobotAvatar } from "./RobotAvatar";
+import { TypewriterText } from "./TypewriterText";
 
 type TaskConversationProps = {
   conversationStreamItems: ConversationStreamItem[];
@@ -146,7 +147,11 @@ export function TaskConversation({
 
           {tone !== "error" ? (
             <div className="messageCardBody markdownBody">
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              {message.streaming ? (
+                <TypewriterText text={message.content} />
+              ) : (
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{message.content}</ReactMarkdown>
+              )}
               {message.streaming ? <span className="answerStreamCursor" aria-hidden="true" /> : null}
             </div>
           ) : null}

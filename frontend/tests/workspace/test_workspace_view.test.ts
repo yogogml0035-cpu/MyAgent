@@ -1381,10 +1381,97 @@ test("buildLiveLogItems default fallback is AI thinking", () => {
     ],
     "running",
   );
-  
+
   const activeItem = items.find(i => i.kind === "status" && i.active);
   assert.ok(activeItem, "should have an active status item");
   if (activeItem && activeItem.kind === "status") {
     assert.equal(activeItem.text, "AI正在思考...");
   }
+});
+
+test("buildLiveLogItems shows cancelled status when cancel event present", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "status-1",
+        title: "Status",
+        live: {
+          schemaVersion: 1,
+          kind: "status",
+          stage: "generating_answer",
+          parameterItems: [],
+        },
+      },
+      {
+        id: "cancel-1",
+        type: "task_cancelled",
+        title: "任务已取消",
+        level: "warning",
+      },
+    ],
+    "running",
+  );
+
+  const cancelledItem = items.find(i => i.kind === "status" && i.id === "status:cancelled");
+  assert.ok(cancelledItem, "should have a cancelled status item");
+  if (cancelledItem && cancelledItem.kind === "status") {
+    assert.equal(cancelledItem.text, "任务已取消");
+    assert.equal(cancelledItem.level, "warning");
+    assert.equal(cancelledItem.active, false);
+  }
+});
+
+test("buildConversationStreamItems filters placeholder assistant messages", () => {
+  const groups = buildRunActivityGroups([], [], []);
+  const items = buildConversationStreamItems(
+    [
+      {
+        id: "msg-1",
+        role: "user",
+        content: "Hello",
+      },
+      {
+        id: "msg-2",
+        role: "assistant",
+        content: "AI回复",
+      },
+      {
+        id: "msg-3",
+        role: "assistant",
+        content: "AI回复。",
+      },
+      {
+        id: "msg-4",
+        role: "assistant",
+        content: "This is a real response",
+      },
+    ],
+    groups,
+  );
+
+  const messageItems = items.filter(i => i.kind === "message");
+  assert.equal(messageItems.length, 2);
+  assert.equal(messageItems[0].message.content, "Hello");
+  assert.equal(messageItems[1].message.content, "This is a real response");
+});
+
+test("buildConversationStreamItems keeps streaming messages with meaningful content", () => {
+  const groups = buildRunActivityGroups(
+    [{ id: "run-1", status: "running", artifactNames: [] }],
+    [
+      {
+        id: "stream-1",
+        title: "assistant_answer_delta",
+        type: "assistant_answer_delta",
+        answerStream: { schemaVersion: 1, streamIndex: 0, content: "Hello" },
+        runId: "run-1",
+      },
+    ],
+    [],
+  );
+  const items = buildConversationStreamItems([], groups);
+
+  const streamItems = items.filter((i): i is Extract<typeof i, { kind: "message" }> => i.kind === "message" && Boolean(i.message.streaming));
+  assert.equal(streamItems.length, 1);
+  assert.equal(streamItems[0].message.content, "Hello");
 });

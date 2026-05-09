@@ -179,10 +179,16 @@ export function buildLiveLogItems(
   const pendingToolItemsByName = new Map<string, LiveToolLogItem[]>();
   let activeText = "";
   let activeCreatedAt: string | undefined;
+  let hasCancelEvent = false;
 
   logs.forEach((log, index) => {
     if (log.type === "assistant_answer_delta") {
       return;
+    }
+
+    // Detect cancel events to handle them specially
+    if (log.type === "task_cancelled" || log.live?.resultStatus === "cancelled") {
+      hasCancelEvent = true;
     }
 
     const live = log.live;
@@ -261,14 +267,26 @@ export function buildLiveLogItems(
   });
 
   if (isTaskActive(status)) {
-    items.push({
-      id: "status:active",
-      kind: "status",
-      createdAt: activeCreatedAt,
-      level: "info",
-      text: activeText || "AI正在思考...",
-      active: true,
-    });
+    // If there's a cancel event, show cancelled status instead of active thinking
+    if (hasCancelEvent) {
+      items.push({
+        id: "status:cancelled",
+        kind: "status",
+        createdAt: activeCreatedAt,
+        level: "warning",
+        text: "任务已取消",
+        active: false,
+      });
+    } else {
+      items.push({
+        id: "status:active",
+        kind: "status",
+        createdAt: activeCreatedAt,
+        level: "info",
+        text: activeText || "AI正在思考...",
+        active: true,
+      });
+    }
   }
 
   return items;
@@ -804,6 +822,19 @@ function groupTimeValue(group: RunActivityGroup) {
   return group.startedAt ?? group.completedAt ?? "";
 }
 
+function isPlaceholderAssistantMessage(message: ChatMessage): boolean {
+  if (message.role !== "assistant") {
+    return false;
+  }
+  const content = message.content.trim();
+  if (!content || !hasMeaningfulContent(content)) {
+    return true;
+  }
+  const placeholderTitles = ["AI回复", "AI 生成内容", "系统消息"];
+  const strippedContent = content.replace(PUNCTUATION_PATTERN, "").trim();
+  return placeholderTitles.some((title) => strippedContent === title || strippedContent.startsWith(title));
+}
+
 export function buildConversationStreamItems(
   messages: ChatMessage[],
   groups: RunActivityGroup[],
@@ -869,14 +900,17 @@ export function buildConversationStreamItems(
       groupBeforeReply = pushGroup(message.runId);
     }
 
-    items.push({
-      id: `message:${message.id}`,
-      kind: "message",
-      message,
-      assistantArtifacts:
-        message.role !== "user" && groupBeforeReply ? groupBeforeReply.artifacts : undefined,
-      groupTitle: groupBeforeReply?.title,
-    });
+    const isPlaceholder = isPlaceholderAssistantMessage(message);
+    if (!isPlaceholder) {
+      items.push({
+        id: `message:${message.id}`,
+        kind: "message",
+        message,
+        assistantArtifacts:
+          message.role !== "user" && groupBeforeReply ? groupBeforeReply.artifacts : undefined,
+        groupTitle: groupBeforeReply?.title,
+      });
+    }
 
     if (groupBeforeReply && message.role === "user") {
       pushArtifactItems(groupBeforeReply);
@@ -921,6 +955,7 @@ export function buildConversationStreamItems(
     })
     .forEach((group) => {
       items.push({ id: `run:${group.runId}`, kind: "run", group });
+      pushStreamedAnswerItem(group);
       pushArtifactItems(group);
     });
 
