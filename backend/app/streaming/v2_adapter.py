@@ -37,7 +37,7 @@ def extract_final_answer(state: dict[str, Any]) -> str:
             and getattr(msg, "content", None)
             and not getattr(msg, "tool_calls", None)
         ):
-            return msg.content
+            return _extract_text_content(msg.content)
     return ""
 
 
@@ -82,26 +82,33 @@ async def stream_agent(
         cast("RunnableConfig", run_config),
         stream_mode=_V2_MODES,
         version="v2",
+        subgraphs=True,
     ):
         # LangGraph v2 streaming returns dicts with keys: type, ns, data.
         # Older versions returned (namespace, mode, payload) tuples.
+        namespace: list[str] = []
         if isinstance(chunk, dict):
             mode = chunk.get("type")
             payload = chunk.get("data")
+            raw_ns = chunk.get("ns")
+            namespace = [str(item) for item in raw_ns] if isinstance(raw_ns, list) else []
         elif isinstance(chunk, tuple) and len(chunk) >= 3:
             _, mode, payload = chunk[0], chunk[1], chunk[2]
         else:
             logger.debug("Skipping unrecognized stream chunk: %s", type(chunk).__name__)
             continue
 
+        # Determine if this event originates from a subgraph (sub-agent).
+        is_subgraph = len(namespace) > 0
+
         if mode == "messages":
-            async for event in _handle_messages_mode(payload):
+            async for event in _handle_messages_mode(payload, is_subgraph=is_subgraph):
                 yield event
         elif mode == "updates":
-            async for event in _handle_updates_mode(payload):
+            async for event in _handle_updates_mode(payload, is_subgraph=is_subgraph):
                 yield event
         elif mode == "values":
-            async for event in _handle_values_mode(payload):
+            async for event in _handle_values_mode(payload, is_subgraph=is_subgraph):
                 yield event
         else:
             logger.debug("Ignoring unknown stream mode %s", mode)
@@ -109,10 +116,17 @@ async def stream_agent(
 
 async def _handle_messages_mode(
     payload: Any,
+    *,
+    is_subgraph: bool = False,
 ) -> AsyncGenerator[StreamEvent, None]:
     """Process a ``messages`` stream-mode event.
 
     ``payload`` is a ``(message_chunk, metadata)`` tuple.
+
+    Args:
+        is_subgraph: Whether this event originates from a subgraph (sub-agent).
+                     Sub-agent text tokens are intermediate output and should NOT
+                     be treated as the final answer.
     """
     if not isinstance(payload, tuple) or len(payload) < 2:
         return
@@ -128,6 +142,7 @@ async def _handle_messages_mode(
                 "name": chunk.name,
                 "content": _extract_text_content(chunk.content),
                 "status": chunk.status,
+                "is_subgraph": is_subgraph,
             },
         }
         return
@@ -143,22 +158,27 @@ async def _handle_messages_mode(
                         "id": tc.get("id"),
                         "name": tc["name"],
                         "args": tc.get("args"),
+                        "is_subgraph": is_subgraph,
                     },
                 }
 
         # Emit text content chunks.
-        text = _extract_text_content(chunk.content)
-        if text:
-            yield {
-                "type": "message_chunk",
-                "data": {
-                    "content": text,
-                },
-            }
+        # Skip text content from sub-agents — those are intermediate output.
+        if not is_subgraph:
+            text = _extract_text_content(chunk.content)
+            if text:
+                yield {
+                    "type": "message_chunk",
+                    "data": {
+                        "content": text,
+                    },
+                }
 
 
 async def _handle_updates_mode(
     payload: Any,
+    *,
+    is_subgraph: bool = False,
 ) -> AsyncGenerator[StreamEvent, None]:
     """Process an ``updates`` stream-mode event.
 
@@ -173,18 +193,24 @@ async def _handle_updates_mode(
             "data": {
                 "node": node_name,
                 "state_keys": list(state.keys()) if isinstance(state, dict) else [],
+                "is_subgraph": is_subgraph,
             },
         }
 
 
 async def _handle_values_mode(
     payload: Any,
+    *,
+    is_subgraph: bool = False,
 ) -> AsyncGenerator[StreamEvent, None]:
     if not isinstance(payload, dict):
         return
     yield {
         "type": "values_snapshot",
-        "data": payload,
+        "data": {
+            **payload,
+            "is_subgraph": is_subgraph,
+        },
     }
 
 

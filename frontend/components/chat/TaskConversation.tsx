@@ -42,6 +42,7 @@ export function TaskConversation({
   onOpenArtifact,
 }: TaskConversationProps) {
   const conversationCanvasRef = useRef<HTMLElement | null>(null);
+  const logListRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   useEffect(() => {
     if (!hasConversation) {
@@ -57,6 +58,17 @@ export function TaskConversation({
       canvas.scrollTo({ top: canvas.scrollHeight, behavior: "smooth" });
     }
   }, [conversationStreamItems, hasConversation, noticeMessages]);
+
+  useEffect(() => {
+    for (const [runId, el] of logListRefs.current) {
+      if (!el) continue;
+      const threshold = 60;
+      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
+      if (distanceFromBottom < threshold) {
+        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+      }
+    }
+  });
 
   function artifactCanOpen(artifact: Artifact) {
     const artifactKind = artifact.kind ?? (artifact.name.toLowerCase().endsWith(".html") ? "html" : "file");
@@ -294,11 +306,10 @@ export function TaskConversation({
             className="logList"
             id={logListId}
             ref={(el) => {
-              if (!el) return;
-              const threshold = 60;
-              const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-              if (distanceFromBottom < threshold) {
-                el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+              if (el) {
+                logListRefs.current.set(group.runId, el);
+              } else {
+                logListRefs.current.delete(group.runId);
               }
             }}
           >

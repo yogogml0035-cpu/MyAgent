@@ -17,20 +17,13 @@ _TYPE_MAP: dict[str, str] = {
     "values_snapshot": "values_snapshot",
 }
 
-_LEVEL_MAP: dict[str, Literal["info", "success", "warning", "error"]] = {
-    "assistant_answer_delta": "info",
-    "tool_call": "info",
-    "tool_result": "info",
-    "status_update": "info",
-    "values_snapshot": "info",
-}
-
 # Default level per event type.
 _LEVEL_MAP: dict[str, Literal["info", "success", "warning", "error"]] = {
     "assistant_answer_delta": "info",
     "tool_call": "info",
     "tool_result": "info",
     "status_update": "info",
+    "values_snapshot": "info",
 }
 
 
@@ -60,9 +53,13 @@ def convert_stream_event(
             "schema_version": 1,
             "stream_index": seq or 0,
             "content": data.get("content", ""),
+            "is_subgraph": data.get("is_subgraph", False),
         }
     elif record_type == "values_snapshot":
-        payload = {"snapshot_keys": list(data.keys()) if isinstance(data, dict) else []}
+        payload = {
+            "snapshot_keys": list(data.keys()) if isinstance(data, dict) else [],
+            "is_subgraph": data.get("is_subgraph", False),
+        }
     else:
         payload = data
 

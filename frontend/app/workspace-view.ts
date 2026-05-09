@@ -711,7 +711,7 @@ function isSetupFallbackLog(log: ExecutionLog) {
 
 function accumulateStreamedAnswer(logs: ExecutionLog[]): string {
   const streamLogs = logs
-    .filter((log) => Boolean(log.answerStream?.content))
+    .filter((log) => Boolean(log.answerStream?.content) && !log.answerStream?.isSubgraph)
     .sort((left, right) => {
       const leftIndex = left.answerStream?.streamIndex ?? 0;
       const rightIndex = right.answerStream?.streamIndex ?? 0;
@@ -877,6 +877,12 @@ export function buildConversationStreamItems(
   function pushStreamedAnswerItem(group: RunActivityGroup) {
     const content = group.streamedAnswer?.trim();
     if (!content || !hasMeaningfulContent(content)) {
+      return;
+    }
+    // Only show the streaming answer while the task is actively running.
+    // Once the run completes, the authoritative final answer will be in
+    // the messages array (extracted from final_state by the backend).
+    if (!isTaskActive(group.status)) {
       return;
     }
     items.push({

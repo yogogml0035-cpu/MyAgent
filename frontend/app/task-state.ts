@@ -113,6 +113,7 @@ export type AssistantAnswerStreamTrace = {
   schemaVersion: 1;
   streamIndex: number;
   content: string;
+  isSubgraph?: boolean;
 };
 
 export type LiveEventKind = "think" | "tool_call" | "tool_result" | "answer_status" | "status";
@@ -875,6 +876,7 @@ function normalizeAssistantAnswerStream(type: string | undefined, payload: Recor
       9999,
     ) ?? 0,
     content,
+    isSubgraph: readOptionalBoolean(payload.is_subgraph ?? payload.isSubgraph) ?? false,
   };
 }
 
