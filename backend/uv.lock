@@ -735,15 +735,11 @@ wheels = [
 
 [[package]]
 name = "langgraph-checkpoint"
-version = "4.0.3"
-source = { registry = "https://pypi.org/simple" }
+version = "4.1.0a4"
+source = { git = "https://github.com/langchain-ai/langgraph?subdirectory=libs%2Fcheckpoint&rev=2e5025ec1ac8d435840ed4a972097de87aaa2eab#2e5025ec1ac8d435840ed4a972097de87aaa2eab" }
 dependencies = [
     { name = "langchain-core" },
     { name = "ormsgpack" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/7c/e1/885e49cdafceb4c74dae4573bc5dd6054c6c640382ee73104532f33dca46/langgraph_checkpoint-4.0.3.tar.gz", hash = "sha256:a7b5e2ca18fb79b55edf19396d4ee446f8a53dcb7a4ec62ce6f1c7e00bb5af7f", size = 174009, upload-time = "2026-04-27T14:34:02.777Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/19/ee/ecd3fa2e893746dde3b768daca2a4935208bc77d09445437ccfffb4a8c9b/langgraph_checkpoint-4.0.3-py3-none-any.whl", hash = "sha256:b91b765712a2311a5b198760f714b7ab9b376d01c047ed78d9b9a3e80df802a3", size = 51682, upload-time = "2026-04-27T14:34:01.51Z" },
 ]
 
 [[package]]
@@ -878,6 +874,7 @@ dependencies = [
     { name = "langchain-deepseek" },
     { name = "langchain-openai" },
     { name = "langgraph" },
+    { name = "langgraph-checkpoint" },
     { name = "pydantic" },
     { name = "python-multipart" },
     { name = "tavily-python" },
@@ -902,6 +899,7 @@ requires-dist = [
     { name = "langchain-deepseek", specifier = ">=0.1,<2.0.0" },
     { name = "langchain-openai", specifier = ">=0.3,<2.0.0" },
     { name = "langgraph", specifier = ">=0.3,<2.0.0" },
+    { name = "langgraph-checkpoint", git = "https://github.com/langchain-ai/langgraph?subdirectory=libs%2Fcheckpoint&rev=2e5025ec1ac8d435840ed4a972097de87aaa2eab" },
     { name = "pydantic", specifier = ">=2.0,<3.0.0" },
     { name = "python-multipart", specifier = ">=0.0.26,<1.0.0" },
     { name = "tavily-python", specifier = ">=0.5,<1.0.0" },

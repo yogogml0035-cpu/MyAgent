@@ -16,6 +16,7 @@ dependencies = [
   "langchain-anthropic>=0.3,<2.0.0",
   "langchain-deepseek>=0.1,<2.0.0",
   "tavily-python>=0.5,<1.0.0",
+  "langgraph-checkpoint",
 ]
 
 [dependency-groups]
@@ -44,3 +45,6 @@ python_version = "3.11"
 ignore_missing_imports = true
 check_untyped_defs = true
 warn_unused_ignores = true
+
+[tool.uv.sources]
+langgraph-checkpoint = { git = "https://github.com/langchain-ai/langgraph", subdirectory = "libs/checkpoint", rev = "2e5025ec1ac8d435840ed4a972097de87aaa2eab" }

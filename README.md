@@ -26,10 +26,12 @@ asset/                   面向后续智能体协作的长期知识包索引
 ## 环境要求
 
 - Python 3.11 或更新版本
-- 用于后端依赖管理的 `uv`
+- 用于后端依赖管理的最新版 `uv`
 - 与当前 Next.js 版本兼容的 Node.js 和 npm
 - 用于真实模型调用的 DeepSeek API Key
 - 可选：用于联网搜索分析工具的 Tavily API Key
+
+当前 README 默认覆盖“同一台机器上的本地开发和本机部署”。不再展开访问令牌配置或跨主机/LAN 暴露方案。
 
 ## WSL 路径约定
 
@@ -51,11 +53,43 @@ npm ci
 
 ## 安装
 
+### 安装最新版 uv
+
+WSL / Linux / macOS：
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv --version
+```
+
+Windows PowerShell：
+
+```powershell
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+uv --version
+```
+
+如果之前已经通过官方 installer 安装过 `uv`，可以直接升级到最新稳定版：
+
+```bash
+uv self update
+```
+
+### 安装项目依赖
+
 安装后端依赖：
 
 ```bash
 cd /mnt/d/AgentProject/MyAgent/backend
-uv sync --dev
+uv sync
+```
+
+如果需要把后端锁定依赖升级到当前约束允许的最新版本：
+
+```bash
+cd /mnt/d/AgentProject/MyAgent/backend
+uv lock --upgrade
+uv sync
 ```
 
 安装前端依赖：
@@ -80,7 +114,6 @@ cp .env.example .env
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 TAVILY_API_KEY=
-MYAGENT_ACCESS_TOKEN=
 MYAGENT_CORS_ORIGINS=http://localhost:3001,http://127.0.0.1:3001
 MYAGENT_TASK_ROOT=
 MYAGENT_MAX_UPLOAD_FILES=10
@@ -101,7 +134,6 @@ cp .env.example .env.local
 ```env
 # auto 会按当前页面主机名连接 http://<hostname>:8001
 NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
-NEXT_PUBLIC_MYAGENT_TOKEN=
 ```
 
 模型提供方凭据必须只放在后端。任何带有 `NEXT_PUBLIC_` 前缀的值都会暴露给浏览器。
@@ -173,68 +205,37 @@ http://localhost:3001
 curl http://localhost:8001/health
 ```
 
-## 本地部署说明
+## 本机部署与启动
 
 后端按单一本地进程设计。在任务 runner 和 JSON 存储重新设计之前，不要使用多个 Uvicorn、Gunicorn 或平台 worker 运行。应用会通过 `WEB_CONCURRENCY`、`UVICORN_WORKERS` 或 `GUNICORN_WORKERS` 拒绝大于 1 的 worker 数量。
 
-本地生产风格运行前端：
+部署前，先确认后端 lockfile 仍然有效，并安装运行时依赖：
+
+```bash
+cd /mnt/d/AgentProject/MyAgent/backend
+uv lock --check
+uv sync --no-dev
+```
+
+如果需要让任务和产物在重启后保留，请在 `backend/.env` 中设置 `MYAGENT_TASK_ROOT` 到持久化目录。
+
+构建并启动前端：
 
 ```bash
 cd /mnt/d/AgentProject/MyAgent/frontend
+npm ci
 npm run build
 npm run start
 ```
 
-单独运行后端：
+在另一个终端启动后端：
 
 ```bash
 cd /mnt/d/AgentProject/MyAgent/backend
 uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
-如果任务 API 会被非 loopback 客户端访问，请在后端设置 `MYAGENT_ACCESS_TOKEN`，并在前端将相同值设置为 `NEXT_PUBLIC_MYAGENT_TOKEN`。如果任务产物需要在清理或重新部署后保留，也请将 `MYAGENT_TASK_ROOT` 设置为持久化本地目录。
-
-如果要从局域网地址 `<LAN_IP>` 进行访问，需要显式配置前后端服务。
-
-后端 `backend/.env`：
-
-```env
-MYAGENT_ACCESS_TOKEN=choose-a-local-token
-MYAGENT_CORS_ORIGINS=http://localhost:3001,http://127.0.0.1:3001,http://<LAN_IP>:3001
-```
-
-前端 `frontend/.env.local`：
-
-```env
-NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
-NEXT_PUBLIC_MYAGENT_TOKEN=choose-a-local-token
-```
-
-在可被外部访问的接口上启动服务：
-
-```bash
-cd /mnt/d/AgentProject/MyAgent/backend
-uv run uvicorn app.main:app --host 0.0.0.0 --port 8001
-```
-
-```bash
-cd /mnt/d/AgentProject/MyAgent/frontend
-npm run dev -- -H 0.0.0.0
-```
-
-然后打开 `http://<LAN_IP>:3001`。不要把 provider key 写入任何 `NEXT_PUBLIC_*` 值；`NEXT_PUBLIC_MYAGENT_TOKEN` 只保护这个本地任务 API，并且对能够加载前端的浏览器可见。
-
-如果服务已经在 WSL 内监听 `0.0.0.0`，但 Windows 侧的 `<LAN_IP>:3001` 或 `<LAN_IP>:8001` 仍无法连接，说明 WSL NAT 没有把 Windows LAN IP 转发到 WSL。用管理员 PowerShell 添加端口转发：
-
-```powershell
-$listenIp = "<LAN_IP>"
-$wslIp = ((wsl hostname -I).Trim() -split "\s+")[0]
-foreach ($port in 3001, 8001) {
-  netsh interface portproxy delete v4tov4 listenaddress=$listenIp listenport=$port
-  netsh interface portproxy add v4tov4 listenaddress=$listenIp listenport=$port connectaddress=$wslIp connectport=$port
-  netsh advfirewall firewall add rule name="MyAgent WSL $port" dir=in action=allow protocol=TCP localport=$port
-}
-```
+然后打开 `http://localhost:3001`。当前 README 仅覆盖本机访问路径：前端运行在 `3001`，后端运行在 `8001`，两者位于同一台机器上。
 
 本仓库目前不包含 Docker、进程管理器、反向代理、TLS 或多主机部署文件。将它作为生产服务前，需要显式补齐这些能力。
 
@@ -260,8 +261,7 @@ foreach ($port in 3001, 8001) {
 - `POST /api/tasks/{task_id}/cancel` 请求取消任务。
 - `GET /api/tasks/{task_id}/artifacts/{artifact_name}` 下载产物。
 
-任务 API 默认只允许 loopback 客户端访问。配置了 `MYAGENT_ACCESS_TOKEN` 后，请求必须提供 `Authorization: Bearer <token>` 或 `X-MyAgent-Token`。
-浏览器调用方还必须使用 `MYAGENT_CORS_ORIGINS` 中列出的 origin；默认只允许 `http://localhost:3001` 和 `http://127.0.0.1:3001`。
+当前 README 默认按 `localhost` / `127.0.0.1` 访问说明。浏览器 origin 仍受 `MYAGENT_CORS_ORIGINS` 约束；如果你修改前端访问地址或端口，需要同步更新后端允许的 origin。
 
 ## 验证
 
@@ -297,13 +297,11 @@ git diff --check
 - 上传文件、任务计划、证据、摘要、日志和 HTML 报告会存储在本地任务目录中。
 - 文件访问和命令执行辅助能力默认限定在任务工作区内。
 - 上传和 JSON 请求大小限制由后端环境变量控制。
-- 浏览器 CORS origin 由 `MYAGENT_CORS_ORIGINS` 控制；请使用精确的协议、主机和端口，例如 `http://<LAN_IP>:3001`。
-- 迁移后的本地配置仍兼容旧的 `AGENT_CHAT_*` 和 `NEXT_PUBLIC_AGENT_CHAT_*` 名称，但新配置应使用 `MYAGENT_*`。
+- 浏览器 CORS origin 由 `MYAGENT_CORS_ORIGINS` 控制；当前默认值允许 `http://localhost:3001` 和 `http://127.0.0.1:3001`。
 
 ## 常见问题
 
-- `401 访问令牌无效或缺失。`：设置匹配的 `MYAGENT_ACCESS_TOKEN` 和 `NEXT_PUBLIC_MYAGENT_TOKEN`，然后重启两个服务。
-- `403 任务 API 默认只允许本机访问；如需非本机访问，请设置 MYAGENT_ACCESS_TOKEN`：请求来自非 loopback 客户端，且没有提供访问令牌。
+- `403 任务 API 默认只允许本机访问。`：当前 README 只覆盖本机部署；请确认你访问的是 `http://localhost:3001` 或 `http://127.0.0.1:3001`，并且后端监听在本机 `8001` 端口。
 - `409 任务运行中不能上传文件`：停止当前任务或等待任务结束后再上传更多文件。
 - `开始文档分析任务前，请先上传 Markdown 或 JSON 文件。`：任务消息需要文档分析，但尚未上传 Markdown 或 JSON 文件。
 - `至少需要上传两份投标人文档才能进行对比。`：至少上传两个投标方 Markdown 或 JSON 文件以便进行比较。

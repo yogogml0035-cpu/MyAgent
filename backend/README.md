@@ -11,10 +11,35 @@ Local FastAPI backend for the v1 MyAgent workspace.
 - Persists tool-style events, sub-agent reports, evidence records, final Markdown summary, and an interactive HTML report.
 - Exposes only safe model IDs to the frontend. Provider secrets stay in backend `.env`.
 
-## Run
+## Install
 
 ```bash
-uv run uvicorn app.main:app --reload --port 8001
+curl -LsSf https://astral.sh/uv/install.sh | sh
+uv --version
+uv sync
+```
+
+如果需要把锁定依赖升级到当前约束允许的最新版本：
+
+```bash
+uv lock --upgrade
+uv sync
+```
+
+## Run
+
+开发模式：
+
+```bash
+uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8001
+```
+
+本机部署：
+
+```bash
+uv lock --check
+uv sync --no-dev
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
 ## Test
@@ -30,18 +55,13 @@ Copy `.env.example` to `.env` and configure:
 - `DEEPSEEK_API_KEY`
 - `DEEPSEEK_BASE_URL`
 - `TAVILY_API_KEY`
-- `MYAGENT_ACCESS_TOKEN`
 - `MYAGENT_CORS_ORIGINS`
 - `MYAGENT_TASK_ROOT`
 
 The default model registry exposes `deepseek:deepseek-chat`.
 The backend loads `backend/.env` on startup before reading process environment values.
-Task APIs accept local loopback clients by default. If `MYAGENT_ACCESS_TOKEN` is set,
-all task APIs require either `Authorization: Bearer <token>` or `X-MyAgent-Token`.
+Current documentation assumes local same-machine access over `localhost` or `127.0.0.1`.
 Browser callers must use an origin listed in `MYAGENT_CORS_ORIGINS`, which defaults to
-`http://localhost:3001,http://127.0.0.1:3001`. Add LAN frontend origins such as
-`http://<LAN_IP>:3001` when running the frontend by IP. The frontend can use
+`http://localhost:3001,http://127.0.0.1:3001`. The frontend can use
 `NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto` to call the backend on the same hostname as the
 opened page.
-The legacy `AGENT_CHAT_*` environment names and `X-Agent-Chat-Token` header are still
-accepted for migrated local setups.

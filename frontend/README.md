@@ -26,15 +26,13 @@ npm run dev
 
 The frontend reads `NEXT_PUBLIC_MYAGENT_API_BASE_URL`. When it is unset or set to `auto`,
 the browser derives the backend URL from the current page host as
-`http://<hostname>:8001`, so both `http://localhost:3001` and a LAN URL such as
-`http://<LAN_IP>:3001` target the matching backend host. Explicit backend URLs such
-as `http://localhost:8001` are still supported. If the backend sets
-`MYAGENT_ACCESS_TOKEN`, set the same value as `NEXT_PUBLIC_MYAGENT_TOKEN` for local
-development. When opening the UI through a LAN address, include the frontend origin such
-as `http://<LAN_IP>:3001` in backend `MYAGENT_CORS_ORIGINS`.
+`http://<hostname>:8001`, so `http://localhost:3001` maps to `http://localhost:8001`
+and `http://127.0.0.1:3001` maps to `http://127.0.0.1:8001`. Explicit backend URLs such
+as `http://localhost:8001` are still supported. If you change the frontend origin or
+backend port, update `NEXT_PUBLIC_MYAGENT_API_BASE_URL` and backend
+`MYAGENT_CORS_ORIGINS` accordingly.
 
-The legacy `NEXT_PUBLIC_API_BASE_URL` and `NEXT_PUBLIC_AGENT_CHAT_TOKEN` names are still
-accepted for migrated local setups.
+The legacy `NEXT_PUBLIC_API_BASE_URL` name is still accepted for migrated local setups.
 
 Expected backend endpoints:
 

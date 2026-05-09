@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from hmac import compare_digest
 from ipaddress import ip_address
 
@@ -26,19 +27,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     resolved = settings or load_settings()
     enforce_single_process_runtime()
 
-    app = FastAPI(title="MyAgent Backend", version="0.2.0")
-    app.state.settings = resolved
-
     storage = TaskStorage(resolved.task_root)
     runner = TaskRunner(resolved, storage)
-    app.state.storage = storage
-    app.state.runner = runner
 
-    @app.on_event("startup")
-    def on_startup() -> None:
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         interrupted = storage.interrupt_running_tasks("后端启动或重载时中断了任务。")
         if interrupted:
             logger.info("Startup interrupted %d running task(s): %s", len(interrupted), interrupted)
+        yield
+
+    app = FastAPI(title="MyAgent Backend", version="0.2.0", lifespan=lifespan)
+    app.state.settings = resolved
+    app.state.storage = storage
+    app.state.runner = runner
 
     app.include_router(tasks_router)
     app.include_router(files_router)
