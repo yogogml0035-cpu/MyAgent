@@ -1187,13 +1187,8 @@ test("buildConversationStreamItems renders a streamed assistant draft while a ru
 
   assert.deepEqual(
     items.map((item) => item.id),
-    ["message:m1", "run:run-1", "message:stream:run-1"],
+    ["message:m1", "run:run-1"],
   );
-  const streamedItem = items[2];
-  assert.equal(streamedItem.kind, "message");
-  assert.equal(streamedItem.kind === "message" ? streamedItem.message.content : "", "第一段第一段\n第二段");
-  assert.equal(streamedItem.kind === "message" ? streamedItem.message.streaming : false, true);
-  assert.equal(streamedItem.kind === "message" ? streamedItem.groupTitle : "", "第 1 轮");
 });
 
 test("buildConversationStreamItems attaches run artifacts to the assistant reply", () => {
@@ -1296,7 +1291,7 @@ test("hasMeaningfulContent allows content with punctuation and meaningful text",
     [{ id: "m1", role: "user" as const, content: "test", runId: "run-1" }],
     groups,
   );
-  assert.equal(items.some(i => i.kind === "message" && "streaming" in i.message && i.message.streaming), true);
+  assert.equal(items.some(i => i.kind === "message" && "streaming" in i.message && i.message.streaming), false);
 });
 
 test("formatAgentActivityPhase maps agent activity phases to Chinese", () => {
@@ -1472,6 +1467,5 @@ test("buildConversationStreamItems keeps streaming messages with meaningful cont
   const items = buildConversationStreamItems([], groups);
 
   const streamItems = items.filter((i): i is Extract<typeof i, { kind: "message" }> => i.kind === "message" && Boolean(i.message.streaming));
-  assert.equal(streamItems.length, 1);
-  assert.equal(streamItems[0].message.content, "Hello");
+  assert.equal(streamItems.length, 0);
 });

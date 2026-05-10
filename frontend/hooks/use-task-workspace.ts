@@ -228,6 +228,7 @@ export function useTaskWorkspace() {
               "tool_result",
               "assistant_answer_delta",
               "status_update",
+              "final_answer",
             ];
             if (
               payload &&
@@ -240,7 +241,7 @@ export function useTaskWorkspace() {
                 setLogs((current) => mergeExecutionLogs(current, incoming));
               }
             }
-            if (!payload || payload.type === "state" || payload.type === "done") {
+            if (!payload || payload.type === "state" || payload.type === "done" || payload.type === "final_answer") {
               void refreshTaskSummary();
             }
           } catch {

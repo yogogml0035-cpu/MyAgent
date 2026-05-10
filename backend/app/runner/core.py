@@ -143,6 +143,19 @@ class TaskRunner:
                     run_id=run_id,
                     append_message=append_message,
                 )
+
+                # Emit a synthetic final_answer event so the frontend can
+                # refresh immediately and display the authoritative answer
+                # extracted from final_state (not the intermediate deltas).
+                if final_answer:
+                    storage.append_event(
+                        task_id,
+                        "final_answer",
+                        "Final answer generated",
+                        payload={"content": final_answer},
+                        run_id=run_id,
+                        level="success",
+                    )
             except TimeoutError:
                 self.storage.update_task_if_status(
                     task_id,

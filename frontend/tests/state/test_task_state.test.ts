@@ -304,6 +304,7 @@ test("normalizeTaskState preserves safe assistant answer stream events", () => {
     schemaVersion: 1,
     streamIndex: 2,
     content: "第一段\n第二段",
+    isSubgraph: false,
   });
   assert.equal(state.logs[1].answerStream, undefined);
 });

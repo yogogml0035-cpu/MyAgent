@@ -68,7 +68,7 @@ export function TaskConversation({
         el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
       }
     }
-  });
+  }, [conversationStreamItems]);
 
   function artifactCanOpen(artifact: Artifact) {
     const artifactKind = artifact.kind ?? (artifact.name.toLowerCase().endsWith(".html") ? "html" : "file");

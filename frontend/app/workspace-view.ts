@@ -180,9 +180,17 @@ export function buildLiveLogItems(
   let activeText = "";
   let activeCreatedAt: string | undefined;
   let hasCancelEvent = false;
+  // Accumulate intermediate answer text from streaming deltas separately
+  // so it is not overwritten by subsequent status updates.
+  let accumulatedAnswerText = "";
+  let lastAnswerCreatedAt: string | undefined;
 
   logs.forEach((log, index) => {
     if (log.type === "assistant_answer_delta") {
+      if (log.answerStream?.content) {
+        accumulatedAnswerText = log.answerStream.content;
+        lastAnswerCreatedAt = log.createdAt;
+      }
       return;
     }
 
@@ -278,12 +286,15 @@ export function buildLiveLogItems(
         active: false,
       });
     } else {
+      // Prefer accumulated answer text (intermediate tokens) over generic
+      // status text so the user sees what the agent is actually generating.
+      const displayText = accumulatedAnswerText || activeText || "AI正在思考...";
       items.push({
         id: "status:active",
         kind: "status",
-        createdAt: activeCreatedAt,
+        createdAt: lastAnswerCreatedAt || activeCreatedAt,
         level: "info",
-        text: activeText || "AI正在思考...",
+        text: displayText,
         active: true,
       });
     }
@@ -879,25 +890,11 @@ export function buildConversationStreamItems(
     if (!content || !hasMeaningfulContent(content)) {
       return;
     }
-    // Only show the streaming answer while the task is actively running.
-    // Once the run completes, the authoritative final answer will be in
-    // the messages array (extracted from final_state by the backend).
-    if (!isTaskActive(group.status)) {
-      return;
-    }
-    items.push({
-      id: `message:stream:${group.runId}`,
-      kind: "message",
-      message: {
-        id: `stream:${group.runId}`,
-        role: "assistant",
-        content: group.streamedAnswer ?? "",
-        createdAt: group.streamedAnswerCreatedAt,
-        runId: group.runId,
-        streaming: true,
-      },
-      groupTitle: group.title,
-    });
+    // DISABLED: We no longer show intermediate streaming text as an AI
+    // reply card. The authoritative final answer comes from final_state
+    // and is stored as a ChatMessage by the backend after the stream ends.
+    // Intermediate tokens are shown in the progress log instead.
+    return;
   }
 
   messages.forEach((message, index) => {

@@ -137,6 +137,27 @@ For any behavior-changing task, also run the relevant live browser E2E flow agai
 - Dynamic loading status precedence: `agentActivity.phase` > `live.stage` > default fallback `"AI正在思考..."`. Phase mapping: `planning`→"正在规划任务...", `reasoning`→"AI正在思考...", `tool_use`→"正在调用工具...", `file_operation`→"正在处理文件...", `finalizing`→"AI正在生成结果...".
 - `buildLiveLogItems` checks `agentActivity.status` (`completed`/`failed`/`skipped`) as additional terminal condition alongside `isTerminalLiveStage(live.stage)`.
 
+## Final Answer vs Intermediate Process Distinction
+
+**Critical architectural boundary**: `assistant_answer_delta` events are **intermediate process tokens**, NOT the final answer. They represent the agent's thinking process and partial outputs during streaming, and must be treated as debug/progress content only.
+
+**Backend responsibilities**:
+- `extract_final_answer()` in `v2_adapter.py` walks `state["messages"]` in reverse to find the last `AIMessage` with content but no `tool_calls`. This is the authoritative final answer.
+- `runner/core.py` emits a synthetic `final_answer` event AFTER storing the final answer as a `ChatMessage` via `storage.update_task_if_status()`. The event order matters: ChatMessage storage first, then the `final_answer` event, to avoid frontend race conditions.
+- The `final_answer` event has `type="final_answer"`, `level="success"`, and `payload={"content": "..."}`.
+
+**Frontend responsibilities**:
+- `buildLiveLogItems()` accumulates `assistant_answer_delta` content into `accumulatedAnswerText` and displays it in the active status row (replacing "AI正在思考..."). This variable is separate from `activeText` so it is not overwritten by subsequent `state_update` events.
+- `buildConversationStreamItems()` does NOT create streaming AI reply cards from `streamedAnswer` during active runs. The `pushStreamedAnswerItem()` function is kept but not called.
+- The AI reply card only appears from the `messages` array after the run completes, when `refreshTaskSummary()` loads the stored `ChatMessage`.
+- `use-task-workspace.ts` recognizes `"final_answer"` in the SSE `recognizedTypes` list and triggers `refreshTaskSummary()` when a `final_answer` event arrives.
+
+**Anti-patterns to avoid**:
+- NEVER use the last `assistant_answer_delta` chunk as the final answer — the last chunk could be a `state_update`, `tool_result`, or subgraph output.
+- NEVER treat `streamedAnswer` (accumulated from deltas) as the authoritative final answer. It is for progress display only.
+- NEVER emit the `final_answer` event before storing the `ChatMessage` — this causes a race where the frontend refreshes before the answer is persisted.
+- NEVER display `assistant_answer_delta` as a standalone AI reply card. It belongs in the progress log only.
+
 ## Regression Risks
 
 - Middleware duplication if future developer re-adds default middleware to the stack.
@@ -147,4 +168,8 @@ For any behavior-changing task, also run the relevant live browser E2E flow agai
 - Concurrency risk if `max_concurrent_subagents` is changed without testing subagent parallel execution limits.
 - SSE event loss if `last_event_id` in `streaming.py` is reverted to `""` — the empty string causes `read_events(after_id="")` to return nothing because `after_id is None` is `False` and no event matches `id == ""`. E2E test `test_sse_drains_remaining_events_before_done` guards this.
 - Stream accumulation regression if `accumulateStreamedAnswer` is reverted to taking only the last delta — this would re-introduce the isolated punctuation card bug.
+- **Final answer extraction regression**: If `extract_final_answer()` is removed or modified to not filter out `tool_calls`, the final answer could include tool-calling artifacts (e.g., JSON function calls) instead of clean text.
+- **Intermediate/final confusion**: If `pushStreamedAnswerItem()` is re-enabled in `buildConversationStreamItems()`, intermediate tokens will again be displayed as AI reply cards during streaming, breaking the final/intermediate distinction.
+- **Race condition regression**: If the `final_answer` event in `runner/core.py` is moved before `storage.update_task_if_status()`, the frontend may refresh before the ChatMessage is persisted, showing stale or missing final answers.
+- **Log scroll regression**: If the `conversationStreamItems` dependency is removed from the log list auto-scroll effect in `TaskConversation.tsx`, progress log cards will not auto-scroll as new intermediate content arrives.
 - Acceptance drift if future changes rely only on unit/integration results and skip live browser E2E plus screenshot evidence; this repository now treats that as an incomplete delivery for behavior changes.
