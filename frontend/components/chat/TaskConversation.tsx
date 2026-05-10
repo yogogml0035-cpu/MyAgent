@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact, ChatMessage, ExecutionLog } from "../../app/task-state";
@@ -17,6 +17,33 @@ import {
 } from "../../app/workspace-view";
 import { RobotAvatar } from "./RobotAvatar";
 import { TypewriterText } from "./TypewriterText";
+
+export const LOG_LIST_AUTO_SCROLL_THRESHOLD = 60;
+
+type LogScrollElement = {
+  clientHeight: number;
+  scrollHeight: number;
+  scrollTo: (options: ScrollToOptions) => void;
+  scrollTop: number;
+};
+
+export function isLogListNearBottom(
+  element: LogScrollElement,
+  threshold = LOG_LIST_AUTO_SCROLL_THRESHOLD,
+) {
+  return element.scrollHeight - element.scrollTop - element.clientHeight <= threshold;
+}
+
+export function scrollLogListToBottomIfPinned(
+  element: LogScrollElement,
+  pinnedToBottom: boolean | undefined,
+) {
+  if (pinnedToBottom === false && !isLogListNearBottom(element)) {
+    return false;
+  }
+  element.scrollTo({ top: element.scrollHeight, behavior: "auto" });
+  return true;
+}
 
 type TaskConversationProps = {
   activeTask: boolean;
@@ -43,6 +70,7 @@ export function TaskConversation({
 }: TaskConversationProps) {
   const conversationCanvasRef = useRef<HTMLElement | null>(null);
   const logListRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const logListPinnedRefs = useRef<Map<string, boolean>>(new Map());
 
   useEffect(() => {
     if (!hasConversation) {
@@ -59,16 +87,27 @@ export function TaskConversation({
     }
   }, [conversationStreamItems, hasConversation, noticeMessages]);
 
+  useLayoutEffect(() => {
+    const scrollPinnedLists = () => {
+      for (const [runId, el] of logListRefs.current) {
+        if (!el) continue;
+        scrollLogListToBottomIfPinned(el, logListPinnedRefs.current.get(runId));
+      }
+    };
+
+    scrollPinnedLists();
+    const animationFrameId = window.requestAnimationFrame(scrollPinnedLists);
+    return () => {
+      window.cancelAnimationFrame(animationFrameId);
+    };
+  }, [conversationStreamItems]);
+
   useEffect(() => {
     for (const [runId, el] of logListRefs.current) {
       if (!el) continue;
-      const threshold = 60;
-      const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
-      if (distanceFromBottom < threshold) {
-        el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
-      }
+      scrollLogListToBottomIfPinned(el, logListPinnedRefs.current.get(runId));
     }
-  }, [conversationStreamItems]);
+  }, [noticeMessages]);
 
   function artifactCanOpen(artifact: Artifact) {
     const artifactKind = artifact.kind ?? (artifact.name.toLowerCase().endsWith(".html") ? "html" : "file");
@@ -308,9 +347,19 @@ export function TaskConversation({
             ref={(el) => {
               if (el) {
                 logListRefs.current.set(group.runId, el);
+                if (!logListPinnedRefs.current.has(group.runId)) {
+                  logListPinnedRefs.current.set(group.runId, true);
+                }
               } else {
                 logListRefs.current.delete(group.runId);
+                logListPinnedRefs.current.delete(group.runId);
               }
+            }}
+            onScroll={(event) => {
+              logListPinnedRefs.current.set(
+                group.runId,
+                isLogListNearBottom(event.currentTarget),
+              );
             }}
           >
             {liveItems.length === 0 ? (

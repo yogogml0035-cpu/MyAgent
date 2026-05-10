@@ -180,15 +180,13 @@ export function buildLiveLogItems(
   let activeText = "";
   let activeCreatedAt: string | undefined;
   let hasCancelEvent = false;
-  // Accumulate intermediate answer text from streaming deltas separately
-  // so it is not overwritten by subsequent status updates.
-  let accumulatedAnswerText = "";
+  let hasAnswerStream = false;
   let lastAnswerCreatedAt: string | undefined;
 
   logs.forEach((log, index) => {
     if (log.type === "assistant_answer_delta") {
       if (log.answerStream?.content) {
-        accumulatedAnswerText = log.answerStream.content;
+        hasAnswerStream = true;
         lastAnswerCreatedAt = log.createdAt;
       }
       return;
@@ -286,9 +284,7 @@ export function buildLiveLogItems(
         active: false,
       });
     } else {
-      // Prefer accumulated answer text (intermediate tokens) over generic
-      // status text so the user sees what the agent is actually generating.
-      const displayText = accumulatedAnswerText || activeText || "AI正在思考...";
+      const displayText = hasAnswerStream ? "AI正在生成结果" : activeText || "AI正在思考...";
       items.push({
         id: "status:active",
         kind: "status",
@@ -425,7 +421,7 @@ export function formatAgentActivityPhase(phase: AgentActivityPhase | undefined):
     case "file_operation":
       return "正在处理文件...";
     case "finalizing":
-      return "AI正在生成结果...";
+      return "AI正在生成结果";
     default:
       return "";
   }
@@ -440,7 +436,7 @@ function formatLiveStatusText(live: NonNullable<ExecutionLog["live"]>) {
       return "回答已完成";
     }
     if (live.stage === "generating_answer") {
-      return "正在生成回答...";
+      return "AI正在生成结果";
     }
   }
   switch (live.stage) {
@@ -453,7 +449,7 @@ function formatLiveStatusText(live: NonNullable<ExecutionLog["live"]>) {
     case "reading_input":
       return "正在读取输入...";
     case "generating_answer":
-      return "正在整理回答...";
+      return "AI正在生成结果";
     case "completed":
       return live.kind === "answer_status" ? "回答已完成" : "任务处理已完成";
     case "needs_input":
@@ -471,7 +467,7 @@ function isTerminalLiveStage(stage: NonNullable<ExecutionLog["live"]>["stage"]) 
 
 function formatLegacyLiveSummary(log: ExecutionLog) {
   if (log.type === "answer_generation_started") {
-    return "正在生成回答...";
+    return "AI正在生成结果";
   }
   if (log.type === "task_cancelled") {
     return "任务已取消";

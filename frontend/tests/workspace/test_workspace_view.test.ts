@@ -275,7 +275,7 @@ test("buildLiveLogItems pairs tool events and keeps one active status row", () =
     kind: "status",
     createdAt: undefined,
     level: "info",
-    text: "正在生成回答...",
+    text: "AI正在生成结果",
     active: true,
   });
 });
@@ -348,8 +348,58 @@ test("buildLiveLogItems excludes assistant stream chunks from progress rows", ()
 
   assert.deepEqual(
     items.map((item) => (item.kind === "status" ? item.text : item.title)),
-    ["正在生成回答...", "回答已完成"],
+    ["AI正在生成结果", "回答已完成"],
   );
+});
+
+test("buildLiveLogItems hides answer stream deltas behind a stable generation label", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "answer-start",
+        type: "answer_generation_started",
+        title: "正在生成回答。",
+        createdAt: "2026-04-27T08:01:00.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "answer_status",
+          stage: "generating_answer",
+          agentName: "search_agent",
+          parameterItems: [],
+        },
+      },
+      {
+        id: "stream-punctuation",
+        type: "assistant_answer_delta",
+        title: "。",
+        createdAt: "2026-04-27T08:01:01.000Z",
+        answerStream: {
+          schemaVersion: 1,
+          streamIndex: 1,
+          content: "。",
+        },
+      },
+      {
+        id: "stream-content",
+        type: "assistant_answer_delta",
+        title: "第一段",
+        createdAt: "2026-04-27T08:01:02.000Z",
+        answerStream: {
+          schemaVersion: 1,
+          streamIndex: 2,
+          content: "第一段",
+        },
+      },
+    ],
+    "running",
+  );
+
+  assert.deepEqual(
+    items.map((item) => (item.kind === "status" ? item.text : item.title)),
+    ["AI正在生成结果"],
+  );
+  assert.equal(JSON.stringify(items).includes("第一段"), false);
+  assert.equal(JSON.stringify(items).includes("。"), false);
 });
 
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
@@ -1299,7 +1349,7 @@ test("formatAgentActivityPhase maps agent activity phases to Chinese", () => {
   assert.equal(formatAgentActivityPhase("reasoning"), "AI正在思考...");
   assert.equal(formatAgentActivityPhase("tool_use"), "正在调用工具...");
   assert.equal(formatAgentActivityPhase("file_operation"), "正在处理文件...");
-  assert.equal(formatAgentActivityPhase("finalizing"), "AI正在生成结果...");
+  assert.equal(formatAgentActivityPhase("finalizing"), "AI正在生成结果");
 });
 
 test("formatAgentActivityPhase returns empty for unknown phase", () => {
