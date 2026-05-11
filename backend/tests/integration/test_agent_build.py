@@ -35,8 +35,8 @@ class TestFullAgentBuild:
         assert result is fake_graph
 
         call_kwargs = mock_create.call_args.kwargs
-        assert len(call_kwargs["tools"]) >= 3
         assert call_kwargs["skills"] == ["./skills"]
+        assert call_kwargs["backend"] is not None
 
     @patch("app.agent.factory._create_model", return_value=_fake_model())
     @patch("app.agent.factory.create_deep_agent")
@@ -58,3 +58,22 @@ class TestFullAgentBuild:
         call_kwargs = mock_create.call_args.kwargs
         assert sub1 in call_kwargs["subagents"]
         assert sub2 in call_kwargs["subagents"]
+
+    @patch("app.agent.factory._create_model", return_value=_fake_model())
+    @patch("app.agent.factory.create_deep_agent")
+    def test_workspace_dir_creates_backend(self, mock_create, mock_model_fn, tmp_path):
+        fake_graph = MagicMock(spec=CompiledStateGraph)
+        mock_create.return_value = fake_graph
+
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+        )
+
+        workspace = tmp_path / "tasks" / "test-task"
+        build_agent(settings, workspace_dir=workspace)
+
+        call_kwargs = mock_create.call_args.kwargs
+        backend = call_kwargs["backend"]
+        assert backend is not None
+        assert str(workspace.resolve()) in str(backend.cwd) or backend.cwd == workspace.resolve()

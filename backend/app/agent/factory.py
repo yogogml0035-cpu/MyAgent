@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from langgraph.graph.state import CompiledStateGraph
@@ -15,13 +17,22 @@ if TYPE_CHECKING:
     from langchain_core.language_models.chat_models import BaseChatModel
     from langchain_core.tools.base import BaseTool
 
+logger = logging.getLogger(__name__)
+
 try:
     from deepagents import create_deep_agent
+    from deepagents.backends.filesystem import FilesystemBackend
 except ImportError as exc:
     raise ImportError(
         "deepagents is not installed. "
         "Install it with: uv add deepagents"
     ) from exc
+
+
+def _make_backend(workspace_dir: Path | None) -> FilesystemBackend:
+    root = workspace_dir.resolve() if workspace_dir else Path.cwd()
+    logger.debug("Creating FilesystemBackend with root_dir=%s", root)
+    return FilesystemBackend(root_dir=root, virtual_mode=True)
 
 
 def build_agent(
@@ -31,24 +42,20 @@ def build_agent(
     tools: Sequence[BaseTool | Callable | dict] | None = None,
     skills: list[str] | None = None,
     subagents: Sequence | None = None,
+    workspace_dir: Path | None = None,
     checkpointer=None,
     store=None,
 ) -> CompiledStateGraph:
-    """Build a compiled DeepAgent graph with platform defaults.
-
-    create_deep_agent() auto-injects TodoListMiddleware, FilesystemMiddleware,
-    SummarizationMiddleware, and PatchToolCallsMiddleware. Skills and subagents
-    are passed via their dedicated keyword arguments — not via the middleware
-    parameter — so the framework handles assembly correctly.
-    """
     model_id = model or settings.default_model
     chat_model = _create_model(model_id, settings)
+    backend = _make_backend(workspace_dir)
 
     return create_deep_agent(
         model=chat_model,
         tools=tools or [],
         skills=skills,
         subagents=subagents,
+        backend=backend,
         checkpointer=checkpointer,
         store=store,
     )
@@ -61,20 +68,13 @@ def build_agent_with_middleware(
     tools: Sequence[BaseTool | Callable | dict] | None = None,
     skills: list[str] | None = None,
     subagents: Sequence | None = None,
+    workspace_dir: Path | None = None,
     checkpointer=None,
     store=None,
 ) -> CompiledStateGraph:
-    """Build a compiled DeepAgent graph with platform defaults and extra middleware.
-
-    Unlike :func:`build_agent`, this function also assembles additional middleware
-    (skills, subagents, summarization) via :func:`app.agent.middleware.build_middleware`
-    and passes them to ``create_deep_agent``.
-
-    Use this when you need middleware that is NOT auto-injected by
-    ``create_deep_agent()``.
-    """
     model_id = model or settings.default_model
     chat_model = _create_model(model_id, settings)
+    backend = _make_backend(workspace_dir)
 
     extra_middleware = _build_extra_middleware(
         settings,
@@ -89,6 +89,7 @@ def build_agent_with_middleware(
         middleware=extra_middleware,
         skills=skills,
         subagents=subagents,
+        backend=backend,
         checkpointer=checkpointer,
         store=store,
     )
@@ -110,7 +111,6 @@ def _build_extra_middleware(
 
 
 def _create_model(model_id: str, settings: Settings) -> BaseChatModel:
-    """Resolve a model identifier to a BaseChatModel instance."""
     try:
         from app.models.provider import create_model
     except ImportError as exc:

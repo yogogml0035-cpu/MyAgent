@@ -47,13 +47,15 @@ class TaskRunner:
         model_id = model or self.settings.default_model
 
         task_workspace = self.settings.workspace_root / task_id
-        tools = get_platform_tools(self.settings, task_workspace=task_workspace)
+        task_workspace.mkdir(parents=True, exist_ok=True)
+        tools = get_platform_tools(self.settings)
 
         agent = build_agent(
             self.settings,
             model=model_id,
             tools=tools,
             skills=list(self.settings.skills_dirs),
+            workspace_dir=task_workspace,
         )
 
         messages: list[Any] = [HumanMessage(content=message)]
