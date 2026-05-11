@@ -32,9 +32,11 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Auth middleware enforces loopback-only access by default; non-local access requires `MYAGENT_ACCESS_TOKEN`.
 - Frontend local development keeps `next dev` output in `.next-dev` and production builds in `.next` via `NEXT_DIST_DIR`, so dev caches and production build artifacts never share one output directory.
 - Frontend type checking runs `next typegen && tsc --noEmit`; `next-env.d.ts` is generated and ignored instead of being version-controlled.
+- Frontend CI treats lint warnings as failures because `frontend/package.json` runs `eslint . --max-warnings=0`; a warning-free local run is required before pushing, and a remote lint warning is a blocking CI failure, not a soft signal.
 - Any bug fix, feature, or other behavior change must pass live browser E2E acceptance against a running frontend and backend, and screenshot evidence must be stored under `frontend/e2e-playwright/`. Unit, integration, API, lint, or build checks do not replace this requirement.
 - `frontend/e2e-playwright/` must keep a `README.md` comment file that explains the directory purpose, screenshot evidence role, and redaction expectations. If the repo lacks an E2E entrypoint for the changed scenario, add it in the same change before considering the work complete.
 - Repository-wide line-ending normalization is enforced with a root `.gitattributes`: text files default to LF, while PowerShell scripts use CRLF on checkout.
+- If the work includes pushing a branch, opening/updating a PR, or merging a PR, completion requires the GitHub remote checks to finish successfully. Local green runs are necessary but not sufficient while remote Actions are still pending or failing.
 
 ## Input And Output Examples
 
@@ -52,6 +54,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Missing API keys cause graceful errors in provider (not crashes). Tavily tool returns error string if key missing.
 - `SKILL.md` files without valid YAML frontmatter are silently skipped during discovery.
 - `next typegen` loads `next.config.mjs` with the production build phase; keep any required config inputs available before running frontend type checks in CI.
+- Remote CI status is part of the verification boundary for GitHub actions such as PR creation and merge. A pending run is not a pass, and a warning that escalates to job failure must be fixed the same as an error.
 
 ## Known Pitfalls
 
@@ -65,6 +68,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **LangGraph checkpoint source pin**: `backend/pyproject.toml` pins `langgraph-checkpoint` through `tool.uv.sources` to the `langchain-ai/langgraph` Git commit `2e5025ec1ac8d435840ed4a972097de87aaa2eab` (`libs/checkpoint`). This is intentional: the latest PyPI stable release still emits the startup `LangChainPendingDeprecationWarning`, while that upstream commit already switched `jsonplus.py` to `Reviver(allowed_objects="core")`.
 - **LangGraph v2 stream format**: `agent.astream(..., version="v2")` returns chunks as dicts `{type, ns, data}`, NOT tuples `(namespace, mode, payload)`. Unpacking as a 3-tuple silently iterates dict keys (`"type"`, `"ns"`, `"data"`), causing `mode = "ns"` to be logged and all events dropped. The v2_adapter must check `isinstance(chunk, dict)` and extract `chunk["type"]` / `chunk["data"]`.
 - **Generated Next type files**: `next-env.d.ts` and route types are generated artifacts. Do not review or commit them as source changes; rerun `npm run typecheck` if they are missing locally.
+- **Warning-as-error CI**: The frontend workflow fails on ESLint warnings because lint runs with `--max-warnings=0`. Treat “warning only” reports from GitHub Actions as blocking failures.
+- **Local-vs-remote verification gap**: A local pass does not prove a PR is merge-ready. GitHub Actions may still fail because of workflow environment differences, matrix jobs, or warning-as-error settings; do not stop at push/PR creation when the request includes completing that remote action.
 
 ## Related Code Paths
 
@@ -130,11 +135,16 @@ npm run build
 
 For any behavior-changing task, also run the relevant live browser E2E flow against the started app and save acceptance screenshots under `frontend/e2e-playwright/`. If the repo does not yet expose the needed E2E entrypoint for that flow, add it in the same change before closing the task.
 
+If the task includes pushing a branch, opening/updating a PR, or merging a PR, also wait for GitHub remote CI / checks to complete and confirm that all required jobs are green before closing the task.
+
 ## Frontend Stream Accumulation And Dynamic States
 
 - `workspace-view.ts:accumulateStreamedAnswer` concatenates all `assistant_answer_delta` chunks by `streamIndex` order. Do NOT revert to `latestStreamedAnswer` (which only kept the last delta) — that caused isolated punctuation characters to appear as the full AI reply.
 - AI reply card only appears when content passes `hasMeaningfulContent` (≥1 non-punctuation, non-whitespace character after stripping Chinese and ASCII punctuation). This prevents a lone period "。" from triggering the card.
 - Dynamic loading status precedence: `agentActivity.phase` > `live.stage` > default fallback `"AI正在思考..."`. Phase mapping: `planning`→"正在规划任务...", `reasoning`→"AI正在思考...", `tool_use`→"正在调用工具...", `file_operation`→"正在处理文件...", `finalizing`→"AI正在生成结果".
+- New DeepAgent stream events must include display-safe `payload.live` metadata for user-facing progress logs while preserving the raw event record for diagnostics. `tool_call`/`tool_result` live metadata carries tool category labels such as "联网搜索" or "读取文件"; `status_update` folds internal nodes like middleware hooks into generic Chinese stages such as "正在准备任务..." or "AI正在思考...".
+- `ExecutionLog.rawRecord` is preserved for row-level diagnostics and JSONL log copying, but it is non-enumerable after normalization so raw provider chunks, tool payloads, and internal node names do not leak into default rendering or `JSON.stringify(state.logs)` checks.
+- `buildLogClipboardText()` copies raw diagnostic JSONL, one event per line. The default progress card remains a Chinese user-facing timeline; row expansion is the place for node/tool/message/payload details.
 - `buildLiveLogItems` checks `agentActivity.status` (`completed`/`failed`/`skipped`) as additional terminal condition alongside `isTerminalLiveStage(live.stage)`.
 
 ## Final Answer vs Intermediate Process Distinction
@@ -173,3 +183,4 @@ For any behavior-changing task, also run the relevant live browser E2E flow agai
 - **Race condition regression**: If the `final_answer` event in `runner/core.py` is moved before `storage.update_task_if_status()`, the frontend may refresh before the ChatMessage is persisted, showing stale or missing final answers.
 - **Log scroll regression**: `TaskConversation.tsx` keeps each log list pinned to the bottom while the user has not intentionally scrolled upward. If the pinned-state tracking or `conversationStreamItems` dependency is removed, progress log cards will stop following new rows and active-row text changes.
 - Acceptance drift if future changes rely only on unit/integration results and skip live browser E2E plus screenshot evidence; this repository now treats that as an incomplete delivery for behavior changes.
+- CI drift if future fixes stop after a local pass while remote GitHub Actions are still pending or red; PR-related work in this repo is incomplete until the remote checks finish successfully.

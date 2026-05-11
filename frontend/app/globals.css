@@ -1122,6 +1122,30 @@ p {
   overflow-wrap: anywhere;
 }
 
+.liveStatusRow-details {
+  display: block;
+  padding: 0;
+}
+
+.liveStatusRow-details summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 36px;
+  padding: 8px 10px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.liveStatusRow-details summary::-webkit-details-marker {
+  display: none;
+}
+
+.liveStatusRow-details summary > span:not(.thinkingDots) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .liveStatusRow-active {
   border-color: rgba(93, 184, 166, 0.3);
   background: rgba(93, 184, 166, 0.1);
@@ -1226,6 +1250,54 @@ p {
   font-size: 12px;
   line-height: 1.55;
   overflow-wrap: anywhere;
+}
+
+.liveLogDiagnostics {
+  display: grid;
+  gap: 8px;
+  padding: 0 10px 10px;
+}
+
+.liveLogDiagnostics dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.liveLogDiagnostics dl div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.liveLogDiagnostics dt {
+  color: rgba(160, 157, 150, 0.88);
+  font-size: 11px;
+}
+
+.liveLogDiagnostics dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--on-dark-soft);
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.liveLogDiagnostics pre {
+  max-height: 180px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid rgba(250, 249, 245, 0.08);
+  border-radius: var(--radius-sm);
+  background: rgba(0, 0, 0, 0.24);
+  color: rgba(250, 249, 245, 0.72);
+  font-family: var(--font-code);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .liveToolCard-failed {

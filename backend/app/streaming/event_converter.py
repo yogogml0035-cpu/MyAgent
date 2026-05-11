@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Literal
@@ -26,6 +27,9 @@ _LEVEL_MAP: dict[str, Literal["info", "success", "warning", "error"]] = {
     "values_snapshot": "info",
 }
 
+_MAX_PARAMETER_ITEMS = 8
+_MAX_PARAMETER_TEXT = 160
+
 
 def convert_stream_event(
     event: dict[str, Any],
@@ -39,7 +43,8 @@ def convert_stream_event(
     Returns ``None`` for unrecognized event types.
     """
     event_type: str | None = event.get("type")
-    data = event.get("data", {})
+    raw_data = event.get("data", {})
+    data = raw_data if isinstance(raw_data, dict) else {}
 
     record_type = _TYPE_MAP.get(event_type) if event_type is not None else None
     if record_type is None:
@@ -61,7 +66,7 @@ def convert_stream_event(
             "is_subgraph": data.get("is_subgraph", False),
         }
     else:
-        payload = data
+        payload = {**data, "live": _build_live_metadata(record_type, data)}
 
     return EventRecord(
         id=str(uuid.uuid4()),
@@ -92,3 +97,148 @@ def _build_message(record_type: str, data: dict[str, Any]) -> str:
     if record_type == "values_snapshot":
         return "State snapshot"
     return ""
+
+
+def _build_live_metadata(record_type: str, data: dict[str, Any]) -> dict[str, Any]:
+    if record_type == "tool_call":
+        tool_name = _safe_string(data.get("name"), "tool")
+        return {
+            "schema_version": 1,
+            "kind": "tool_call",
+            "stage": "using_tool",
+            "tool_name": tool_name,
+            "tool_label": _tool_label(tool_name),
+            "tool_call_id": _safe_string(data.get("id")),
+            "parameter_items": _parameter_items(data.get("args")),
+        }
+
+    if record_type == "tool_result":
+        tool_name = _safe_string(data.get("name"), "tool")
+        status = _safe_string(data.get("status"), "success")
+        return {
+            "schema_version": 1,
+            "kind": "tool_result",
+            "stage": "completed",
+            "tool_name": tool_name,
+            "tool_label": _tool_label(tool_name),
+            "tool_call_id": _safe_string(data.get("tool_call_id")),
+            "parameter_items": [],
+            "result_status": _tool_result_status(status),
+        }
+
+    if record_type == "status_update":
+        node = _safe_string(data.get("node"), "unknown")
+        stage, display_text = _status_update_stage(node)
+        return {
+            "schema_version": 1,
+            "kind": "status",
+            "stage": stage,
+            "agent_name": node,
+            "display_text": display_text,
+            "diagnostic_label": node,
+            "parameter_items": [
+                {"key": "node", "value": node},
+                {"key": "is_subgraph", "value": bool(data.get("is_subgraph", False))},
+            ],
+        }
+
+    return {
+        "schema_version": 1,
+        "kind": "status",
+        "stage": "organizing_state",
+        "parameter_items": [],
+    }
+
+
+def _safe_string(value: Any, fallback: str = "") -> str:
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return fallback
+    return str(value)
+
+
+def _tool_label(tool_name: str) -> str:
+    normalized = tool_name.lower()
+    if "tavily" in normalized or "search" in normalized:
+        return "联网搜索"
+    if normalized in {"read_file", "read"} or "read_file" in normalized:
+        return "读取文件"
+    if normalized in {"write_file", "write"} or "write_file" in normalized:
+        return "写入文件"
+    if normalized in {"list_files", "list_dir", "ls"} or "list" in normalized:
+        return "查看文件列表"
+    return "调用工具"
+
+
+def _tool_result_status(status: str) -> Literal["success", "empty", "failed", "cancelled", "skipped"]:
+    normalized = status.lower()
+    if normalized in {"success", "ok"}:
+        return "success"
+    if normalized in {"empty", "not_found", "no_results"}:
+        return "empty"
+    if normalized in {"cancelled", "canceled"}:
+        return "cancelled"
+    if normalized == "skipped":
+        return "skipped"
+    return "failed"
+
+
+def _parameter_items(raw_args: Any) -> list[dict[str, Any]]:
+    args = _coerce_args(raw_args)
+    if isinstance(args, dict):
+        items: list[dict[str, Any]] = []
+        for key, value in args.items():
+            if len(items) >= _MAX_PARAMETER_ITEMS:
+                break
+            normalized = _parameter_value(value)
+            if normalized is None:
+                continue
+            items.append({"key": str(key), **normalized})
+        return items
+
+    normalized = _parameter_value(args)
+    return [{"key": "args", **normalized}] if normalized is not None else []
+
+
+def _coerce_args(raw_args: Any) -> Any:
+    if not isinstance(raw_args, str):
+        return raw_args
+    text = raw_args.strip()
+    if not text:
+        return raw_args
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        return raw_args
+
+
+def _parameter_value(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, (bool, int, float)):
+        return {"value": value}
+    if isinstance(value, str):
+        truncated = len(value) > _MAX_PARAMETER_TEXT
+        display_value = value[:_MAX_PARAMETER_TEXT] if truncated else value
+        return {"value": display_value, "truncated": truncated}
+    if value is None:
+        return None
+
+    text = json.dumps(value, ensure_ascii=False, default=str)
+    truncated = len(text) > _MAX_PARAMETER_TEXT
+    display_value = text[:_MAX_PARAMETER_TEXT] if truncated else text
+    return {"value": display_value, "truncated": truncated}
+
+
+def _status_update_stage(node: str) -> tuple[str, str]:
+    normalized = node.lower()
+    if normalized == "model" or normalized.endswith(":model") or "after_model" in normalized:
+        return "thinking", "AI正在思考..."
+    if normalized in {"tools", "tool"} or "tool" in normalized:
+        return "using_tool", "正在调用工具..."
+    if "before_agent" in normalized or "middleware" in normalized:
+        return "preparing", "正在准备任务..."
+    if "final" in normalized or "answer" in normalized:
+        return "generating_answer", "AI正在生成结果"
+    if "state" in normalized or "todo" in normalized or "values" in normalized:
+        return "organizing_state", "正在整理任务状态..."
+    return "organizing_state", "正在整理任务状态..."

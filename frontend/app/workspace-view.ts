@@ -42,6 +42,16 @@ export type VisibleLogPartition = {
   hiddenReasoningCount: number;
 };
 
+export type LiveLogDetailRow = {
+  label: string;
+  value: string;
+};
+
+export type LiveLogDiagnostics = {
+  rows: LiveLogDetailRow[];
+  rawJson: string;
+};
+
 export type LiveToolLogItem = {
   id: string;
   kind: "tool";
@@ -50,6 +60,7 @@ export type LiveToolLogItem = {
   title: string;
   resultText: string;
   resultStatus?: NonNullable<ExecutionLog["live"]>["resultStatus"];
+  details?: LiveLogDiagnostics;
 };
 
 export type LiveStatusLogItem = {
@@ -59,6 +70,7 @@ export type LiveStatusLogItem = {
   level?: ExecutionLog["level"];
   text: string;
   active?: boolean;
+  details?: LiveLogDiagnostics;
 };
 
 export type LiveLogItem = LiveToolLogItem | LiveStatusLogItem;
@@ -166,8 +178,7 @@ export function formatTime(value?: string, variant: TimeVariant = "default") {
 }
 
 export function buildLogClipboardText(logs: ExecutionLog[]) {
-  const liveItems = buildLiveLogItems(logs);
-  return liveItems.map(formatLiveLogItemClipboardText).join("\n") || "暂无日志";
+  return logs.map(formatRawLogRecordJson).join("\n") || "暂无日志";
 }
 
 export function buildLiveLogItems(
@@ -179,9 +190,29 @@ export function buildLiveLogItems(
   const pendingToolItemsByName = new Map<string, LiveToolLogItem[]>();
   let activeText = "";
   let activeCreatedAt: string | undefined;
+  let activeDetails: LiveLogDiagnostics | undefined;
   let hasCancelEvent = false;
   let hasAnswerStream = false;
   let lastAnswerCreatedAt: string | undefined;
+
+  function pushStatusItem(log: ExecutionLog, text: string) {
+    const previous = items.at(-1);
+    const details = buildLogDiagnostics(log);
+    if (previous?.kind === "status" && previous.text === text && !previous.active) {
+      previous.details = details;
+      return previous;
+    }
+    const item: LiveStatusLogItem = {
+      id: `status:${log.id}`,
+      kind: "status",
+      createdAt: log.createdAt,
+      level: log.level,
+      text,
+      details,
+    };
+    items.push(item);
+    return item;
+  }
 
   logs.forEach((log, index) => {
     if (log.type === "assistant_answer_delta") {
@@ -207,6 +238,7 @@ export function buildLiveLogItems(
           createdAt: log.createdAt,
           level: log.level,
           text,
+          details: buildLogDiagnostics(log),
         });
       }
       return;
@@ -220,6 +252,7 @@ export function buildLiveLogItems(
         level: log.level,
         title: formatLiveToolCallTitle(live),
         resultText: formatLiveToolPendingText(live.toolName),
+        details: buildLogDiagnostics(log),
       };
       items.push(toolItem);
       rememberPendingToolItem(toolItemsById, pendingToolItemsByName, toolItem, live);
@@ -230,8 +263,10 @@ export function buildLiveLogItems(
       const toolItem = takePendingToolItem(toolItemsById, pendingToolItemsByName, live);
       if (toolItem) {
         toolItem.level = log.level;
+        toolItem.title = formatLiveToolResultTitle(live);
         toolItem.resultStatus = live.resultStatus;
         toolItem.resultText = formatLiveToolResultText(live);
+        toolItem.details = mergeLiveLogDiagnostics(toolItem.details, buildLogDiagnostics(log));
         return;
       }
       items.push({
@@ -239,9 +274,10 @@ export function buildLiveLogItems(
         kind: "tool",
         createdAt: log.createdAt,
         level: log.level,
-        title: formatLiveToolCallTitle(live),
+        title: formatLiveToolResultTitle(live),
         resultStatus: live.resultStatus,
         resultText: formatLiveToolResultText(live),
+        details: buildLogDiagnostics(log),
       });
       return;
     }
@@ -259,17 +295,13 @@ export function buildLiveLogItems(
     const isAgentTerminal = log.agentActivity?.status === "completed" || log.agentActivity?.status === "failed" || log.agentActivity?.status === "skipped";
     const isTerminal = isTerminalLiveStage(live.stage) || isAgentTerminal;
     if (isTerminal || !isTaskActive(status)) {
-      items.push({
-        id: `status:${log.id}`,
-        kind: "status",
-        createdAt: log.createdAt,
-        level: log.level,
-        text,
-      });
+      pushStatusItem(log, text);
       return;
     }
+    pushStatusItem(log, text);
     activeText = text;
     activeCreatedAt = log.createdAt;
+    activeDetails = buildLogDiagnostics(log);
   });
 
   if (isTaskActive(status)) {
@@ -282,17 +314,27 @@ export function buildLiveLogItems(
         level: "warning",
         text: "任务已取消",
         active: false,
+        details: activeDetails,
       });
     } else {
       const displayText = hasAnswerStream ? "AI正在生成结果" : activeText || "AI正在思考...";
-      items.push({
-        id: "status:active",
-        kind: "status",
-        createdAt: lastAnswerCreatedAt || activeCreatedAt,
-        level: "info",
-        text: displayText,
-        active: true,
-      });
+      const lastItem = items.at(-1);
+      if (lastItem?.kind === "status" && lastItem.text === displayText) {
+        lastItem.active = true;
+        lastItem.createdAt = lastAnswerCreatedAt || activeCreatedAt || lastItem.createdAt;
+        lastItem.level = "info";
+        lastItem.details = lastItem.details ?? activeDetails;
+      } else {
+        items.push({
+          id: "status:active",
+          kind: "status",
+          createdAt: lastAnswerCreatedAt || activeCreatedAt,
+          level: "info",
+          text: displayText,
+          active: true,
+          details: hasAnswerStream ? undefined : activeDetails,
+        });
+      }
     }
   }
 
@@ -305,6 +347,99 @@ export function formatLiveLogItemClipboardText(item: LiveLogItem) {
     return `${time} ${item.title} -> ${item.resultText}`;
   }
   return `${time} ${item.text}`;
+}
+
+function formatRawLogRecordJson(log: ExecutionLog) {
+  return JSON.stringify(log.rawRecord ?? fallbackRawLogRecord(log));
+}
+
+function formatPrettyRawLogRecord(log: ExecutionLog) {
+  return JSON.stringify(log.rawRecord ?? fallbackRawLogRecord(log), null, 2);
+}
+
+function fallbackRawLogRecord(log: ExecutionLog) {
+  return stripUndefinedValues({
+    id: log.id,
+    type: log.type,
+    message: log.title,
+    detail: log.detail,
+    level: log.level,
+    created_at: log.createdAt,
+    run_id: log.runId,
+    payload: {
+      live: log.live,
+      agent_activity: log.agentActivity,
+      file_audit: log.fileAudit,
+      reasoning: log.reasoning,
+      search_trace: log.searchTrace,
+      orchestration: log.orchestration,
+      answer_stream: log.answerStream,
+    },
+  });
+}
+
+function stripUndefinedValues(value: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(
+    Object.entries(value)
+      .filter(([, entry]) => entry !== undefined)
+      .map(([key, entry]) => [
+        key,
+        isPlainRecord(entry) ? stripUndefinedValues(entry) : entry,
+      ]),
+  );
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
+  const live = log.live;
+  const rows: LiveLogDetailRow[] = [
+    { label: "事件类型", value: log.type || "unknown" },
+  ];
+
+  const originalMessage = readRawString(log.rawRecord?.message);
+  if (originalMessage) {
+    rows.push({ label: "原始消息", value: originalMessage });
+  }
+  if (live?.diagnosticLabel || live?.agentName) {
+    rows.push({ label: "节点", value: live.diagnosticLabel || live.agentName || "" });
+  }
+  if (live?.toolName) {
+    rows.push({ label: "工具", value: live.toolName });
+  }
+  const parameters = live?.parameterItems?.length
+    ? formatLiveToolParameters(live.parameterItems)
+    : "";
+  if (parameters) {
+    rows.push({ label: "参数", value: parameters });
+  }
+  if (live?.resultStatus) {
+    rows.push({ label: "结果状态", value: live.resultStatus });
+  }
+
+  return {
+    rows,
+    rawJson: formatPrettyRawLogRecord(log),
+  };
+}
+
+function mergeLiveLogDiagnostics(
+  first: LiveLogDiagnostics | undefined,
+  second: LiveLogDiagnostics,
+): LiveLogDiagnostics {
+  if (!first) {
+    return second;
+  }
+  return {
+    rows: [...first.rows, ...second.rows],
+    rawJson: `${first.rawJson}\n\n${second.rawJson}`,
+  };
+}
+
+function readRawString(value: unknown) {
+  return typeof value === "string" ? value : "";
 }
 
 function rememberPendingToolItem(
@@ -366,9 +501,44 @@ function liveToolQueueKey(toolName?: string) {
 }
 
 function formatLiveToolCallTitle(live: NonNullable<ExecutionLog["live"]>) {
-  const agentName = live.agentName || "main_agent";
-  const toolName = live.toolName || "tool";
-  return `${agentName} 调用 ${toolName}(${formatLiveToolParameters(live.parameterItems)})`;
+  return `正在${formatLiveToolLabel(live)}`;
+}
+
+function formatLiveToolResultTitle(live: NonNullable<ExecutionLog["live"]>) {
+  const label = formatLiveToolLabel(live);
+  switch (live.resultStatus) {
+    case "failed":
+      return `${label}遇到问题`;
+    case "empty":
+      return `${label}暂无可用结果`;
+    case "cancelled":
+      return `${label}已取消`;
+    case "skipped":
+      return `${label}已跳过`;
+    case "success":
+    default:
+      return `${label}已返回结果`;
+  }
+}
+
+function formatLiveToolLabel(live: NonNullable<ExecutionLog["live"]>) {
+  if (live.toolLabel) {
+    return live.toolLabel;
+  }
+  const toolName = live.toolName?.toLowerCase() ?? "";
+  if (toolName.includes("tavily") || toolName.includes("search")) {
+    return "联网搜索";
+  }
+  if (toolName.includes("read_file")) {
+    return "读取文件";
+  }
+  if (toolName.includes("write_file")) {
+    return "写入文件";
+  }
+  if (toolName.includes("list")) {
+    return "查看文件列表";
+  }
+  return "调用工具";
 }
 
 function formatLiveToolParameters(
@@ -387,27 +557,44 @@ function formatLiveParameterValue(value: string | number | boolean) {
 }
 
 function formatLiveToolPendingText(toolName?: string) {
-  return `${toolName || "工具"} 正在执行`;
+  const label = formatToolNameLabel(toolName);
+  return `正在等待${label}返回结果`;
 }
 
 function formatLiveToolResultText(live: NonNullable<ExecutionLog["live"]>) {
-  const toolLabel = live.toolName ? `${live.toolName} 工具` : "工具";
   switch (live.resultStatus) {
     case "failed":
-      return `${toolLabel}调用失败，正在调整处理方式`;
+      return "工具调用失败，正在调整处理方式";
     case "empty":
-      return `${live.toolName || "工具"} 未找到可用结果，正在尝试其他方式`;
+      return "未找到可用结果，正在尝试其他方式";
     case "cancelled":
-      return `${toolLabel}调用已取消`;
+      return "工具调用已取消";
     case "skipped":
-      return `${toolLabel}已跳过`;
+      return "工具调用已跳过";
     case "success":
     default:
       if (typeof live.resultCount === "number") {
-        return `${toolLabel}返回了 ${live.resultCount} 条结果`;
+        return `返回了 ${live.resultCount} 条结果`;
       }
-      return `${toolLabel}已返回结果`;
+      return "工具已返回结果";
   }
+}
+
+function formatToolNameLabel(toolName?: string) {
+  const normalized = toolName?.toLowerCase() ?? "";
+  if (normalized.includes("tavily") || normalized.includes("search")) {
+    return "联网搜索";
+  }
+  if (normalized.includes("read_file")) {
+    return "文件读取";
+  }
+  if (normalized.includes("write_file")) {
+    return "文件写入";
+  }
+  if (normalized.includes("list")) {
+    return "文件列表";
+  }
+  return "工具";
 }
 
 export function formatAgentActivityPhase(phase: AgentActivityPhase | undefined): string {
@@ -428,6 +615,9 @@ export function formatAgentActivityPhase(phase: AgentActivityPhase | undefined):
 }
 
 function formatLiveStatusText(live: NonNullable<ExecutionLog["live"]>) {
+  if (live.displayText) {
+    return live.displayText;
+  }
   if (live.resultStatus === "cancelled") {
     return "任务已取消";
   }
@@ -440,6 +630,10 @@ function formatLiveStatusText(live: NonNullable<ExecutionLog["live"]>) {
     }
   }
   switch (live.stage) {
+    case "preparing":
+      return "正在准备任务...";
+    case "thinking":
+      return "AI正在思考...";
     case "analyzing_intent":
       return "正在分析任务意图...";
     case "selecting_tool":
@@ -448,6 +642,8 @@ function formatLiveStatusText(live: NonNullable<ExecutionLog["live"]>) {
       return "正在调用工具...";
     case "reading_input":
       return "正在读取输入...";
+    case "organizing_state":
+      return "正在整理任务状态...";
     case "generating_answer":
       return "AI正在生成结果";
     case "completed":

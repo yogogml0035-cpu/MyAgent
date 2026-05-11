@@ -497,7 +497,10 @@ test("normalizeTaskState preserves bounded live metadata for user-facing logs", 
     stage: "using_tool",
     agentName: "internet_agent",
     toolName: "tavily_search",
+    toolLabel: undefined,
     toolCallId: "call-1",
+    displayText: undefined,
+    diagnosticLabel: undefined,
     parameterItems: [
       { key: "query", value: "上海天气", truncated: undefined },
       { key: "max_results", value: 5, truncated: undefined },
@@ -510,6 +513,43 @@ test("normalizeTaskState preserves bounded live metadata for user-facing logs", 
   assert.equal(state.logs[1].live?.resultStatus, "success");
   assert.equal(state.logs[1].live?.resultCount, 5);
   assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+});
+
+test("normalizeTaskState preserves raw records for diagnostics without enumerating them", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "status-1",
+          type: "status_update",
+          message: "State update: model",
+          payload: {
+            node: "model",
+            raw_provider_chunk: "RAW_DEBUG_VALUE",
+            live: {
+              schema_version: 1,
+              kind: "status",
+              stage: "thinking",
+              display_text: "AI正在思考...",
+              diagnostic_label: "model",
+              parameter_items: [],
+            },
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].rawRecord?.message, "State update: model");
+  assert.equal(
+    (state.logs[0].rawRecord?.payload as { raw_provider_chunk?: string } | undefined)
+      ?.raw_provider_chunk,
+    "RAW_DEBUG_VALUE",
+  );
+  assert.equal(JSON.stringify(state.logs).includes("RAW_DEBUG_VALUE"), false);
 });
 
 test("normalizeTaskState ignores malformed live metadata", () => {

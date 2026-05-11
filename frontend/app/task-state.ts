@@ -33,6 +33,7 @@ export type ExecutionLog = {
   searchTrace?: SearchTrace;
   orchestration?: OrchestrationTrace;
   answerStream?: AssistantAnswerStreamTrace;
+  rawRecord?: Record<string, unknown>;
 };
 
 export type ReasoningPhase = "plan" | "observe" | "decide" | "next_step" | "final_summary" | "risk";
@@ -118,10 +119,13 @@ export type AssistantAnswerStreamTrace = {
 
 export type LiveEventKind = "think" | "tool_call" | "tool_result" | "answer_status" | "status";
 export type LiveEventStage =
+  | "preparing"
+  | "thinking"
   | "analyzing_intent"
   | "selecting_tool"
   | "using_tool"
   | "reading_input"
+  | "organizing_state"
   | "generating_answer"
   | "completed"
   | "needs_input"
@@ -138,7 +142,10 @@ export type LiveEventMetadata = {
   stage?: LiveEventStage;
   agentName?: string;
   toolName?: string;
+  toolLabel?: string;
   toolCallId?: string;
+  displayText?: string;
+  diagnosticLabel?: string;
   parameterItems: LiveParameterItem[];
   resultStatus?: LiveResultStatus;
   resultCount?: number;
@@ -371,10 +378,13 @@ function readLiveKind(value: unknown): LiveEventKind | undefined {
 
 function readLiveStage(value: unknown): LiveEventStage | undefined {
   const stage = readString(value);
-  return stage === "analyzing_intent" ||
+  return stage === "preparing" ||
+    stage === "thinking" ||
+    stage === "analyzing_intent" ||
     stage === "selecting_tool" ||
     stage === "using_tool" ||
     stage === "reading_input" ||
+    stage === "organizing_state" ||
     stage === "generating_answer" ||
     stage === "completed" ||
     stage === "needs_input" ||
@@ -817,7 +827,10 @@ function normalizeLiveMetadata(payload: Record<string, unknown>) {
     stage: readLiveStage(live.stage),
     agentName: readBoundedString(live.agent_name ?? live.agentName, 120),
     toolName: readBoundedString(live.tool_name ?? live.toolName, 80),
+    toolLabel: readBoundedString(live.tool_label ?? live.toolLabel, 80),
     toolCallId: readBoundedString(live.tool_call_id ?? live.toolCallId, 160),
+    displayText: readBoundedString(live.display_text ?? live.displayText, 160),
+    diagnosticLabel: readBoundedString(live.diagnostic_label ?? live.diagnosticLabel, 160),
     parameterItems,
     resultStatus: readLiveResultStatus(live.result_status ?? live.resultStatus),
     resultCount: readOptionalBoundedInteger(live.result_count ?? live.resultCount, 0, 9999),
@@ -904,7 +917,7 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
   const fallbackTitle = readString(record.message ?? record.event ?? record.type, "Agent event");
   const rawTitle = readString(record.title ?? fallbackTitle, fallbackTitle);
   const rawDetail = readOptionalString(record.detail ?? record.content);
-  return {
+  const log: ExecutionLog = {
     id: readString(record.id, `log-${index}`),
     type,
     title: translateKnownDisplayText(rawTitle),
@@ -920,6 +933,12 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
     orchestration: normalizeOrchestrationTrace(type, payload),
     answerStream: normalizeAssistantAnswerStream(type, payload),
   };
+  Object.defineProperty(log, "rawRecord", {
+    value: record,
+    enumerable: false,
+    configurable: true,
+  });
+  return log;
 }
 
 function runIdFromArtifactUrl(url?: string) {

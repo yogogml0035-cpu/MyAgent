@@ -89,10 +89,10 @@ export function TaskConversation({
 
   useLayoutEffect(() => {
     const scrollPinnedLists = () => {
-      for (const [runId, el] of logListRefs.current) {
-        if (!el) continue;
+      logListRefs.current.forEach((el, runId) => {
+        if (!el) return;
         scrollLogListToBottomIfPinned(el, logListPinnedRefs.current.get(runId));
-      }
+      });
     };
 
     scrollPinnedLists();
@@ -103,10 +103,10 @@ export function TaskConversation({
   }, [conversationStreamItems]);
 
   useEffect(() => {
-    for (const [runId, el] of logListRefs.current) {
-      if (!el) continue;
+    logListRefs.current.forEach((el, runId) => {
+      if (!el) return;
       scrollLogListToBottomIfPinned(el, logListPinnedRefs.current.get(runId));
-    }
+    });
   }, [noticeMessages]);
 
   function artifactCanOpen(artifact: Artifact) {
@@ -330,11 +330,11 @@ export function TaskConversation({
               <span>{groupLogStatusText}</span>
             </div>
             <button
-              aria-label={isLogCopied ? `已复制${group.title}日志` : `复制${group.title}日志`}
+              aria-label={isLogCopied ? `已复制${group.title}原始诊断日志` : `复制${group.title}原始诊断日志`}
               className={logCopyButtonClassName}
               disabled={group.logs.length === 0}
               onClick={() => void onCopyLogs(group.logs, logCopyKey)}
-              title={isLogCopied ? "已复制" : `复制${group.title}日志`}
+              title={isLogCopied ? "已复制原始诊断日志" : `复制${group.title}原始诊断日志（JSONL）`}
               type="button"
             >
               <span aria-hidden="true" />
@@ -388,6 +388,7 @@ export function TaskConversation({
             <time>{formatTime(item.createdAt)}</time>
           </summary>
           <p>{item.resultText}</p>
+          {item.details ? renderLiveLogDiagnostics(item.details) : null}
         </details>
       );
     }
@@ -399,8 +400,8 @@ export function TaskConversation({
     ]
       .filter(Boolean)
       .join(" ");
-    return (
-      <article className={statusClassName} key={item.id}>
+    const statusSummary = (
+      <>
         <time>{formatTime(item.createdAt)}</time>
         <span>{item.text}</span>
         {item.active ? (
@@ -410,7 +411,38 @@ export function TaskConversation({
             <span />
           </span>
         ) : null}
+      </>
+    );
+    if (item.details) {
+      return (
+        <details className={`${statusClassName} liveStatusRow-details`} key={item.id}>
+          <summary>{statusSummary}</summary>
+          {renderLiveLogDiagnostics(item.details)}
+        </details>
+      );
+    }
+    return (
+      <article className={statusClassName} key={item.id}>
+        {statusSummary}
       </article>
+    );
+  }
+
+  function renderLiveLogDiagnostics(details: NonNullable<LiveLogItem["details"]>) {
+    return (
+      <div className="liveLogDiagnostics">
+        {details.rows.length > 0 ? (
+          <dl>
+            {details.rows.map((row, index) => (
+              <div key={`${row.label}:${index}`}>
+                <dt>{row.label}</dt>
+                <dd>{row.value}</dd>
+              </div>
+            ))}
+          </dl>
+        ) : null}
+        <pre>{details.rawJson}</pre>
+      </div>
     );
   }
 

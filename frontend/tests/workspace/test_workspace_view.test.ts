@@ -44,22 +44,32 @@ test("formatTime has stable empty and invalid fallbacks", () => {
   assert.equal(formatTime("not-a-date"), "--:--:--");
 });
 
-test("buildLogClipboardText hides legacy info titles without live metadata", () => {
+test("buildLogClipboardText copies raw JSONL diagnostics", () => {
   assert.equal(buildLogClipboardText([]), "暂无日志");
-  assert.equal(
-    buildLogClipboardText([
-      {
+  const text = buildLogClipboardText([
+    {
+      id: "log-1",
+      title: "准备编排副本",
+      detail: "开始 (0/5)",
+      level: "info",
+      rawRecord: {
         id: "log-1",
-        title: "准备编排副本",
-        detail: "开始 (0/5)",
-        level: "info",
+        type: "status_update",
+        message: "State update: model",
+        payload: { node: "model" },
       },
-    ]),
-    "暂无日志",
-  );
+    },
+  ]);
+
+  assert.deepEqual(JSON.parse(text), {
+    id: "log-1",
+    type: "status_update",
+    message: "State update: model",
+    payload: { node: "model" },
+  });
 });
 
-test("buildLogClipboardText hides legacy reasoning summaries without arbitrary payload data", () => {
+test("buildLogClipboardText falls back to structured JSONL when raw records are absent", () => {
   assert.equal(formatReasoningPhaseLabel("decide"), "决策");
   const text = buildLogClipboardText([
     {
@@ -83,11 +93,13 @@ test("buildLogClipboardText hides legacy reasoning summaries without arbitrary p
     },
   ]);
 
-  assert.equal(text, "暂无日志");
-  assert.equal(text.includes("arbitrary_secret"), false);
+  const lines = text.split("\n").map((line) => JSON.parse(line));
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].type, "reasoning_trace");
+  assert.equal(lines[0].payload.reasoning.summary, "纳入 2 条结构化证据。");
 });
 
-test("buildLogClipboardText projects live tool cards instead of technical activity details", () => {
+test("buildLogClipboardText preserves raw event JSONL instead of projected summaries", () => {
   const text = buildLogClipboardText([
     {
       id: "activity-1",
@@ -123,6 +135,12 @@ test("buildLogClipboardText projects live tool cards instead of technical activi
         toolCallId: "call-1",
         parameterItems: [{ key: "relative_path", value: "uploads" }],
       },
+      rawRecord: {
+        id: "activity-1",
+        type: "tool_call",
+        message: "Calling tool: list_dir",
+        payload: { name: "list_dir", args: { relative_path: "uploads" } },
+      },
     },
     {
       id: "audit-1",
@@ -141,18 +159,22 @@ test("buildLogClipboardText projects live tool cards instead of technical activi
         resultStatus: "success",
         resultCount: 3,
       },
+      rawRecord: {
+        id: "audit-1",
+        type: "tool_result",
+        message: "Tool result (list_dir): success",
+        payload: { name: "list_dir", content: "3 files" },
+      },
     },
   ]);
 
-  assert.match(
-    text,
-    /main_agent 调用 list_dir\("relative_path":"uploads"\) -> list_dir 工具返回了 3 条结果/,
-  );
-  assert.equal(text.includes("轮次"), false);
-  assert.equal(text.includes("路径：agent"), false);
+  const lines = text.split("\n").map((line) => JSON.parse(line));
+  assert.equal(lines[0].message, "Calling tool: list_dir");
+  assert.equal(lines[1].message, "Tool result (list_dir): success");
+  assert.equal(text.includes("main_agent 调用"), false);
 });
 
-test("buildLogClipboardText includes bounded live search parameters and generic results", () => {
+test("buildLogClipboardText copies one raw JSON object per log line", () => {
   const text = buildLogClipboardText([
     {
       id: "search-call",
@@ -177,6 +199,12 @@ test("buildLogClipboardText includes bounded live search parameters and generic 
           { key: "query", value: "上海天气" },
           { key: "max_results", value: 5 },
         ],
+      },
+      rawRecord: {
+        id: "search-call",
+        type: "tool_call",
+        message: "Calling tool: tavily_search",
+        payload: { name: "tavily_search", args: { query: "上海天气", max_results: 5 } },
       },
     },
     {
@@ -203,15 +231,20 @@ test("buildLogClipboardText includes bounded live search parameters and generic 
         resultStatus: "success",
         resultCount: 1,
       },
+      rawRecord: {
+        id: "search-result",
+        type: "tool_result",
+        message: "Tool result (tavily_search): success",
+        payload: { name: "tavily_search", status: "success" },
+      },
     },
   ]);
 
-  assert.match(
-    text,
-    /search_agent 调用 tavily_search\("query":"上海天气","max_results":5\) -> tavily_search 工具返回了 1 条结果/,
-  );
-  assert.equal(text.includes("https://weather.example"), false);
-  assert.equal(text.includes("来源：上海天气"), false);
+  const lines = text.split("\n").map((line) => JSON.parse(line));
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].payload.name, "tavily_search");
+  assert.equal(lines[0].payload.args.query, "上海天气");
+  assert.equal(lines[1].payload.status, "success");
 });
 
 test("buildLiveLogItems pairs tool events and keeps one active status row", () => {
@@ -261,23 +294,115 @@ test("buildLiveLogItems pairs tool events and keeps one active status row", () =
   );
 
   assert.equal(items.length, 2);
-  assert.deepEqual(items[0], {
-    id: "tool:tool-1",
-    kind: "tool",
-    createdAt: undefined,
-    level: undefined,
-    title: 'internet_agent 调用 tavily_search("query":"上海天气")',
-    resultText: "tavily_search 未找到可用结果，正在尝试其他方式",
-    resultStatus: "empty",
-  });
-  assert.deepEqual(items[1], {
-    id: "status:active",
-    kind: "status",
-    createdAt: undefined,
-    level: "info",
-    text: "AI正在生成结果",
-    active: true,
-  });
+  assert.equal(items[0]?.kind, "tool");
+  assert.equal(items[0]?.kind === "tool" ? items[0].title : "", "联网搜索暂无可用结果");
+  assert.equal(items[0]?.kind === "tool" ? items[0].resultText : "", "未找到可用结果，正在尝试其他方式");
+  assert.equal(items[0]?.kind === "tool" ? items[0].resultStatus : "", "empty");
+  assert.equal(items[1]?.kind, "status");
+  assert.equal(items[1]?.kind === "status" ? items[1].text : "", "AI正在生成结果");
+  assert.equal(items[1]?.kind === "status" ? items[1].active : false, true);
+});
+
+test("buildLiveLogItems folds internal state updates into Chinese progress stages", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "prep-1",
+        type: "status_update",
+        title: "State update: SkillsMiddleware.before_agent",
+        live: {
+          schemaVersion: 1,
+          kind: "status",
+          stage: "preparing",
+          displayText: "正在准备任务...",
+          diagnosticLabel: "SkillsMiddleware.before_agent",
+          parameterItems: [],
+        },
+        rawRecord: {
+          id: "prep-1",
+          type: "status_update",
+          message: "State update: SkillsMiddleware.before_agent",
+          payload: { node: "SkillsMiddleware.before_agent" },
+        },
+      },
+      {
+        id: "prep-2",
+        type: "status_update",
+        title: "State update: PatchToolCallsMiddleware.before_agent",
+        live: {
+          schemaVersion: 1,
+          kind: "status",
+          stage: "preparing",
+          displayText: "正在准备任务...",
+          diagnosticLabel: "PatchToolCallsMiddleware.before_agent",
+          parameterItems: [],
+        },
+        rawRecord: {
+          id: "prep-2",
+          type: "status_update",
+          message: "State update: PatchToolCallsMiddleware.before_agent",
+          payload: { node: "PatchToolCallsMiddleware.before_agent" },
+        },
+      },
+      {
+        id: "model",
+        type: "status_update",
+        title: "State update: model",
+        live: {
+          schemaVersion: 1,
+          kind: "status",
+          stage: "thinking",
+          displayText: "AI正在思考...",
+          diagnosticLabel: "model",
+          parameterItems: [],
+        },
+        rawRecord: {
+          id: "model",
+          type: "status_update",
+          message: "State update: model",
+          payload: { node: "model" },
+        },
+      },
+    ],
+    "running",
+  );
+
+  assert.deepEqual(
+    items.map((item) => (item.kind === "status" ? item.text : item.title)),
+    ["正在准备任务...", "AI正在思考..."],
+  );
+  const lastItem = items.at(-1);
+  assert.equal(lastItem?.kind === "status" ? lastItem.active : false, true);
+  assert.equal(
+    JSON.stringify(items.map((item) => item.kind === "status" ? item.text : item.title)).includes("Middleware"),
+    false,
+  );
+  assert.equal(JSON.stringify(items).includes("PatchToolCallsMiddleware.before_agent"), true);
+});
+
+test("buildLiveLogItems does not treat model state updates as final answer generation", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "model",
+        type: "status_update",
+        title: "State update: model",
+        live: {
+          schemaVersion: 1,
+          kind: "status",
+          stage: "thinking",
+          displayText: "AI正在思考...",
+          parameterItems: [],
+        },
+      },
+    ],
+    "running",
+  );
+
+  assert.deepEqual(
+    items.map((item) => (item.kind === "status" ? item.text : item.title)),
+    ["AI正在思考..."],
+  );
 });
 
 test("buildLiveLogItems excludes assistant stream chunks from progress rows", () => {
@@ -399,7 +524,8 @@ test("buildLiveLogItems hides answer stream deltas behind a stable generation la
     ["AI正在生成结果"],
   );
   assert.equal(JSON.stringify(items).includes("第一段"), false);
-  assert.equal(JSON.stringify(items).includes("。"), false);
+  assert.equal(JSON.stringify(items).includes("stream-punctuation"), false);
+  assert.equal(JSON.stringify(items).includes("stream-content"), false);
 });
 
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
@@ -466,13 +592,13 @@ test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
   if (firstItem?.kind !== "tool" || secondItem?.kind !== "tool") {
     throw new Error("expected two tool live items");
   }
-  assert.equal(firstItem.title, 'file_agent 调用 read_file("relative_path":"uploads/a.md")');
-  assert.equal(firstItem.resultText, "read_file 工具返回了 1 条结果");
-  assert.equal(secondItem.title, 'file_agent 调用 read_file("relative_path":"uploads/b.md")');
-  assert.equal(secondItem.resultText, "read_file 未找到可用结果，正在尝试其他方式");
+  assert.equal(firstItem.title, "读取文件已返回结果");
+  assert.equal(firstItem.resultText, "返回了 1 条结果");
+  assert.equal(secondItem.title, "读取文件暂无可用结果");
+  assert.equal(secondItem.resultText, "未找到可用结果，正在尝试其他方式");
 });
 
-test("buildLogClipboardText hides orchestration details without live metadata", () => {
+test("buildLogClipboardText copies orchestration fallback as JSONL", () => {
   const text = buildLogClipboardText([
     {
       id: "orchestration-1",
@@ -494,10 +620,12 @@ test("buildLogClipboardText hides orchestration details without live metadata", 
     },
   ]);
 
-  assert.equal(text, "暂无日志");
+  const parsed = JSON.parse(text);
+  assert.equal(parsed.type, "orchestration_decision");
+  assert.equal(parsed.payload.orchestration.strategy, "multi_agent");
 });
 
-test("buildLogClipboardText ignores arbitrary malformed payload fields", () => {
+test("buildLogClipboardText fallback ignores non-normalized ad-hoc fields", () => {
   const text = buildLogClipboardText([
     {
       id: "activity-bad",
@@ -511,7 +639,6 @@ test("buildLogClipboardText ignores arbitrary malformed payload fields", () => {
     } as never,
   ]);
 
-  assert.equal(text, "暂无日志");
   assert.equal(text.includes("SHOULD_NOT_COPY"), false);
   assert.equal(text.includes("raw_provider_chunk"), false);
 });
