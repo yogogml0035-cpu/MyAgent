@@ -15,12 +15,12 @@ TaskStatus = Literal[
 
 class TaskCreateRequest(BaseModel):
     message: str | None = Field(default=None, max_length=MAX_MESSAGE_CHARS)
-    model: str = "deepseek:deepseek-chat"
+    model: str | None = None
 
 
 class MessageRequest(BaseModel):
     message: str = Field(..., min_length=1, max_length=MAX_MESSAGE_CHARS)
-    model: str = "deepseek:deepseek-chat"
+    model: str | None = None
     mode: TaskMode = "auto"
     input_scope: InputScope = "auto"
 

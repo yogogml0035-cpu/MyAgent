@@ -14,6 +14,7 @@ MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 \
 MYAGENT_E2E_TASK_ROOT=/tmp/myagent-e2e/tasks \
 MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/runtime-contracts \
+MYAGENT_E2E_EXPECT_UPLOAD_LIMIT_BYTES=2048 \
 MYAGENT_E2E_ACCESS_TOKEN=... \
 MYAGENT_E2E_POSTGRES_CONTAINER=PostgreSQL \
 MYAGENT_E2E_POSTGRES_USER=postgres \
@@ -22,3 +23,4 @@ npm run e2e:runtime-contracts
 ```
 
 The runtime-contract spec seeds one completed run through the real Postgres-backed storage contract plus the task artifact directory. Keep the Postgres env values local to the E2E command and do not commit credentials.
+Set `MYAGENT_E2E_EXPECT_UPLOAD_LIMIT_BYTES` when the backend is started with a small `MYAGENT_MAX_UPLOAD_REQUEST_BYTES` value to verify that oversized multipart uploads are rejected in the browser before storage writes.

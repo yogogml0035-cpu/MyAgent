@@ -11,6 +11,7 @@ import {
   type TaskSummary,
   formatNeedsInput,
   isRecord,
+  isModelRunnable,
   isTaskActive,
   mergeExecutionLogs,
   normalizeEventRecords,
@@ -54,6 +55,7 @@ const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
 
 const DEFAULT_FILE_PROMPT = "请分析已上传的 Markdown 或 JSON 文件是否存在串标围标嫌疑。";
 export const MAX_SSE_RETRIES = 5;
+export const ARTIFACT_OBJECT_URL_REVOKE_DELAY_MS = 60_000;
 
 export function calculateSseRetryDelay(retryCount: number) {
   return Math.min(3000 * Math.pow(2, retryCount), 30000);
@@ -64,6 +66,76 @@ export function getSseErrorDetail(payload: unknown) {
     return "";
   }
   return readString(payload.detail, "流传输异常，请刷新页面。");
+}
+
+function escapePreviewHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+export function buildSandboxedArtifactPreviewDocument(
+  artifactName: string,
+  artifactObjectUrl: string,
+) {
+  const title = escapePreviewHtml(artifactName || "HTML 产物预览");
+  const iframeSrc = escapePreviewHtml(artifactObjectUrl);
+
+  return `<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'none'; frame-src blob:; style-src 'unsafe-inline';" />
+    <title>${title}</title>
+    <style>
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        background: #f6f3ed;
+        color: #26221b;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      body {
+        display: grid;
+        grid-template-rows: auto 1fr;
+      }
+      header {
+        border-bottom: 1px solid rgba(38, 34, 27, 0.16);
+        background: #fffaf0;
+        padding: 12px 16px;
+      }
+      h1 {
+        font-size: 15px;
+        line-height: 1.4;
+        margin: 0;
+      }
+      p {
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 4px 0 0;
+        color: #6f6758;
+      }
+      iframe {
+        border: 0;
+        height: 100%;
+        width: 100%;
+        background: white;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>${title}</h1>
+      <p>此 HTML 产物已在禁用脚本的沙箱 iframe 中预览。</p>
+    </header>
+    <iframe sandbox="" referrerpolicy="no-referrer" src="${iframeSrc}" title="${title}"></iframe>
+  </body>
+</html>`;
 }
 
 export function useTaskWorkspace() {
@@ -120,6 +192,11 @@ export function useTaskWorkspace() {
     () => selectedModelDisplayOption(modelDisplayOptions, model),
     [model, modelDisplayOptions],
   );
+  const selectedModelOption = useMemo(
+    () => modelOptions.find((option) => option.id === model) ?? null,
+    [model, modelOptions],
+  );
+  const selectedModelRunnable = isModelRunnable(selectedModelOption);
   const runActivityGroups = useMemo(
     () => buildRunActivityGroups(runs, logs, artifacts),
     [artifacts, logs, runs],
@@ -154,7 +231,13 @@ export function useTaskWorkspace() {
           return;
         }
         setModelOptions(options);
-        setModel((current) => (options.some((option) => option.id === current) ? current : options[0].id));
+        setModel((current) => {
+          const currentOption = options.find((option) => option.id === current);
+          if (isModelRunnable(currentOption)) {
+            return current;
+          }
+          return options.find(isModelRunnable)?.id ?? currentOption?.id ?? options[0].id;
+        });
       })
       .catch(() => {
         if (!cancelled) {
@@ -321,6 +404,11 @@ export function useTaskWorkspace() {
     }
 
     setError("");
+    if (!selectedModelRunnable) {
+      setErrorLevel("error");
+      setError("当前模型服务未配置，请先在后端配置对应 API Key 后再发送。");
+      return;
+    }
     setIsBusy(true);
     const content = input.trim();
     const taskContent = content || DEFAULT_FILE_PROMPT;
@@ -360,6 +448,7 @@ export function useTaskWorkspace() {
     refreshTask,
     refreshTaskSummaries,
     selectedFiles,
+    selectedModelRunnable,
     taskId,
   ]);
 
@@ -567,8 +656,15 @@ export function useTaskWorkspace() {
       try {
         const blob = await fetchArtifactBlob(artifact, taskId);
         const objectUrl = URL.createObjectURL(blob);
-        artifactWindow.location.replace(objectUrl);
-        window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000);
+        artifactWindow.document.open();
+        artifactWindow.document.write(
+          buildSandboxedArtifactPreviewDocument(artifact.name, objectUrl),
+        );
+        artifactWindow.document.close();
+        window.setTimeout(
+          () => URL.revokeObjectURL(objectUrl),
+          ARTIFACT_OBJECT_URL_REVOKE_DELAY_MS,
+        );
       } catch (caught) {
         artifactWindow.close();
         setErrorLevel("error");
@@ -602,6 +698,7 @@ export function useTaskWorkspace() {
     model,
     modelDisplayOptions,
     noticeMessages,
+    selectedModelRunnable,
     selectedFileNames,
     selectedFileSize,
     selectedFiles,

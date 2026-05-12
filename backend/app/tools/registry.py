@@ -5,7 +5,7 @@ from __future__ import annotations
 from langchain_core.tools import BaseTool
 
 from app.config import Settings
-from app.tools.tavily_search import tavily_search
+from app.tools.tavily_search import create_tavily_search_tool
 
 
 def get_platform_tools(settings: Settings) -> list[BaseTool]:
@@ -22,6 +22,6 @@ def get_platform_tools(settings: Settings) -> list[BaseTool]:
     tools: list[BaseTool] = []
 
     if settings.tavily_api_key:
-        tools.append(tavily_search)
+        tools.append(create_tavily_search_tool(settings.tavily_api_key))
 
     return tools

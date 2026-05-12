@@ -184,7 +184,7 @@ export function createTaskEventSource(
 export async function fetchArtifactBlob(artifact: Artifact, taskId: string) {
   const request = buildArtifactRequest(
     artifact,
-    encodeURIComponent(taskId),
+    taskId,
     TASK_API_BASE_URL,
     TASK_API_ACCESS_TOKEN,
   );

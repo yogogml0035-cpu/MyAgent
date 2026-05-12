@@ -2,10 +2,10 @@
 [CmdletBinding()]
 param(
   [string]$Distribution = "",
-  [string]$BackendHost = "0.0.0.0",
+  [string]$BackendHost = "127.0.0.1",
   [ValidateRange(1, 65535)]
   [int]$BackendPort = 8001,
-  [string]$FrontendHost = "0.0.0.0",
+  [string]$FrontendHost = "127.0.0.1",
   [ValidateRange(1, 65535)]
   [int]$FrontendPort = 3001,
   [switch]$NoStop,
@@ -25,9 +25,9 @@ Open two Windows Terminal tabs for the MyAgent WSL backend and frontend.
 
 Options:
   -Distribution NAME    WSL distribution name. Default: current/default WSL distro.
-  -BackendHost HOST     Backend bind host. Default: 0.0.0.0
+  -BackendHost HOST     Backend bind host. Default: 127.0.0.1
   -BackendPort PORT     Backend port. Default: 8001
-  -FrontendHost HOST    Next.js bind host. Default: 0.0.0.0
+  -FrontendHost HOST    Next.js bind host. Default: 127.0.0.1
   -FrontendPort PORT    Frontend port. Default: 3001
   -NoStop               Do not stop existing WSL listeners before starting.
   -NoProxyRepair        Do not update .wslconfig for Windows localhost proxy issues.
@@ -240,10 +240,10 @@ if ($Help) {
   exit 0
 }
 
-if (-not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
+if (-not $DryRun -and -not (Get-Command wsl.exe -ErrorAction SilentlyContinue)) {
   throw "wsl.exe is required but was not found in PATH."
 }
-if (-not (Get-Command wt.exe -ErrorAction SilentlyContinue)) {
+if (-not $DryRun -and -not (Get-Command wt.exe -ErrorAction SilentlyContinue)) {
   throw "wt.exe is required but was not found in PATH."
 }
 

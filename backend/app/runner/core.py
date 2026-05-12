@@ -13,7 +13,6 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.agent.factory import build_agent
 from app.config import Settings
 from app.contracts import EventLevel
-from app.memory import AgentMemoryService, MemoryServiceError
 from app.schemas import ChatMessage, EventRecord, TaskStatus
 from app.streaming.event_converter import convert_stream_event
 from app.streaming.v2_adapter import extract_final_answer, stream_agent
@@ -52,6 +51,19 @@ class RunnerStorage(Protocol):
     ) -> Any: ...
 
 
+class RunnerMemoryService(Protocol):
+    def recall_context(self, user_message: str, *, limit: int = 3) -> str | None: ...
+
+    def remember_completed_run(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        user_goal: str,
+        final_answer: str,
+    ) -> None: ...
+
+
 class TaskRunner:
     """Orchestrates agent execution for a task: build, stream, convert, collect."""
 
@@ -59,12 +71,13 @@ class TaskRunner:
         self,
         settings: Settings,
         storage: RunnerStorage | None = None,
-        memory_service: AgentMemoryService | None = None,
+        memory_service: RunnerMemoryService | None = None,
     ) -> None:
         self.settings = settings
         self.storage = storage
         self.memory_service = memory_service
         self._active_runs: dict[str, asyncio.Task[None]] = {}
+        self._memory_tasks: set[asyncio.Task[None]] = set()
 
     async def start(
         self,
@@ -96,10 +109,9 @@ class TaskRunner:
         )
 
         messages: list[Any] = []
-        if self.memory_service is not None:
-            memory_context = self.memory_service.recall_context(message)
-            if memory_context:
-                messages.append(SystemMessage(content=memory_context))
+        memory_context = await self._recall_memory_context(message)
+        if memory_context:
+            messages.append(SystemMessage(content=memory_context))
         messages.append(HumanMessage(content=message))
         config: dict[str, Any] = {
             "configurable": {"thread_id": task_id},
@@ -175,13 +187,6 @@ class TaskRunner:
 
                 append_message: ChatMessage | None = None
                 if final_answer:
-                    if self.memory_service is not None:
-                        self.memory_service.remember_completed_run(
-                            task_id=task_id,
-                            run_id=run_id,
-                            user_goal=message,
-                            final_answer=final_answer,
-                        )
                     append_message = ChatMessage(
                         role="assistant",
                         content=final_answer,
@@ -213,6 +218,12 @@ class TaskRunner:
                         run_id=run_id,
                         level="success",
                     )
+                    self._schedule_completed_run_memory_write(
+                        task_id=task_id,
+                        run_id=run_id,
+                        user_goal=message,
+                        final_answer=final_answer,
+                    )
             except TimeoutError:
                 error_message = f"运行超时（{self.settings.agent_timeout_seconds}秒）"
                 self.storage.update_task_if_status_and_append_event(
@@ -238,19 +249,6 @@ class TaskRunner:
                     event_level="warning",
                 )
                 raise
-            except MemoryServiceError as exc:
-                self.storage.update_task_if_status_and_append_event(
-                    task_id,
-                    {"running"},
-                    status="failed",
-                    error=str(exc),
-                    run_id=run_id,
-                    event_type="task_failed",
-                    event_message=str(exc),
-                    event_payload={"error": str(exc), "source": "memory"},
-                    event_level="error",
-                )
-                raise
             except Exception as exc:
                 error_message = str(exc)
                 self.storage.update_task_if_status_and_append_event(
@@ -269,6 +267,47 @@ class TaskRunner:
                 self._active_runs.pop(task_id, None)
 
         self._active_runs[task_id] = asyncio.create_task(_run())
+
+    async def _recall_memory_context(self, message: str) -> str | None:
+        memory_service = self.memory_service
+        if memory_service is None:
+            return None
+        try:
+            return await asyncio.to_thread(memory_service.recall_context, message)
+        except Exception:
+            logger.warning("Long-term memory recall failed; continuing without memory", exc_info=True)
+            return None
+
+    def _schedule_completed_run_memory_write(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        user_goal: str,
+        final_answer: str,
+    ) -> None:
+        memory_service = self.memory_service
+        if memory_service is None:
+            return
+
+        async def _remember() -> None:
+            try:
+                await asyncio.to_thread(
+                    memory_service.remember_completed_run,
+                    task_id=task_id,
+                    run_id=run_id,
+                    user_goal=user_goal,
+                    final_answer=final_answer,
+                )
+            except Exception:
+                logger.warning(
+                    "Long-term memory write failed after successful run; keeping task complete",
+                    exc_info=True,
+                )
+
+        task = asyncio.create_task(_remember())
+        self._memory_tasks.add(task)
+        task.add_done_callback(self._memory_tasks.discard)
 
     async def cancel(self, task_id: str) -> None:
         """Cancel a running task."""

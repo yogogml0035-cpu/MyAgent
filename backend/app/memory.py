@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from typing import Any
@@ -7,6 +8,9 @@ from typing import Any
 import httpx
 
 from .config import Settings
+from .security.scanner import SENSITIVE_REDACTION, redact_sensitive_text, scan_text_for_secrets
+
+logger = logging.getLogger(__name__)
 
 
 class MemoryServiceError(RuntimeError):
@@ -187,18 +191,27 @@ class AgentMemoryService:
         self.embedding.embed("MyAgent memory startup probe")
 
     def recall_context(self, user_message: str, *, limit: int = 3) -> str | None:
-        query = user_message.strip()
+        if _has_sensitive_memory_content(user_message):
+            logger.info("Skipping long-term memory recall for sensitive user input")
+            return None
+        query = _compact(redact_sensitive_text(user_message), 420)
         if not query:
             return None
         vector = self.embedding.embed(query)
         memories = self.store.search(vector=vector, limit=limit)
         if not memories:
             return None
+        memory_lines: list[str] = []
+        for index, memory in enumerate(memories, start=1):
+            memory_text = _sanitize_memory_segment(memory.text, max_chars=520)
+            if memory_text:
+                memory_lines.append(f"{index}. {memory_text}")
+        if not memory_lines:
+            return None
         lines = [
             "以下是 MyAgent 的本地长期记忆，仅作为背景参考；若与本轮用户输入冲突，以本轮输入为准。"
         ]
-        for index, memory in enumerate(memories, start=1):
-            lines.append(f"{index}. {memory.text}")
+        lines.extend(memory_lines)
         return "\n".join(lines)
 
     def remember_completed_run(
@@ -215,6 +228,11 @@ class AgentMemoryService:
             user_goal=user_goal,
             final_answer=final_answer,
         )
+        if _has_sensitive_memory_content(text):
+            logger.warning(
+                "Skipping long-term memory write because sanitized text still contains sensitive data"
+            )
+            return
         vector = self.embedding.embed(text)
         point_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"myagent:{task_id}:{run_id}"))
         self.store.upsert(
@@ -233,12 +251,24 @@ class AgentMemoryService:
 def build_task_memory_text(*, task_id: str, run_id: str, user_goal: str, final_answer: str) -> str:
     return "\n".join(
         [
-            f"用户目标: {_compact(user_goal, 240)}",
-            f"最终回答摘要: {_compact(final_answer, 420)}",
+            f"用户目标: {_sanitize_memory_segment(user_goal, max_chars=240)}",
+            f"最终回答摘要: {_sanitize_memory_segment(final_answer, max_chars=420)}",
             f"任务ID: {task_id}",
             f"运行ID: {run_id}",
         ]
     )
+
+
+def _sanitize_memory_segment(text: str, *, max_chars: int) -> str:
+    sanitized = redact_sensitive_text(text)
+    compact = _compact(sanitized, max_chars)
+    if _has_sensitive_memory_content(compact):
+        return SENSITIVE_REDACTION
+    return compact
+
+
+def _has_sensitive_memory_content(text: str) -> bool:
+    return bool(scan_text_for_secrets(text, source="memory"))
 
 
 def _compact(text: str, max_chars: int) -> str:

@@ -45,3 +45,12 @@ test("selectedModelDisplayOption keeps a readable fallback for unknown selected 
   assert.equal(selected.label, "custom-agent");
   assert.equal(selected.description, "调研、文档、表格与多步骤任务");
 });
+
+test("buildModelDisplayOptions annotates unavailable models with a disabled reason", () => {
+  const [option] = buildModelDisplayOptions([
+    { id: "openai:gpt-4o", label: "GPT-4o", available: false },
+  ]);
+
+  assert.equal(option.available, false);
+  assert.equal(option.disabledReason, "后端未配置对应 API Key");
+});
