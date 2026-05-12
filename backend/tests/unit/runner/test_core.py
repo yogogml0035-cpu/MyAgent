@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 from langchain_core.messages import AIMessage
@@ -41,6 +43,52 @@ async def _wait_for_runner(runner: TaskRunner, task_id: str) -> None:
             return
         await asyncio.sleep(0.01)
     raise AssertionError("runner did not finish")
+
+
+class _FakeStreamingAgent:
+    def __init__(self, chunks: list[Any]) -> None:
+        self._chunks = chunks
+
+    async def astream(self, *args: Any, **kwargs: Any) -> AsyncIterator[Any]:
+        for chunk in self._chunks:
+            yield chunk
+
+
+class TestTaskRunnerStreamState:
+    @pytest.mark.asyncio
+    async def test_start_uses_only_root_values_snapshot_for_latest_state(
+        self, test_settings, monkeypatch
+    ):
+        chunks: list[Any] = [
+            {
+                "type": "values",
+                "ns": [],
+                "data": {
+                    "scope": "root",
+                    "messages": [AIMessage(content="root final answer")],
+                },
+            },
+            {
+                "type": "values",
+                "ns": ("researcher", "model"),
+                "data": {
+                    "scope": "subgraph",
+                    "messages": [AIMessage(content="subgraph intermediate answer")],
+                },
+            },
+        ]
+        runner = TaskRunner(test_settings)
+
+        monkeypatch.setattr(
+            "app.runner.core.build_agent",
+            lambda *args, **kwargs: _FakeStreamingAgent(chunks),
+        )
+
+        records, latest_state = await runner.start("task-1", "hello", run_id="run-1")
+        snapshots = [record for record in records if record.type == "values_snapshot"]
+
+        assert latest_state["scope"] == "root"
+        assert [record.payload["is_subgraph"] for record in snapshots] == [False, True]
 
 
 class TestTaskRunnerTerminalEvents:

@@ -172,6 +172,8 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 
 **Backend responsibilities**:
 - `extract_final_answer()` in `v2_adapter.py` walks `state["messages"]` in reverse to find the last `AIMessage` with content but no `tool_calls`. This is the authoritative final answer.
+- `v2_adapter.py` treats any non-empty LangGraph namespace (`ns`) as subgraph output for both dict chunks and legacy tuple chunks. Namespace containers may be tuples/lists and their entries may be non-string values. Subgraph `message_chunk` events are intermediate sub-agent output and must not be emitted as main `message_chunk` deltas.
+- `TaskRunner.start()` updates `latest_state` only from root graph `values_snapshot` events (`is_subgraph=false`). Subgraph snapshots may still be logged for diagnostics, but they are not a valid source for final answer extraction.
 - `runner/core.py` emits a synthetic `final_answer` event AFTER storing the final answer as a `ChatMessage` via `storage.update_task_if_status()`. The event order matters: ChatMessage storage first, then the `final_answer` event, to avoid frontend race conditions.
 - The `final_answer` event has `type="final_answer"`, `level="success"`, and `payload={"content": "..."}`.
 
@@ -184,6 +186,7 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 **Anti-patterns to avoid**:
 - NEVER use the last `assistant_answer_delta` chunk as the final answer — the last chunk could be a `state_update`, `tool_result`, or subgraph output.
 - NEVER treat `streamedAnswer` (accumulated from deltas) as the authoritative final answer, and do not render it as user-facing progress text.
+- NEVER let subgraph `message_chunk` or subgraph `values_snapshot` events replace the root graph answer/state. Sub-agent output is process data, not the task's authoritative final response.
 - NEVER emit the `final_answer` event before storing the `ChatMessage` — this causes a race where the frontend refreshes before the answer is persisted.
 - NEVER display `assistant_answer_delta` as a standalone AI reply card or as raw progress-log text. It should only drive the stable answer-generation status.
 
@@ -205,6 +208,7 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 - SSE event loss if `last_event_id` in `streaming.py` is reverted to `""` — the empty string causes `read_events(after_id="")` to return nothing because `after_id is None` is `False` and no event matches `id == ""`. E2E test `test_sse_drains_remaining_events_before_done` guards this.
 - Stream accumulation regression if `accumulateStreamedAnswer` is reverted to taking only the last delta — this would re-introduce the isolated punctuation card bug.
 - **Final answer extraction regression**: If `extract_final_answer()` is removed or modified to not filter out `tool_calls`, the final answer could include tool-calling artifacts (e.g., JSON function calls) instead of clean text.
+- **Subgraph stream pollution regression**: If namespace handling stops recognizing tuple/list/non-string `ns` values, subgraph tokens or subgraph state snapshots can again overwrite the root graph final answer.
 - **Intermediate/final confusion**: If `pushStreamedAnswerItem()` is re-enabled in `buildConversationStreamItems()`, intermediate tokens will again be displayed as AI reply cards during streaming, breaking the final/intermediate distinction.
 - **Race condition regression**: If the `final_answer` event in `runner/core.py` is moved before `storage.update_task_if_status()`, the frontend may refresh before the ChatMessage is persisted, showing stale or missing final answers.
 - **Log scroll regression**: `TaskConversation.tsx` keeps each log list pinned to the bottom while the user has not intentionally scrolled upward. If the pinned-state tracking or `conversationStreamItems` dependency is removed, progress log cards will stop following new rows and active-row text changes.

@@ -113,7 +113,9 @@ class TaskRunner:
             async with asyncio.timeout(self.settings.agent_timeout_seconds):
                 async for event in stream_agent(agent, messages, config=config):
                     if event.get("type") == "values_snapshot":
-                        latest_state = event.get("data", {})
+                        data = event.get("data")
+                        if isinstance(data, dict) and not data.get("is_subgraph", False):
+                            latest_state = data
                     record = convert_stream_event(event, task_id, run_id, seq=seq)
                     if record is not None:
                         collected.append(record)
