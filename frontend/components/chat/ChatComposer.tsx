@@ -25,6 +25,7 @@ type ChatComposerProps = {
   selectedFileSize: number;
   selectedFiles: File[];
   selectedModelDisplay: ModelDisplayOption;
+  selectedModelRunnable: boolean;
   uploadCount: number;
   onClearFiles: () => void;
   onFileSelection: (files: File[]) => void;
@@ -45,6 +46,7 @@ export function ChatComposer({
   selectedFileSize,
   selectedFiles,
   selectedModelDisplay,
+  selectedModelRunnable,
   uploadCount,
   onClearFiles,
   onFileSelection,
@@ -185,12 +187,22 @@ export function ChatComposer({
               <div aria-label="模型" className="modelPickerMenu" role="listbox">
                 {modelDisplayOptions.map((option) => {
                   const isSelected = option.id === model;
+                  const isDisabled = option.available === false;
                   return (
                     <button
+                      aria-disabled={isDisabled}
                       aria-selected={isSelected}
-                      className={isSelected ? "modelOption modelOption-active" : "modelOption"}
+                      className={[
+                        "modelOption",
+                        isSelected ? "modelOption-active" : "",
+                        isDisabled ? "modelOption-disabled" : "",
+                      ].filter(Boolean).join(" ")}
+                      disabled={isDisabled}
                       key={option.id}
                       onClick={() => {
+                        if (isDisabled) {
+                          return;
+                        }
                         onModelChange(option.id);
                         setIsModelPickerOpen(false);
                       }}
@@ -201,8 +213,9 @@ export function ChatComposer({
                         <span className="modelOptionTitle">
                           <span>{option.label}</span>
                           {option.badge ? <span className="modelBadge">{option.badge}</span> : null}
+                          {option.available === false ? <span className="modelBadge modelBadge-muted">未配置</span> : null}
                         </span>
-                        <small>{option.description}</small>
+                        <small>{option.disabledReason ?? option.description}</small>
                       </span>
                       <span className="modelCheck" aria-hidden="true" />
                     </button>
@@ -228,7 +241,7 @@ export function ChatComposer({
             <button
               aria-label={isBusy ? "发送中" : "发送"}
               className="sendButton"
-              disabled={!canSend || isBusy}
+              disabled={!canSend || isBusy || !selectedModelRunnable}
               type="submit"
             >
               <svg aria-hidden="true" className="sendButtonIcon" fill="none" viewBox="0 0 24 24">

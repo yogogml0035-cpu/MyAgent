@@ -12,6 +12,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
+from starlette.types import Message
 
 from .api.artifacts import router as artifacts_router
 from .api.files import router as files_router
@@ -24,6 +25,10 @@ from .runner.core import TaskRunner
 from .storage import PostgresTaskStorage
 
 logger = logging.getLogger(__name__)
+
+
+class RequestBodyTooLarge(Exception):
+    """Raised when a streaming request body exceeds the configured limit."""
 
 
 def create_app(
@@ -93,13 +98,23 @@ def create_app(
             access_response = authorize_task_request(request, resolved)
             if access_response is not None:
                 return access_response
+        if request.method in {"POST", "PUT", "PATCH"} and is_multipart_request(request):
+            multipart_limit_response = enforce_content_length_limit(
+                request, resolved.max_upload_request_bytes, "上传请求"
+            )
+            if multipart_limit_response is not None:
+                return multipart_limit_response
+            install_receive_body_limit(request, resolved.max_upload_request_bytes, "上传请求")
         if request.method in {"POST", "PUT", "PATCH"} and is_json_request(request):
             json_limit_response = await enforce_json_body_limit(
                 request, resolved.max_json_request_bytes
             )
             if json_limit_response is not None:
                 return json_limit_response
-        return await call_next(request)
+        try:
+            return await call_next(request)
+        except RequestBodyTooLarge as exc:
+            return JSONResponse(status_code=413, content={"detail": str(exc)})
 
     app.add_middleware(
         CORSMiddleware,
@@ -118,6 +133,46 @@ def create_app(
 
 def is_json_request(request: Request) -> bool:
     return "application/json" in request.headers.get("content-type", "").lower()
+
+
+def is_multipart_request(request: Request) -> bool:
+    return "multipart/form-data" in request.headers.get("content-type", "").lower()
+
+
+def enforce_content_length_limit(
+    request: Request, max_bytes: int, label: str
+) -> JSONResponse | None:
+    raw_length = request.headers.get("content-length")
+    if raw_length is None:
+        return None
+    try:
+        content_length = int(raw_length)
+    except ValueError:
+        return JSONResponse(status_code=400, content={"detail": "Content-Length 请求头无效"})
+    if content_length > max_bytes:
+        return JSONResponse(
+            status_code=413,
+            content={"detail": f"{label}超过 {max_bytes} 字节限制"},
+        )
+    return None
+
+
+def install_receive_body_limit(request: Request, max_bytes: int, label: str) -> None:
+    """Wrap ASGI receive so multipart bodies are limited before UploadFile parsing."""
+    original_receive = request._receive  # noqa: SLF001
+    bytes_seen = 0
+
+    async def limited_receive() -> Message:
+        nonlocal bytes_seen
+        message = await original_receive()
+        if message.get("type") == "http.request":
+            body = message.get("body", b"")
+            bytes_seen += len(body)
+            if bytes_seen > max_bytes:
+                raise RequestBodyTooLarge(f"{label}超过 {max_bytes} 字节限制")
+        return message
+
+    request._receive = limited_receive  # noqa: SLF001
 
 
 async def enforce_json_body_limit(request: Request, max_bytes: int) -> JSONResponse | None:

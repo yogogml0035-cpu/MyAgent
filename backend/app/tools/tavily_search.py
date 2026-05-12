@@ -11,6 +11,17 @@ from langchain_core.tools import tool
 from tavily import TavilyClient
 
 
+def create_tavily_search_tool(api_key: str):
+    """Create a Tavily search tool bound to the configured settings key."""
+
+    @tool("tavily_search")
+    def settings_tavily_search(query: str, *, max_results: int = 5, topic: str = "general") -> str:
+        """Search the web for current information using the Tavily search API."""
+        return _run_tavily_search(api_key, query, max_results=max_results, topic=topic)
+
+    return settings_tavily_search
+
+
 @tool
 def tavily_search(query: str, *, max_results: int = 5, topic: str = "general") -> str:
     """Search the web for current information using the Tavily search API.
@@ -31,6 +42,10 @@ def tavily_search(query: str, *, max_results: int = 5, topic: str = "general") -
             "Set the TAVILY_API_KEY environment variable to enable web search."
         )
 
+    return _run_tavily_search(api_key, query, max_results=max_results, topic=topic)
+
+
+def _run_tavily_search(api_key: str, query: str, *, max_results: int, topic: str) -> str:
     try:
         client = TavilyClient(api_key=api_key)
         response = client.search(

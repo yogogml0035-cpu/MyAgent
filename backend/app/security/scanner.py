@@ -5,8 +5,26 @@ from collections.abc import Iterable, Iterator, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+PROVIDER_SECRET_ENV_NAMES = (
+    "ANTHROPIC_API_KEY",
+    "DASHSCOPE_API_KEY",
+    "DEEPSEEK_API_KEY",
+    "OPENAI_API_KEY",
+    "TAVILY_API_KEY",
+)
+
+CUSTOMER_CANARY_PATTERN = re.compile(
+    r"\b(?:SECRET_DOC_CANARY|RAW_PROMPT_CANARY|PROVIDER_KEY_CANARY|AUTH_HEADER_CANARY)"
+    r"_[A-Za-z0-9_-]+\b",
+    re.IGNORECASE,
+)
+
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
-    ("provider-env-name", re.compile(r"\b(?:DEEPSEEK_API_KEY|TAVILY_API_KEY)\b")),
+    (
+        "provider-env-name",
+        re.compile(rf"\b(?:{'|'.join(PROVIDER_SECRET_ENV_NAMES)})\b"),
+    ),
+    ("customer-canary", CUSTOMER_CANARY_PATTERN),
     ("authorization-header", re.compile(r"\bAuthorization\b", re.IGNORECASE)),
     ("bearer-token", re.compile(r"\bBearer\s+\S+", re.IGNORECASE)),
     ("openai-style-secret", re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b", re.IGNORECASE)),
@@ -14,6 +32,42 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("access-token-field", re.compile(r"\baccess[_-]?token\b", re.IGNORECASE)),
     ("refresh-token-field", re.compile(r"\brefresh[_-]?token\b", re.IGNORECASE)),
 )
+
+SENSITIVE_REDACTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
+    (
+        "provider-env-assignment",
+        re.compile(
+            rf"\b(?:{'|'.join(PROVIDER_SECRET_ENV_NAMES)})\b\s*[:=]\s*"
+            r"['\"]?[^'\"\s,;}]+",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "token-field-assignment",
+        re.compile(
+            r"\b(?:api[_-]?key|access[_-]?token|refresh[_-]?token)\b\s*[:=]\s*"
+            r"['\"]?[^'\"\s,;}]+",
+            re.IGNORECASE,
+        ),
+    ),
+    (
+        "authorization-header-value",
+        re.compile(
+            r"\bAuthorization\b\s*[:=]\s*(?:Bearer\s+)?[^'\"\s,;}]+",
+            re.IGNORECASE,
+        ),
+    ),
+    ("bearer-token", re.compile(r"\bBearer\s+\S+", re.IGNORECASE)),
+    ("openai-style-secret", re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b", re.IGNORECASE)),
+    ("provider-env-name", re.compile(rf"\b(?:{'|'.join(PROVIDER_SECRET_ENV_NAMES)})\b")),
+    ("customer-canary", CUSTOMER_CANARY_PATTERN),
+    ("authorization-header", re.compile(r"\bAuthorization\b", re.IGNORECASE)),
+    ("api-key-field", re.compile(r"\bapi[_-]?key\b", re.IGNORECASE)),
+    ("access-token-field", re.compile(r"\baccess[_-]?token\b", re.IGNORECASE)),
+    ("refresh-token-field", re.compile(r"\brefresh[_-]?token\b", re.IGNORECASE)),
+)
+
+SENSITIVE_REDACTION = "<redacted-sensitive>"
 
 SESSION_OUTPUT_DIR_NAMES = {"artifacts", "records", "outputs", "agent_workspace"}
 TEXT_FILE_SUFFIXES = {
@@ -56,6 +110,13 @@ def scan_text_for_secrets(text: str, *, source: str) -> list[SecretScanFinding]:
                 )
             )
     return findings
+
+
+def redact_sensitive_text(text: str, *, replacement: str = SENSITIVE_REDACTION) -> str:
+    redacted = text
+    for _, pattern in SENSITIVE_REDACTION_PATTERNS:
+        redacted = pattern.sub(replacement, redacted)
+    return redacted
 
 
 def collect_session_output_texts(session_dir: Path) -> Iterator[tuple[str, str]]:

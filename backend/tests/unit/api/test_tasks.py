@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -46,6 +48,33 @@ class TestCreateTask:
         data = response.json()
         assert data["status"] == "idle"
         assert data["messages"] == []
+
+    def test_create_task_without_model_uses_configured_default_model(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            default_model="openai:gpt-4o",
+            openai_api_key="sk-test",
+        )
+        client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
+
+        response = client.post("/api/tasks", json={})
+
+        assert response.status_code == 201
+        assert response.json()["model"] == "openai:gpt-4o"
+
+    def test_create_task_with_message_without_model_requires_default_provider_key(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            default_model="openai:gpt-4o",
+        )
+        client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
+
+        response = client.post("/api/tasks", json={"message": "hello"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "模型服务未配置，请先在后端配置对应 API Key"
 
     def test_create_task_rejects_unknown_model(self, app_client):
         response = app_client.post("/api/tasks", json={"model": "fake:model"})
@@ -246,6 +275,35 @@ class TestSendMessage:
 
         assert response.status_code == 400
         assert response.json()["detail"] == "模型服务未配置，请先在后端配置对应 API Key"
+
+    def test_send_message_without_model_uses_configured_default_model(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            default_model="openai:gpt-4o",
+            openai_api_key="sk-test",
+        )
+        client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
+        created = client.post("/api/tasks", json={}).json()
+        runner = cast(Any, client.app).state.runner
+        original_start = runner.start_background
+        started: dict[str, str] = {}
+
+        def mock_start_background(*args, **kwargs):
+            started["model"] = kwargs["model"]
+
+        runner.start_background = mock_start_background
+        try:
+            response = client.post(
+                f"/api/tasks/{created['task_id']}/messages",
+                json={"message": "hello"},
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert response.status_code == 200
+        assert response.json()["runs"][0]["model"] == "openai:gpt-4o"
+        assert started["model"] == "openai:gpt-4o"
 
 
 class TestUploadFiles:

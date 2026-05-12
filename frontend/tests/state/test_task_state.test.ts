@@ -10,6 +10,7 @@ import {
   formatHttpErrorMessage,
   formatNeedsInput,
   formatRequestFailure,
+  isModelRunnable,
   isTaskActive,
   mergeExecutionLogs,
   mergeTaskState,
@@ -118,6 +119,80 @@ test("buildArtifactRequest builds run-scoped artifact URLs with the access token
   assert.deepEqual(request.headers, { "X-MyAgent-Token": "secret-token" });
 });
 
+test("buildArtifactRequest accepts backend run-scoped artifact URLs on the API origin", () => {
+  const request = buildArtifactRequest(
+    {
+      id: "run-2:report.html",
+      name: "report.html",
+      runId: "run-2",
+      url: "/api/tasks/task-1/runs/run-2/artifacts/report.html",
+    },
+    "task-1",
+    "http://localhost:8001",
+    "secret-token",
+  );
+
+  assert.equal(
+    request.url,
+    "http://localhost:8001/api/tasks/task-1/runs/run-2/artifacts/report.html",
+  );
+  assert.deepEqual(request.headers, { "X-MyAgent-Token": "secret-token" });
+});
+
+test("buildArtifactRequest rejects external artifact URLs before sending tokens", () => {
+  assert.throws(
+    () =>
+      buildArtifactRequest(
+        {
+          id: "run-2:report.html",
+          name: "report.html",
+          runId: "run-2",
+          url: "https://evil.example/api/tasks/task-1/runs/run-2/artifacts/report.html",
+        },
+        "task-1",
+        "http://localhost:8001",
+        "secret-token",
+      ),
+    /产物 URL 不受信任/,
+  );
+});
+
+test("buildArtifactRequest rejects same-origin URLs outside current task artifact routes", () => {
+  const badArtifacts = [
+    {
+      id: "wrong-task",
+      name: "report.html",
+      runId: "run-2",
+      url: "/api/tasks/task-2/runs/run-2/artifacts/report.html",
+    },
+    {
+      id: "wrong-route",
+      name: "report.html",
+      runId: "run-2",
+      url: "/api/tasks/task-1/files/report.html",
+    },
+    {
+      id: "query",
+      name: "report.html",
+      runId: "run-2",
+      url: "/api/tasks/task-1/runs/run-2/artifacts/report.html?next=https://evil.example",
+    },
+    {
+      id: "wrong-name",
+      name: "report.html",
+      runId: "run-2",
+      url: "/api/tasks/task-1/runs/run-2/artifacts/other.html",
+    },
+  ];
+
+  for (const artifact of badArtifacts) {
+    assert.throws(
+      () => buildArtifactRequest(artifact, "task-1", "http://localhost:8001", "secret-token"),
+      /产物 URL 不受信任/,
+    );
+  }
+});
+
 test("buildMessageRequestPayload sends the default mode without a file-scope toggle", () => {
   assert.deepEqual(buildMessageRequestPayload("请分析这些文件", "deepseek:deepseek-chat"), {
     content: "请分析这些文件",
@@ -154,6 +229,12 @@ test("normalizeModelOption preserves backend availability metadata", () => {
       available: false,
     },
   );
+});
+
+test("isModelRunnable blocks only explicitly unavailable backend models", () => {
+  assert.equal(isModelRunnable({ id: "openai:gpt-4o", label: "GPT-4o", available: false }), false);
+  assert.equal(isModelRunnable({ id: "deepseek:deepseek-chat", label: "DeepSeek" }), true);
+  assert.equal(isModelRunnable(null), true);
 });
 
 test("first-party composer no longer renders a file-use segmented control", () => {

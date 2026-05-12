@@ -163,8 +163,8 @@ cd D:\AgentProject\MyAgent
 
 脚本会先停止 WSL 内监听后端端口 `8001` 和前端端口 `3001` 的进程，然后通过 Windows Terminal 分别打开两个 WSL 窗口。Postgres、Qdrant 和 DashScope 配置由用户自管，脚本不会自动启动容器：
 
-- 后端：`uv run uvicorn app.main:app --reload --host 0.0.0.0 --port 8001`
-- 前端：`NEXT_DIST_DIR=.next-dev next dev -p 3001 -H 0.0.0.0`
+- 后端：`uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`
+- 前端：`NEXT_DIST_DIR=.next-dev next dev -p 3001 -H 127.0.0.1`
 
 启动后可以在各自终端中用 `Ctrl+C` 停止单个服务，也可以回到 WSL 仓库路径运行 `./scripts/stop-dev-ports.sh` 统一释放端口。启动脚本依赖 Windows 侧可调用的 `wt.exe` 和 `wsl.exe`。前端开发服务写入 `.next-dev`，因此运行 `npm run build` 验证生产构建时写入 `.next`，不会再覆盖正在热更新的开发缓存。
 
@@ -184,6 +184,8 @@ cd /mnt/d/AgentProject/MyAgent
 ```powershell
 .\scripts\start-dev-wsl.ps1 -BackendPort 8002 -FrontendPort 3002
 ```
+
+如果确实需要让同一局域网内其他设备访问开发服务，必须显式传入 `-BackendHost 0.0.0.0 -FrontendHost 0.0.0.0`，并同步配置 `MYAGENT_ACCESS_TOKEN`、`NEXT_PUBLIC_MYAGENT_TOKEN` 和受控的 `MYAGENT_CORS_ORIGINS`。默认脚本只绑定 loopback，避免无意暴露本地开发服务。
 
 停止对应端口：
 

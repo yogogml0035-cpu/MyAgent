@@ -1,15 +1,15 @@
 # Tender Workbench 项目工作流与实现逻辑拆解
 
-生成时间：2026-05-06
+生成时间：2026-05-06；脱敏更新：2026-05-12
 
-本文基于以下线上页面和 API 返回内容整理：
+本文基于一次已脱敏的 Tender Workbench 运行样本、页面结构和 API 返回形态整理，只保留稳定业务边界、接口形态和回归风险。
 
-- 任务详情页：`https://hblu.top/tender/runs/0811-dsitc260780`
-- 新建分析页：`https://hblu.top/tender/upload`
-- 任务 API：`/api/tender/runs/0811-dsitc260780`
+- 任务详情页形态：`/tender/runs/{run_id}`
+- 新建分析页形态：`/tender/upload`
+- 任务 API 形态：`/api/tender/runs/{run_id}`
 - 运行信息、执行记录、产物清单、compare 结果 JSON/HTML、skill 内容与 evidence preview API
 
-说明：当前本地目录 `/mnt/d/PythonProject/Tender` 是空目录，不包含后端源码。因此本文对后端实现的描述分为两类：
+说明：本文不保留客户项目名、真实运行编号、输入文件路径、外部域名、终端会话名、单次令牌消耗或其他一次性运行细节。对后端实现的描述分为两类：
 
 - 已确认：来自页面 JS、API 响应、运行记录、产物清单、skill 内容、预览接口返回。
 - 推断：根据已确认数据反推后端模块职责和实现方式。推断处会明确说明。
@@ -20,28 +20,26 @@
 
 证据“画框”也不是让 AI 在图上直接画框。AI 主要负责输出评审结论、证据页码、文本线索和视觉核验结论；后端再用 MinerU/OCR 的 `layout.json` 中的文本块坐标去定位原 PDF 页面，生成带高亮框的整页图和局部裁剪图。如果文本命不中，就退化为展示声明页整页图。
 
-## 2. 这次运行的关键事实
+## 2. 脱敏样本运行的关键事实
 
-任务信息：
+任务信息形态：
 
 | 项 | 值 |
 |---|---|
-| run_id | `0811-dsitc260780` |
-| 项目名 | `0811-DSITC260780 自动封片机` |
+| run_id | `{run_id}` |
+| 项目名 | `{project_name}` |
 | 状态 | `completed` |
 | 当前阶段 | `compare_page` |
 | 最新消息 | `compare 页面生成完成` |
 | 产物数 | 90 |
 | 事件数 | 101 |
 | 阶段数 | 9 |
-| tmux session | `compare-from-pdfs-0811-dsitc260780` |
-| tmux log | `runs/tmux-compare-from-pdfs-0811-dsitc260780.log` |
 
 输入配置：
 
 | 项 | 值 |
 |---|---|
-| 招标文件 | `runs/0811-dsitc260780/inputs/tender/tender-260780----.doc` |
+| 招标文件 | `{run_dir}/inputs/tender/{tender_file}` |
 | 投标文件 | 3 份：`bid-01-pdf`、`bid-02-pdf`、`bid-03-pdf` |
 | 招标评审模型 | `gpt-5.4` |
 | 投标评审模型 | `gpt-5.4` |
@@ -613,10 +611,10 @@ GET  /api/tender/runs/{run_id}/manual-review-history
 
 ## 10. 产物目录设计
 
-这次 run 的目录结构大致是：
+单次 run 的目录结构大致是：
 
 ```text
-runs/0811-dsitc260780/
+runs/{run_id}/
   inputs/
     tender/
     bids/
@@ -779,14 +777,7 @@ manual_review.py
 
 ### Q9：为什么 token 消耗这么高？
 
-因为招标评审和每份投标评审都读取了较长的页级 Markdown，并要求固定结构输出。此次 token usage：
-
-| 阶段 | total tokens | input | output | cached input |
-|---|---:|---:|---:|---:|
-| tender_review | 287,649 | 275,574 | 12,075 | 198,656 |
-| bid_review:bid-01 | 252,071 | 231,501 | 20,570 | 145,920 |
-| bid_review:bid-02 | 173,209 | 154,903 | 18,306 | 84,096 |
-| bid_review:bid-03 | 294,839 | 275,015 | 19,824 | 186,240 |
+因为招标评审和每份投标评审都读取了较长的页级 Markdown，并要求固定结构输出。典型高消耗阶段包括 `tender_review` 和每个 `bid_review:*`。长期知识包只记录消耗模式和优化方向，不保留单次令牌消耗明细。
 
 可优化方向：
 
@@ -801,7 +792,7 @@ manual_review.py
 
 - 阶段化产物可追溯。
 - 招标骨架统一，横向对齐稳定。
-- prompt、response、events、runtime logs 都可复盘。
+- prompt、response、events、runtime logs 等脱敏运行证据都可复盘。
 - 人工 override 有历史记录。
 
 风险部分：
@@ -874,4 +865,3 @@ def create_run(project_name, tender_file, bid_files, config):
 ```
 
 这进一步说明 compare 页面是评审辅助工具，不是最终自动定标工具。
-

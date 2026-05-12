@@ -2017,6 +2017,16 @@ p {
   background: var(--surface-card);
 }
 
+.modelOption-disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+}
+
+.modelOption-disabled:hover {
+  border-color: transparent;
+  background: transparent;
+}
+
 .modelOptionCopy {
   display: grid;
   min-width: 0;
@@ -2047,6 +2057,11 @@ p {
   color: var(--on-primary);
   font-size: 11px;
   line-height: 1.35;
+}
+
+.modelBadge-muted {
+  background: var(--primary-disabled);
+  color: var(--muted);
 }
 
 .modelOption small {

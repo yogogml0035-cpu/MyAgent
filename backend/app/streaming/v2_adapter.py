@@ -86,20 +86,19 @@ async def stream_agent(
     ):
         # LangGraph v2 streaming returns dicts with keys: type, ns, data.
         # Older versions returned (namespace, mode, payload) tuples.
-        namespace: list[str] = []
+        raw_ns: Any = None
         if isinstance(chunk, dict):
             mode = chunk.get("type")
             payload = chunk.get("data")
             raw_ns = chunk.get("ns")
-            namespace = [str(item) for item in raw_ns] if isinstance(raw_ns, list) else []
         elif isinstance(chunk, tuple) and len(chunk) >= 3:
-            _, mode, payload = chunk[0], chunk[1], chunk[2]
+            raw_ns, mode, payload = chunk[0], chunk[1], chunk[2]
         else:
             logger.debug("Skipping unrecognized stream chunk: %s", type(chunk).__name__)
             continue
 
         # Determine if this event originates from a subgraph (sub-agent).
-        is_subgraph = len(namespace) > 0
+        is_subgraph = _is_subgraph_namespace(raw_ns)
 
         if mode == "messages":
             async for event in _handle_messages_mode(payload, is_subgraph=is_subgraph):
@@ -227,3 +226,19 @@ def _extract_text_content(content: Any) -> str:
                 parts.append(block.get("text", ""))
         return "".join(parts)
     return ""
+
+
+def _is_subgraph_namespace(raw_ns: Any) -> bool:
+    """Return whether a LangGraph v2 namespace points at a subgraph.
+
+    LangGraph can emit namespaces as tuples/lists and namespace entries are not
+    guaranteed to be strings. Root graph events use an empty or missing
+    namespace; any non-empty namespace is subgraph output.
+    """
+    if raw_ns is None:
+        return False
+    if isinstance(raw_ns, str):
+        return bool(raw_ns)
+    if isinstance(raw_ns, (list, tuple, set, frozenset)):
+        return len(raw_ns) > 0
+    return bool(raw_ns)

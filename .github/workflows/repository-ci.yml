@@ -1,0 +1,41 @@
+name: Repository CI
+
+on:
+  push:
+    paths:
+      - ".github/workflows/**"
+      - "AGENTS.md"
+      - "README.md"
+      - "asset/**"
+      - "scripts/**"
+      - ".gitattributes"
+  pull_request:
+    paths:
+      - ".github/workflows/**"
+      - "AGENTS.md"
+      - "README.md"
+      - "asset/**"
+      - "scripts/**"
+      - ".gitattributes"
+
+jobs:
+  repository:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Validate shell scripts
+        run: |
+          bash -n scripts/dev-terminal-runner.sh
+          bash -n scripts/stop-dev-ports.sh
+          bash scripts/stop-dev-ports.sh --dry-run
+
+      - name: Validate PowerShell script
+        shell: pwsh
+        run: |
+          ./scripts/start-dev-wsl.ps1 -Help
+          ./scripts/start-dev-wsl.ps1 -DryRun
+
+      - name: Check whitespace
+        run: git diff --check

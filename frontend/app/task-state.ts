@@ -258,6 +258,7 @@ type BrowserLocation = {
 const DEFAULT_API_BASE_URL = "http://localhost:8001";
 const DEFAULT_API_PORT = "8001";
 const DEFAULT_MESSAGE_MODE: MessageMode = "auto";
+const UNTRUSTED_ARTIFACT_URL_MESSAGE = "产物 URL 不受信任，已阻止访问。";
 
 function formatUrlHostname(hostname: string) {
   return hostname.includes(":") && !hostname.startsWith("[") ? `[${hostname}]` : hostname;
@@ -291,6 +292,10 @@ export function buildMessageRequestPayload(
     model,
     mode: options.mode ?? DEFAULT_MESSAGE_MODE,
   };
+}
+
+export function isModelRunnable(option?: ModelOption | null) {
+  return option?.available !== false;
 }
 
 function readOptionalString(value: unknown) {
@@ -947,7 +952,14 @@ function runIdFromArtifactUrl(url?: string) {
     return null;
   }
   const match = url.match(/\/runs\/([^/]+)\/artifacts\//);
-  return match ? decodeURIComponent(match[1]) : null;
+  if (!match) {
+    return null;
+  }
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
 }
 
 function normalizeArtifact(value: unknown, index: number): Artifact {
@@ -1093,22 +1105,115 @@ export function buildArtifactRequest(
   apiBaseUrl: string,
   accessToken = "",
 ): ArtifactRequest {
-  let url: string;
+  const apiOrigin = trustedApiOrigin(apiBaseUrl);
+  let url: URL;
   if (artifact.url) {
-    url = artifact.url.startsWith("http") ? artifact.url : `${apiBaseUrl}${artifact.url}`;
+    url = new URL(artifact.url, `${apiOrigin}/`);
+    assertTrustedArtifactUrl(url, artifact, taskId, apiOrigin);
   } else if (artifact.runId) {
-    url = `${apiBaseUrl}/api/tasks/${taskId}/runs/${encodeURIComponent(
+    url = new URL(`/api/tasks/${encodeURIComponent(taskId)}/runs/${encodeURIComponent(
       artifact.runId,
-    )}/artifacts/${encodeURIComponent(artifact.name)}`;
-  } else if (artifact.path) {
-    url = `${apiBaseUrl}/api/tasks/${taskId}/artifacts/open?path=${encodeURIComponent(artifact.path)}`;
+    )}/artifacts/${encodeURIComponent(artifact.name)}`, apiOrigin);
   } else {
-    url = `${apiBaseUrl}/api/tasks/${taskId}/artifacts/${artifact.id}`;
+    url = new URL(
+      `/api/tasks/${encodeURIComponent(taskId)}/artifacts/${encodeURIComponent(artifact.name)}`,
+      apiOrigin,
+    );
   }
   return {
-    url,
+    url: url.toString(),
     headers: accessToken ? { "X-MyAgent-Token": accessToken } : {},
   };
+}
+
+type TrustedArtifactPath = {
+  taskId: string;
+  runId?: string;
+  artifactName: string;
+};
+
+function trustedApiOrigin(apiBaseUrl: string) {
+  try {
+    const url = new URL(apiBaseUrl, DEFAULT_API_BASE_URL);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      return url.origin;
+    }
+  } catch {
+    // Fall through to a consistent user-facing validation error.
+  }
+  throw new Error(UNTRUSTED_ARTIFACT_URL_MESSAGE);
+}
+
+function assertTrustedArtifactUrl(
+  url: URL,
+  artifact: Artifact,
+  taskId: string,
+  apiOrigin: string,
+) {
+  const path = parseTrustedArtifactPath(url.pathname);
+  if (
+    url.origin !== apiOrigin ||
+    url.search ||
+    url.hash ||
+    !path ||
+    path.taskId !== taskId ||
+    (path.runId && artifact.runId && path.runId !== artifact.runId) ||
+    path.artifactName !== artifact.name
+  ) {
+    throw new Error(UNTRUSTED_ARTIFACT_URL_MESSAGE);
+  }
+}
+
+function parseTrustedArtifactPath(pathname: string): TrustedArtifactPath | null {
+  const segments = pathname.split("/").filter(Boolean);
+
+  if (
+    segments.length === 5 &&
+    segments[0] === "api" &&
+    segments[1] === "tasks" &&
+    segments[3] === "artifacts"
+  ) {
+    const taskId = decodeSafePathSegment(segments[2]);
+    const artifactName = decodeSafePathSegment(segments[4]);
+    return taskId && artifactName ? { taskId, artifactName } : null;
+  }
+
+  if (
+    segments.length === 7 &&
+    segments[0] === "api" &&
+    segments[1] === "tasks" &&
+    segments[3] === "runs" &&
+    segments[5] === "artifacts"
+  ) {
+    const taskId = decodeSafePathSegment(segments[2]);
+    const runId = decodeSafePathSegment(segments[4]);
+    const artifactName = decodeSafePathSegment(segments[6]);
+    return taskId && runId && artifactName ? { taskId, runId, artifactName } : null;
+  }
+
+  return null;
+}
+
+function decodeSafePathSegment(segment: string) {
+  if (!segment || /%2f|%5c/i.test(segment)) {
+    return null;
+  }
+  try {
+    const decoded = decodeURIComponent(segment);
+    if (
+      !decoded ||
+      decoded === "." ||
+      decoded === ".." ||
+      decoded.includes("/") ||
+      decoded.includes("\\") ||
+      decoded.includes("\0")
+    ) {
+      return null;
+    }
+    return decoded;
+  } catch {
+    return null;
+  }
 }
 
 export function mergeExecutionLogs(

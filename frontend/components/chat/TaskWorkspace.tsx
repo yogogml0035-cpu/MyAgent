@@ -49,6 +49,7 @@ export function TaskWorkspace() {
           selectedFileSize={workspace.selectedFileSize}
           selectedFiles={workspace.selectedFiles}
           selectedModelDisplay={workspace.selectedModelDisplay}
+          selectedModelRunnable={workspace.selectedModelRunnable}
           uploadCount={workspace.uploadCount}
         />
       </section>

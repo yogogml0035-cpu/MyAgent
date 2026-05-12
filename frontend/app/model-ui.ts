@@ -3,6 +3,7 @@ import type { ModelOption } from "./task-state";
 export type ModelDisplayOption = ModelOption & {
   badge?: string;
   description: string;
+  disabledReason?: string;
 };
 
 type ModelPresentation = {
@@ -66,6 +67,7 @@ export function buildModelDisplayOptions(options: ModelOption[]): ModelDisplayOp
   return options.map((option) => ({
     ...option,
     ...describeModelOption(option),
+    disabledReason: option.available === false ? "后端未配置对应 API Key" : undefined,
   }));
 }
 
