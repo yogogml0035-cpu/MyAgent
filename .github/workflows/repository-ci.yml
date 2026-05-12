@@ -29,7 +29,7 @@ jobs:
         run: |
           bash -n scripts/dev-terminal-runner.sh
           bash -n scripts/stop-dev-ports.sh
-          ./scripts/stop-dev-ports.sh --dry-run
+          bash scripts/stop-dev-ports.sh --dry-run
 
       - name: Validate PowerShell script
         shell: pwsh
