@@ -33,4 +33,8 @@ backend/storage/tasks/*
 
 audits/
 .playwright-mcp/
-frontend/e2e-playwright/
+frontend/.next-dev-e2e/
+frontend/test-results/
+frontend/e2e-playwright/e2e-*/
+frontend/e2e-playwright/test-results/
+frontend/e2e-playwright/playwright-report/

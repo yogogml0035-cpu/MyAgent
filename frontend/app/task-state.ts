@@ -181,9 +181,10 @@ export type ArtifactRequest = {
 export type ModelOption = {
   id: string;
   label: string;
+  available?: boolean;
 };
 
-export type MessageMode = "auto" | "chat" | "search" | "document_analysis" | "deep_agent";
+export type MessageMode = "auto" | "chat" | "analysis";
 
 export type MessageRequestPayload = {
   content: string;
@@ -996,6 +997,7 @@ export function normalizeModelOption(value: unknown): ModelOption | null {
   return {
     id,
     label: readString(record.label, id),
+    available: readOptionalBoolean(record.available),
   };
 }
 

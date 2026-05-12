@@ -8,7 +8,7 @@ import {
 
 test("buildModelDisplayOptions adds compact model descriptions for the picker", () => {
   const options = buildModelDisplayOptions([
-    { id: "deepseek-reasoner", label: "DeepSeek Reasoner" },
+    { id: "deepseek:deepseek-reasoner", label: "DeepSeek Reasoner" },
     { id: "k26-agent-cluster", label: "K2.6 Agent 集群" },
     { id: "k26-quick", label: "K2.6 快速" },
   ]);
@@ -23,7 +23,7 @@ test("buildModelDisplayOptions adds compact model descriptions for the picker", 
       {
         badge: undefined,
         description: "多轮推理，回答复杂问题",
-        label: "Deepseek",
+        label: "DeepSeek Reasoner",
       },
       {
         badge: "测试",

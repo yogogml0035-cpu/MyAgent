@@ -12,6 +12,7 @@ def app_client(tmp_path):
     settings = Settings(
         task_root=tmp_path / "tasks",
         workspace_root=tmp_path / "tasks",
+        deepseek_api_key="sk-test",
     )
     app = create_app(settings)
     return TestClient(app)
@@ -45,6 +46,27 @@ class TestCreateTask:
         assert data["status"] == "idle"
         assert data["messages"] == []
 
+    def test_create_task_rejects_unknown_model(self, app_client):
+        response = app_client.post("/api/tasks", json={"model": "fake:model"})
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "模型不在允许列表中"
+
+    def test_create_task_with_message_requires_configured_provider_key(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+        )
+        client = TestClient(create_app(settings))
+
+        response = client.post(
+            "/api/tasks",
+            json={"message": "hello", "model": "deepseek:deepseek-chat"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "模型服务未配置，请先在后端配置对应 API Key"
+
 
 class TestGetTask:
     def test_get_idle_task_returns_state(self, create_idle_task, app_client):
@@ -65,6 +87,13 @@ class TestGetTask:
         state = get_resp.json()
         assert state["status"] == "idle"
         assert state["messages"] == []
+
+    def test_get_task_can_omit_events_for_lightweight_refresh(self, create_idle_task, app_client):
+        created = create_idle_task()
+        response = app_client.get(f"/api/tasks/{created['task_id']}?include_events=false")
+
+        assert response.status_code == 200
+        assert response.json()["events"] == []
 
 
 class TestGetEvents:
@@ -134,6 +163,22 @@ class TestSendMessage:
         assert len(user_messages) == 1
         assert user_messages[0]["content"] == "test message content"
 
+    def test_send_message_requires_configured_provider_key(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+        )
+        client = TestClient(create_app(settings))
+        created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+
+        response = client.post(
+            f"/api/tasks/{created['task_id']}/messages",
+            json={"message": "hello", "model": "deepseek:deepseek-chat"},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "模型服务未配置，请先在后端配置对应 API Key"
+
 
 class TestUploadFiles:
     def test_upload_to_idle_task_succeeds(self, create_idle_task, app_client):
@@ -150,6 +195,84 @@ class TestUploadFiles:
             files={"files": ("test.md", b"# test", "text/markdown")},
         )
         assert response.status_code == 404
+
+    def test_upload_duplicate_file_returns_409(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        first = app_client.post(
+            f"/api/tasks/{task_id}/files",
+            files={"files": ("test.md", b"# test", "text/markdown")},
+        )
+        assert first.status_code == 201
+
+        response = app_client.post(
+            f"/api/tasks/{task_id}/files",
+            files={"files": ("test.md", b"# again", "text/markdown")},
+        )
+
+        assert response.status_code == 409
+        assert "上传文件已存在" in response.json()["detail"]
+
+    def test_upload_unsupported_extension_returns_400(self, create_idle_task, app_client):
+        created = create_idle_task()
+
+        response = app_client.post(
+            f"/api/tasks/{created['task_id']}/files",
+            files={"files": ("notes.txt", b"hello", "text/plain")},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "仅支持上传 Markdown 或 JSON 文件"
+
+    def test_upload_invalid_json_returns_400_without_partial_file(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+
+        response = app_client.post(
+            f"/api/tasks/{task_id}/files",
+            files={"files": ("data.json", b"{invalid", "application/json")},
+        )
+
+        assert response.status_code == 400
+        assert "内容不是合法 JSON" in response.json()["detail"]
+        assert app_client.app.state.storage.list_uploads(task_id) == []
+
+    def test_upload_over_file_count_limit_returns_413(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            deepseek_api_key="sk-test",
+            max_upload_files=1,
+        )
+        client = TestClient(create_app(settings))
+        created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+
+        response = client.post(
+            f"/api/tasks/{created['task_id']}/files",
+            files=[
+                ("files", ("a.md", b"a", "text/markdown")),
+                ("files", ("b.md", b"b", "text/markdown")),
+            ],
+        )
+
+        assert response.status_code == 413
+
+    def test_upload_over_file_size_limit_returns_413(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            deepseek_api_key="sk-test",
+            max_upload_file_bytes=4,
+        )
+        client = TestClient(create_app(settings))
+        created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+
+        response = client.post(
+            f"/api/tasks/{created['task_id']}/files",
+            files={"files": ("big.md", b"12345", "text/markdown")},
+        )
+
+        assert response.status_code == 413
 
 
 class TestCancelTask:

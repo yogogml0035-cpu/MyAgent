@@ -15,7 +15,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Skills and SubAgents are passed via `create_deep_agent(skills=..., subagents=...)` keyword arguments, not via the middleware parameter.
 - Multi-model support uses `langchain.chat_models.init_chat_model` with `provider:model-name` format (e.g., `deepseek:deepseek-chat`, `openai:gpt-4o`, `anthropic:claude-sonnet-4-20250514`).
 - The model provider parses the provider prefix, validates the API key is configured, and creates the appropriate `BaseChatModel` instance.
-- `MODEL_REGISTRY` in `config.py` lists all supported models. The `/api/models` endpoint returns models with an `available` flag based on whether the provider API key is configured.
+- `MODEL_REGISTRY` in `config.py` lists all supported models. The `/api/models` endpoint returns models with an `available` flag based on whether the provider API key is configured. Task creation with an immediate message and follow-up message sending must reject unknown models and reject unavailable provider-backed models before scheduling a run; draft task creation without a message only needs registry validation.
+- Frontend default and fallback model IDs must also use the provider-prefixed registry format. A stale fallback such as `deepseek-reasoner` can still reach the backend when model-list loading fails or a user sends before refresh completes.
 - Default model is `deepseek:deepseek-chat` (configurable via `MYAGENT_DEFAULT_MODEL` env var).
 - Tools are LangChain `@tool` decorated functions: `read_file`, `write_file`, `list_files` (filesystem) and `tavily_search` (conditional on `TAVILY_API_KEY`).
 - Filesystem tools validate paths stay within `workspace_root` for security.
@@ -24,11 +25,12 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Streaming uses `agent.astream(input, stream_mode=["messages", "updates"], version="v2")` via the v2 adapter (`v2_adapter.py`). LangGraph v2 returns chunks as **dicts** with keys `{type, ns, data}`, not `(namespace, mode, payload)` tuples. The adapter must handle both formats for robustness. Events are converted to `EventRecord` objects via `event_converter.py`.
 - SSE endpoint at `GET /api/tasks/{task_id}/stream` provides real-time output. Frontend uses `EventSource` API with token as query parameter.
 - SSE `_event_stream` polls `storage.read_events(task_id, after_id=last_event_id)` every 0.5s. `last_event_id` must be initialized to `None` (not `""`) so the first poll returns all existing events. An empty string causes `read_events` to skip every event because `after_id is None` evaluates to `False` and no event has `id == ""`.
-- `TaskRunner` manages agent lifecycle: build agent → stream events → convert → collect → persist events to storage → update task status. `TaskRunner.__init__` requires both `settings` and `storage` (injected from `main.py`). `start_background()` accepts `run_id` from `storage.start_run()` to ensure unified run_id across storage and streaming events. After agent execution, events are persisted via `storage.append_event()` and task status is updated to terminal state (`complete`/`failed`/`cancelled`). Supports cancellation via `cancel()`. Enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`.
+- `TaskRunner` manages agent lifecycle: build agent → stream events → convert → collect → persist events to storage → update task status. `TaskRunner.__init__` requires both `settings` and `storage` (injected from `main.py`). `start_background()` accepts `run_id` from `storage.start_run()` to ensure unified run_id across storage and streaming events. After agent execution, events are persisted via `storage.append_event()` and task status is updated to terminal state (`complete`/`failed`/`cancelled`). The runner also writes run-scoped terminal events (`task_completed`, `task_failed`, `task_cancelled`) together with the terminal status update, so the UI can correlate completion, failure, or cancellation with the active run. Supports cancellation via `cancel()`. Enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`.
 - `create_app()` uses FastAPI `lifespan` instead of `@app.on_event("startup")`. Startup interruption of stale running tasks must stay inside that lifespan handler, and tests that need startup side effects must enter `TestClient` as a context manager (`with TestClient(app):`).
-- API endpoints `create_task` and `send_message` are `async def` to allow `asyncio.create_task` on the event loop. `cancel_task` syncs storage status after `runner.cancel()`.
+- API endpoints `create_task` and `send_message` are `async def` to allow `asyncio.create_task` on the event loop. `cancel_task` delegates terminal status and event persistence to `TaskRunner.cancel()`/the running background task rather than appending a second unscoped cancellation event.
 - Filesystem tools are scoped to per-task workspace (`settings.workspace_root / task_id`), not the global sessions root. This prevents cross-task file access.
-- Task API routes follow REST conventions: `POST /api/tasks` (create), `GET /api/tasks` (list), `GET /api/tasks/{id}` (read), `POST /api/tasks/{id}/messages` (send message), `POST /api/tasks/{id}/cancel` (cancel).
+- Task API routes follow REST conventions: `POST /api/tasks` (create), `GET /api/tasks` (list), `GET /api/tasks/{id}` (read), `POST /api/tasks/{id}/messages` (send message), `POST /api/tasks/{id}/cancel` (cancel). `GET /api/tasks/{id}?include_events=false` is the lightweight refresh path and must return the same task shape with an empty `events` list. Artifact routes are first-class API routes: `GET /api/tasks/{id}/artifacts/{name}` for latest or legacy artifacts and `GET /api/tasks/{id}/runs/{run_id}/artifacts/{name}` for run-scoped artifacts.
+- Upload validation errors must map to stable client-facing HTTP status codes: duplicate filename conflicts return 409, size/count/request limits return 413, unsupported extensions or invalid JSON content return 400, and missing tasks return 404. The storage layer may raise domain exceptions, but API routes must not leak these as 500 responses.
 - Auth middleware enforces loopback-only access by default; non-local access requires `MYAGENT_ACCESS_TOKEN`.
 - Frontend local development keeps `next dev` output in `.next-dev` and production builds in `.next` via `NEXT_DIST_DIR`, so dev caches and production build artifacts never share one output directory.
 - Frontend type checking runs `next typegen && tsc --noEmit`; `next-env.d.ts` is generated and ignored instead of being version-controlled.
@@ -41,7 +43,9 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 ## Input And Output Examples
 
 - Create task: `POST /api/tasks` → `{"task_id": "...", "status": "idle", "model": "deepseek:deepseek-chat", ...}`
+- Lightweight task refresh: `GET /api/tasks/{id}?include_events=false` → same task state shape with `"events": []`
 - Send message: `POST /api/tasks/{id}/messages` body: `{"message": "搜索最新的AI新闻", "model": "deepseek:deepseek-chat"}`
+- Download artifact: `GET /api/tasks/{id}/runs/{run_id}/artifacts/report.html` → `FileResponse` with the artifact MIME type and safe filename.
 - Build agent: `build_agent(settings, tools=get_platform_tools(settings), skills=["./skills"])`
 - Model ID format: `"deepseek:deepseek-chat"`, `"openai:gpt-4o"`, `"anthropic:claude-sonnet-4-20250514"`
 - SSE event: `event: message\ndata: {"type": "agent_message", "text": "..."}\n\n`
@@ -52,6 +56,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - `storage.py` depends on compatibility shims in `app/contracts/__init__.py` and `app/reasoning_trace.py` that recreate deleted module types. These shims must not be removed until storage.py is rewritten.
 - `schemas.py` inlines `TaskMode` and `InputScope` Literal types (previously from deleted `intent.py`).
 - Missing API keys cause graceful errors in provider (not crashes). Tavily tool returns error string if key missing.
+- Missing provider API keys make affected models unavailable at `/api/models` and must block run-starting requests before background scheduling. This avoids creating task runs that are guaranteed to fail only after storage state changes.
+- Artifact names are normalized file names only, not paths. Artifact download routes must resolve through `TaskStorage.resolve_artifact()` or `TaskStorage.resolve_run_artifact()` so path traversal and cross-run access stay blocked.
 - `SKILL.md` files without valid YAML frontmatter are silently skipped during discovery.
 - `next typegen` loads `next.config.mjs` with the production build phase; keep any required config inputs available before running frontend type checks in CI.
 - Remote CI status is part of the verification boundary for GitHub actions such as PR creation and merge. A pending run is not a pass, and a warning that escalates to job failure must be fixed the same as an error.
@@ -61,6 +67,10 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **Middleware duplication**: Never pass `TodoListMiddleware`, `FilesystemMiddleware`, `SummarizationMiddleware`, or `PatchToolCallsMiddleware` via the `middleware` param — `create_deep_agent` auto-injects them.
 - **Provider prefix**: Model IDs must include provider prefix (`deepseek:`, `openai:`, `anthropic:`). Raw model names will fail.
 - **EventSource auth**: Browser `EventSource` API doesn't support custom headers; token must be passed as query parameter `?token=xxx` for SSE. Backend `authorize_task_request` reads token from headers (`X-MyAgent-Token`, `X-Agent-Chat-Token`, `Authorization: Bearer`) and query param.
+- **SSE frontend backoff**: Browser-side SSE reconnect must be capped and use exponential backoff. Any backend SSE payload shaped as `{type: "error", detail: "..."}` is user-visible and should stop normal event processing for that message, then refresh task state defensively.
+- **Run-scoped terminal events**: Do not append terminal events from API endpoints after calling the runner. The runner owns terminal status plus terminal event writes so the `run_id` stays consistent and duplicate unscoped events are not produced.
+- **Artifact route drift**: Frontend artifact cards depend on `ArtifactRecord.url` pointing to real backend routes. Adding new artifact storage locations requires updating both the URL generator and the corresponding FastAPI download route.
+- **Upload exception leakage**: Storage upload validation exceptions should be translated by the API layer. A malformed user upload is a 4xx client error, never an unhandled 500.
 - **storage.py coupling**: TaskStorage is deeply coupled to old contracts/reasoning_trace types via compatibility shims. A future storage rewrite should use native DeepAgents state management.
 - **Single-process runtime**: The platform uses in-process runner and local JSON storage. Multi-worker deployment will break.
 - **Timeout enforcement**: `TaskRunner.start()` enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`. If the deepagents SDK or LLM call hangs, the run is terminated after the configured timeout and a warning is logged.
@@ -82,7 +92,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Runner: `backend/app/runner/core.py`
 - SubAgents: `backend/app/subagents/definitions.py`, `backend/app/subagents/registry.py`
 - Skills: `backend/app/skills/loader.py`, `backend/app/skills/registry.py`
-- API routes: `backend/app/api/tasks.py`, `backend/app/api/files.py`, `backend/app/api/streaming.py`, `backend/app/api/models.py`
+- API routes: `backend/app/api/tasks.py`, `backend/app/api/files.py`, `backend/app/api/artifacts.py`, `backend/app/api/streaming.py`, `backend/app/api/models.py`
 - Entry point: `backend/app/main.py`
 - Skills directory: `backend/skills/web_research/SKILL.md`, `backend/skills/code_review/SKILL.md`
 - Compatibility shims: `backend/app/contracts/__init__.py`, `backend/app/reasoning_trace.py`
@@ -105,6 +115,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
   - `backend/tests/unit/security/`
   - `backend/tests/unit/storage/`
   - `backend/tests/unit/session/`
+- Runtime contract tests: `backend/tests/unit/api/test_artifacts.py`, `backend/tests/unit/api/test_models.py`, `backend/tests/unit/api/test_tasks.py`, `backend/tests/unit/runner/test_core.py`, `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`
 - Integration tests: `backend/tests/integration/`
 - E2E tests: `backend/tests/e2e/test_streaming_e2e.py`
 - Frontend tests:
@@ -173,6 +184,11 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 - Middleware duplication if future developer re-adds default middleware to the stack.
 - storage.py breakage if compatibility shims are deleted without rewriting storage.
 - Model format mismatch if frontend sends old-style `deepseek-reasoner` instead of `deepseek:deepseek-chat`.
+- Model availability regression if `/api/models` stops exposing `available` or task/message endpoints schedule runs for unavailable providers.
+- Artifact download regression if `ArtifactRecord.url` no longer matches FastAPI routes or run-scoped artifacts fall back to the latest legacy artifact.
+- Upload API regression if duplicate names, limits, unsupported extensions, or invalid JSON again surface as 500 responses.
+- Terminal event regression if complete/failed/cancelled runs stop writing run-scoped terminal events, causing frontend run timelines to lose their closing signal.
+- SSE resilience regression if frontend reconnect loops become unbounded or backend SSE error payloads are ignored.
 - SSE auth bypass if EventSource query param support is removed without alternative auth.
 - Timeout breakage if `asyncio.timeout()` is removed without an alternative mechanism to prevent runaway agent runs.
 - Concurrency risk if `max_concurrent_subagents` is changed without testing subagent parallel execution limits.

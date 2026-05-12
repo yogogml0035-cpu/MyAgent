@@ -3,6 +3,7 @@ from __future__ import annotations
 from app.config import Settings
 from app.models.registry import (
     get_model_info,
+    is_model_available,
     list_available_models,
     validate_model,
 )
@@ -63,3 +64,20 @@ class TestListAvailableModels:
             assert "label" in entry
             assert "provider" in entry
             assert "available" in entry
+
+
+class TestIsModelAvailable:
+    def test_unknown_model_is_not_available(self, test_settings):
+        assert is_model_available("fake:model", test_settings) is False
+
+    def test_registered_model_without_key_is_not_available(self, test_settings):
+        assert is_model_available("deepseek:deepseek-chat", test_settings) is False
+
+    def test_registered_model_with_key_is_available(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            deepseek_api_key="sk-test",
+        )
+
+        assert is_model_available("deepseek:deepseek-chat", settings) is True
