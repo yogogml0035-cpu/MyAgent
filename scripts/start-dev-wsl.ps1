@@ -50,6 +50,10 @@ function ConvertTo-WslPath {
     return "/mnt/$drive/$rest"
   }
 
+  if ($resolved -match '^/') {
+    return $resolved
+  }
+
   throw "Cannot convert path to WSL form: $resolved"
 }
 
