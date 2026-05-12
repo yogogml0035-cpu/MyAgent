@@ -101,3 +101,4 @@ class ModelOption(BaseModel):
     provider: str
     supports_files: bool
     supports_images: bool
+    available: bool = False

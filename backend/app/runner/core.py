@@ -138,12 +138,16 @@ class TaskRunner:
                         run_id=run_id,
                     )
 
-                self.storage.update_task_if_status(
+                self.storage.update_task_if_status_and_append_event(
                     task_id,
                     {"running"},
                     status="complete",
                     run_id=run_id,
                     append_message=append_message,
+                    event_type="task_completed",
+                    event_message="任务已完成。",
+                    event_payload={"previous_status": "running"},
+                    event_level="success",
                 )
 
                 # Emit a synthetic final_answer event so the frontend can
@@ -159,18 +163,43 @@ class TaskRunner:
                         level="success",
                     )
             except TimeoutError:
-                self.storage.update_task_if_status(
+                error_message = f"运行超时（{self.settings.agent_timeout_seconds}秒）"
+                self.storage.update_task_if_status_and_append_event(
                     task_id,
                     {"running"},
                     status="failed",
-                    error=f"运行超时（{self.settings.agent_timeout_seconds}秒）",
+                    error=error_message,
                     run_id=run_id,
+                    event_type="task_failed",
+                    event_message=error_message,
+                    event_payload={"error": error_message, "reason": "timeout"},
+                    event_level="error",
                 )
             except asyncio.CancelledError:
-                self.storage.update_task_if_status(task_id, {"running"}, status="cancelled", run_id=run_id)
+                self.storage.update_task_if_status_and_append_event(
+                    task_id,
+                    {"running"},
+                    status="cancelled",
+                    run_id=run_id,
+                    event_type="task_cancelled",
+                    event_message="任务已取消。",
+                    event_payload={"previous_status": "running"},
+                    event_level="warning",
+                )
                 raise
             except Exception as exc:
-                self.storage.update_task_if_status(task_id, {"running"}, status="failed", error=str(exc), run_id=run_id)
+                error_message = str(exc)
+                self.storage.update_task_if_status_and_append_event(
+                    task_id,
+                    {"running"},
+                    status="failed",
+                    error=error_message,
+                    run_id=run_id,
+                    event_type="task_failed",
+                    event_message=error_message,
+                    event_payload={"error": error_message},
+                    event_level="error",
+                )
                 raise
             finally:
                 self._active_runs.pop(task_id, None)

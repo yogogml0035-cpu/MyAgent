@@ -22,6 +22,16 @@ def get_model_info(model_id: str) -> dict | None:
     return _MODEL_INDEX.get(model_id)
 
 
+def is_model_available(model_id: str, settings: Settings) -> bool:
+    """Return whether *model_id* is registered and its provider key is configured."""
+    entry = get_model_info(model_id)
+    if entry is None:
+        return False
+    provider = cast(str, entry["provider"])
+    key_attr = _PROVIDER_KEY_ATTR.get(provider)
+    return bool(key_attr and getattr(settings, key_attr, None))
+
+
 def list_available_models(settings: Settings) -> list[dict]:
     """Return registry entries annotated with an ``available`` flag.
 

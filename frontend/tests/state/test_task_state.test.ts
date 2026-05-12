@@ -13,6 +13,7 @@ import {
   isTaskActive,
   mergeExecutionLogs,
   mergeTaskState,
+  normalizeModelOption,
   normalizeTaskSummaries,
   normalizeTaskState,
   resolveApiBaseUrl,
@@ -118,24 +119,39 @@ test("buildArtifactRequest builds run-scoped artifact URLs with the access token
 });
 
 test("buildMessageRequestPayload sends the default mode without a file-scope toggle", () => {
-  assert.deepEqual(buildMessageRequestPayload("请分析这些文件", "deepseek-reasoner"), {
+  assert.deepEqual(buildMessageRequestPayload("请分析这些文件", "deepseek:deepseek-chat"), {
     content: "请分析这些文件",
     message: "请分析这些文件",
-    model: "deepseek-reasoner",
+    model: "deepseek:deepseek-chat",
     mode: "auto",
   });
 });
 
 test("buildMessageRequestPayload allows explicit mode overrides", () => {
   assert.deepEqual(
-    buildMessageRequestPayload("继续分析这些文件", "deepseek-reasoner", {
-      mode: "deep_agent",
+    buildMessageRequestPayload("继续分析这些文件", "deepseek:deepseek-chat", {
+      mode: "analysis",
     }),
     {
       content: "继续分析这些文件",
       message: "继续分析这些文件",
-      model: "deepseek-reasoner",
-      mode: "deep_agent",
+      model: "deepseek:deepseek-chat",
+      mode: "analysis",
+    },
+  );
+});
+
+test("normalizeModelOption preserves backend availability metadata", () => {
+  assert.deepEqual(
+    normalizeModelOption({
+      id: "deepseek:deepseek-chat",
+      label: "DeepSeek Chat",
+      available: false,
+    }),
+    {
+      id: "deepseek:deepseek-chat",
+      label: "DeepSeek Chat",
+      available: false,
     },
   );
 });

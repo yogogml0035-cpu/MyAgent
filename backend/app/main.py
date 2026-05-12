@@ -12,6 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from starlette.responses import Response
 
+from .api.artifacts import router as artifacts_router
 from .api.files import router as files_router
 from .api.models import router as models_router
 from .api.streaming import router as streaming_router
@@ -44,6 +45,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(tasks_router)
     app.include_router(files_router)
+    app.include_router(artifacts_router)
     app.include_router(streaming_router)
     app.include_router(models_router)
 

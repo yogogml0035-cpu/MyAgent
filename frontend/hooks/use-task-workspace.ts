@@ -10,9 +10,11 @@ import {
   type TaskStatus,
   type TaskSummary,
   formatNeedsInput,
+  isRecord,
   isTaskActive,
   mergeExecutionLogs,
   normalizeEventRecords,
+  readString,
 } from "../app/task-state";
 import {
   buildModelDisplayOptions,
@@ -43,12 +45,24 @@ import {
 
 const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
   {
-    id: "deepseek-reasoner",
-    label: "Deepseek",
+    id: "deepseek:deepseek-chat",
+    label: "DeepSeek Chat",
   },
 ];
 
 const DEFAULT_FILE_PROMPT = "请分析已上传的 Markdown 或 JSON 文件是否存在串标围标嫌疑。";
+export const MAX_SSE_RETRIES = 5;
+
+export function calculateSseRetryDelay(retryCount: number) {
+  return Math.min(3000 * Math.pow(2, retryCount), 30000);
+}
+
+export function getSseErrorDetail(payload: unknown) {
+  if (!isRecord(payload) || payload.type !== "error") {
+    return "";
+  }
+  return readString(payload.detail, "流传输异常，请刷新页面。");
+}
 
 export function useTaskWorkspace() {
   const [taskId, setTaskId] = useState<string>("");
@@ -214,7 +228,6 @@ export function useTaskWorkspace() {
 
     function startSSE() {
       if (disposed) return;
-      retryCount = 0;
 
       es = createTaskEventSource(
         taskId,
@@ -222,6 +235,14 @@ export function useTaskWorkspace() {
           if (disposed) return;
           try {
             const payload = JSON.parse(event.data);
+            retryCount = 0;
+            const sseErrorDetail = getSseErrorDetail(payload);
+            if (sseErrorDetail) {
+              setErrorLevel("error");
+              setError(sseErrorDetail);
+              void refreshTaskSummary();
+              return;
+            }
             const recognizedTypes = [
               "log",
               "tool_call",
@@ -229,6 +250,9 @@ export function useTaskWorkspace() {
               "assistant_answer_delta",
               "status_update",
               "final_answer",
+              "task_completed",
+              "task_failed",
+              "task_cancelled",
             ];
             if (
               payload &&
@@ -254,7 +278,12 @@ export function useTaskWorkspace() {
           es = null;
           void Promise.all([refreshTaskSummary(), refreshTaskEvents()]).catch(() => {});
           if (!disposed) {
-            const backoffMs = Math.min(3000 * Math.pow(2, retryCount), 30000);
+            if (retryCount >= MAX_SSE_RETRIES) {
+              setErrorLevel("error");
+              setError("流连接多次重试失败，请刷新页面或稍后重试。");
+              return;
+            }
+            const backoffMs = calculateSseRetryDelay(retryCount);
             retryCount++;
             retryTimeoutId = window.setTimeout(() => {
               retryTimeoutId = null;
