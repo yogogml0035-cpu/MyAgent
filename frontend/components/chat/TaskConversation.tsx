@@ -384,11 +384,11 @@ export function TaskConversation({
       return (
         <details className={toolClassName} key={item.id}>
           <summary>
-            <strong>{item.title}</strong>
             <time>{formatTime(item.createdAt)}</time>
+            <strong>{item.title}</strong>
           </summary>
           <p>{item.resultText}</p>
-          {item.details ? renderLiveLogDiagnostics(item.details) : null}
+          {renderLiveLogDiagnostics(item.details)}
         </details>
       );
     }
@@ -413,18 +413,11 @@ export function TaskConversation({
         ) : null}
       </>
     );
-    if (item.details) {
-      return (
-        <details className={`${statusClassName} liveStatusRow-details`} key={item.id}>
-          <summary>{statusSummary}</summary>
-          {renderLiveLogDiagnostics(item.details)}
-        </details>
-      );
-    }
     return (
-      <article className={statusClassName} key={item.id}>
-        {statusSummary}
-      </article>
+      <details className={`${statusClassName} liveStatusRow-details`} key={item.id}>
+        <summary>{statusSummary}</summary>
+        {renderLiveLogDiagnostics(item.details)}
+      </details>
     );
   }
 

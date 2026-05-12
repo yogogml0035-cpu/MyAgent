@@ -24,3 +24,18 @@ npm run e2e:runtime-contracts
 
 The runtime-contract spec seeds one completed run through the real Postgres-backed storage contract plus the task artifact directory. Keep the Postgres env values local to the E2E command and do not commit credentials.
 Set `MYAGENT_E2E_EXPECT_UPLOAD_LIMIT_BYTES` when the backend is started with a small `MYAGENT_MAX_UPLOAD_REQUEST_BYTES` value to verify that oversized multipart uploads are rejected in the browser before storage writes.
+
+Run the progress-log disclosure acceptance test from `frontend/` when changing the chat progress timeline, row diagnostics, timestamps, or disclosure affordance:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_API_URL=http://127.0.0.1:8001 \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/progress-log-disclosure \
+MYAGENT_E2E_ACCESS_TOKEN=... \
+MYAGENT_E2E_POSTGRES_CONTAINER=PostgreSQL \
+MYAGENT_E2E_POSTGRES_USER=postgres \
+MYAGENT_E2E_POSTGRES_DB=myagent \
+npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --reporter=line
+```
+
+The progress-log spec seeds a temporary running task through the same Postgres-backed task/runs/messages/events contract, verifies collapsed row layout in the browser, expands status/tool/generation rows, captures screenshots, marks the temporary task complete, and deletes it through the public API.

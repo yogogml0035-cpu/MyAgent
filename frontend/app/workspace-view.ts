@@ -60,7 +60,7 @@ export type LiveToolLogItem = {
   title: string;
   resultText: string;
   resultStatus?: NonNullable<ExecutionLog["live"]>["resultStatus"];
-  details?: LiveLogDiagnostics;
+  details: LiveLogDiagnostics;
 };
 
 export type LiveStatusLogItem = {
@@ -70,7 +70,7 @@ export type LiveStatusLogItem = {
   level?: ExecutionLog["level"];
   text: string;
   active?: boolean;
-  details?: LiveLogDiagnostics;
+  details: LiveLogDiagnostics;
 };
 
 export type LiveLogItem = LiveToolLogItem | LiveStatusLogItem;
@@ -194,6 +194,7 @@ export function buildLiveLogItems(
   let hasCancelEvent = false;
   let hasAnswerStream = false;
   let lastAnswerCreatedAt: string | undefined;
+  let lastAnswerDetails: LiveLogDiagnostics | undefined;
 
   function pushStatusItem(log: ExecutionLog, text: string) {
     const previous = items.at(-1);
@@ -219,6 +220,7 @@ export function buildLiveLogItems(
       if (log.answerStream?.content) {
         hasAnswerStream = true;
         lastAnswerCreatedAt = log.createdAt;
+        lastAnswerDetails = buildAnswerStreamDiagnostics(log);
       }
       return;
     }
@@ -262,6 +264,7 @@ export function buildLiveLogItems(
     if (live.kind === "tool_result") {
       const toolItem = takePendingToolItem(toolItemsById, pendingToolItemsByName, live);
       if (toolItem) {
+        toolItem.createdAt = log.createdAt || toolItem.createdAt;
         toolItem.level = log.level;
         toolItem.title = formatLiveToolResultTitle(live);
         toolItem.resultStatus = live.resultStatus;
@@ -314,7 +317,7 @@ export function buildLiveLogItems(
         level: "warning",
         text: "任务已取消",
         active: false,
-        details: activeDetails,
+        details: activeDetails ?? buildSyntheticLogDiagnostics("task_cancelled", "任务已取消"),
       });
     } else {
       const displayText = hasAnswerStream ? "AI正在生成结果" : activeText || "AI正在思考...";
@@ -323,7 +326,9 @@ export function buildLiveLogItems(
         lastItem.active = true;
         lastItem.createdAt = lastAnswerCreatedAt || activeCreatedAt || lastItem.createdAt;
         lastItem.level = "info";
-        lastItem.details = lastItem.details ?? activeDetails;
+        lastItem.details = lastAnswerDetails
+          ? mergeLiveLogDiagnostics(lastItem.details, lastAnswerDetails)
+          : lastItem.details;
       } else {
         items.push({
           id: "status:active",
@@ -332,7 +337,7 @@ export function buildLiveLogItems(
           level: "info",
           text: displayText,
           active: true,
-          details: hasAnswerStream ? undefined : activeDetails,
+          details: lastAnswerDetails ?? activeDetails ?? buildSyntheticLogDiagnostics("active_status", displayText),
         });
       }
     }
@@ -422,6 +427,43 @@ function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
   return {
     rows,
     rawJson: formatPrettyRawLogRecord(log),
+  };
+}
+
+function buildAnswerStreamDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
+  const payload = stripUndefinedValues({
+    answer_stream: stripUndefinedValues({
+      schema_version: log.answerStream?.schemaVersion,
+      stream_index: log.answerStream?.streamIndex,
+      content_hidden: true,
+    }),
+  });
+  return {
+    rows: [
+      { label: "事件类型", value: "assistant_answer_delta" },
+      { label: "显示方式", value: "流式片段已折叠为生成状态" },
+    ],
+    rawJson: JSON.stringify(
+      stripUndefinedValues({
+        type: "assistant_answer_delta",
+        message: "AI正在生成结果",
+        created_at: log.createdAt,
+        run_id: log.runId,
+        payload,
+      }),
+      null,
+      2,
+    ),
+  };
+}
+
+function buildSyntheticLogDiagnostics(type: string, message: string): LiveLogDiagnostics {
+  return {
+    rows: [
+      { label: "事件类型", value: type },
+      { label: "显示消息", value: message },
+    ],
+    rawJson: JSON.stringify({ type, message }, null, 2),
   };
 }
 

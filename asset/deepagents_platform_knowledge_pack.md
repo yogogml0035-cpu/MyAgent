@@ -179,6 +179,7 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 - `ExecutionLog.rawRecord` is preserved for row-level diagnostics and JSONL log copying, but it is non-enumerable after normalization so raw provider chunks, tool payloads, and internal node names do not leak into default rendering or `JSON.stringify(state.logs)` checks.
 - `buildLogClipboardText()` copies raw diagnostic JSONL, one event per line. The default progress card remains a Chinese user-facing timeline; row expansion is the place for node/tool/message/payload details.
 - `buildLiveLogItems` checks `agentActivity.status` (`completed`/`failed`/`skipped`) as additional terminal condition alongside `isTerminalLiveStage(live.stage)`.
+- Progress log rows in `TaskConversation.tsx` are always expandable `<details>` rows. The collapsed row layout must keep the timestamp in the leftmost column for both status rows and tool rows, the display label in the middle, and the disclosure arrow on the right. Synthetic active rows such as `"AI正在思考..."` or answer-generation rows still need sanitized diagnostics so every visible line can expand; assistant answer deltas must remain hidden behind the stable `"AI正在生成结果"` label and diagnostics must not expose raw delta content.
 
 ## Final Answer vs Intermediate Process Distinction
 
@@ -230,5 +231,6 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 - **Intermediate/final confusion**: If `pushStreamedAnswerItem()` is re-enabled in `buildConversationStreamItems()`, intermediate tokens will again be displayed as AI reply cards during streaming, breaking the final/intermediate distinction.
 - **Race condition regression**: If the `final_answer` event in `runner/core.py` is moved before `storage.update_task_if_status()`, the frontend may refresh before the ChatMessage is persisted, showing stale or missing final answers.
 - **Log scroll regression**: `TaskConversation.tsx` keeps each log list pinned to the bottom while the user has not intentionally scrolled upward. If the pinned-state tracking or `conversationStreamItems` dependency is removed, progress log cards will stop following new rows and active-row text changes.
+- **Progress row disclosure regression**: If status rows fall back to plain `<article>` or tool rows move timestamps back to the right side, progress logs become visually inconsistent and some lines cannot reveal diagnostics. Frontend regression tests should assert shared timestamp-left/disclosure-right CSS for `.liveStatusRow` and `.liveToolCard`.
 - Acceptance drift if future changes rely only on unit/integration results and skip live browser E2E plus screenshot evidence; this repository now treats that as an incomplete delivery for behavior changes.
 - CI drift if future fixes stop after a local pass while remote GitHub Actions are still pending or red; PR-related work in this repo is incomplete until the remote checks finish successfully.

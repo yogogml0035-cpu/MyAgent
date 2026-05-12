@@ -526,6 +526,8 @@ test("buildLiveLogItems hides answer stream deltas behind a stable generation la
   assert.equal(JSON.stringify(items).includes("第一段"), false);
   assert.equal(JSON.stringify(items).includes("stream-punctuation"), false);
   assert.equal(JSON.stringify(items).includes("stream-content"), false);
+  assert.equal(items[0]?.details.rows.some((row) => row.value === "流式片段已折叠为生成状态"), true);
+  assert.equal(items[0]?.details.rawJson.includes('"content_hidden": true'), true);
 });
 
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
@@ -744,8 +746,12 @@ test("workspace CSS aligns composer panel with the assistant message card column
   assert.match(cssSource, /\.isEmpty \.composerPanel\s*\{[\s\S]*?margin-left: 0;/);
 });
 
-test("workspace CSS keeps live tool rows dense and copy feedback as a coral checkmark", () => {
+test("workspace CSS keeps every live log row expandable with a left-aligned timestamp", () => {
   const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+  const conversationSource = readFileSync(
+    new URL("../../components/chat/TaskConversation.tsx", import.meta.url),
+    "utf-8",
+  );
 
   assert.match(
     cssSource,
@@ -753,7 +759,24 @@ test("workspace CSS keeps live tool rows dense and copy feedback as a coral chec
   );
   assert.match(
     cssSource,
-    /\.liveToolCard summary\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto 10px;/,
+    /\.liveStatusRow summary,\s*\n\.liveToolCard summary\s*\{[\s\S]*?grid-template-columns: 56px minmax\(0, 1fr\) auto 10px;/,
+  );
+  assert.match(
+    cssSource,
+    /\.liveStatusRow summary::after,\s*\n\.liveToolCard summary::after\s*\{[\s\S]*?transform: rotate\(45deg\);/,
+  );
+  assert.match(
+    cssSource,
+    /\.liveStatusRow\[open\] summary::after,\s*\n\.liveToolCard\[open\] summary::after\s*\{[\s\S]*?transform: rotate\(225deg\);/,
+  );
+  assert.match(
+    conversationSource,
+    /<time>\{formatTime\(item\.createdAt\)\}<\/time>\s*<strong>\{item\.title\}<\/strong>/,
+  );
+  assert.equal(conversationSource.includes("<article className={statusClassName}"), false);
+  assert.match(
+    conversationSource,
+    /<details className=\{`\$\{statusClassName\} liveStatusRow-details`\} key=\{item\.id\}>/,
   );
   assert.match(
     cssSource,
