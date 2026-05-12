@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import threading
 import uuid
 from collections.abc import Iterable, Mapping
@@ -9,9 +10,12 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from json import JSONDecodeError
 from pathlib import Path
-from typing import Any, Literal, TypeAlias
+from typing import Any, Literal, TypeAlias, cast
 
+import psycopg
 from fastapi import UploadFile
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
 from .contracts import (
     EventLevel,
@@ -101,6 +105,19 @@ def utc_now() -> str:
 
 def parse_utc_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def format_db_timestamp(value: Any) -> str:
+    if isinstance(value, datetime):
+        return (
+            value.astimezone(timezone.utc)
+            .replace(microsecond=0)
+            .isoformat()
+            .replace("+00:00", "Z")
+        )
+    if isinstance(value, str):
+        return value.replace("+00:00", "Z")
+    return utc_now()
 
 
 def safe_filename(name: str) -> str:
@@ -215,11 +232,108 @@ def session_event_from_record(record: EventRecord) -> SessionEvent:
     )
 
 
-class TaskStorage:
-    def __init__(self, task_root: Path):
+def _json_dict(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    return dict(value) if isinstance(value, Mapping) else None
+
+
+def _json_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str)]
+
+
+class PostgresTaskStorage:
+    """Postgres-backed task state and event log storage.
+
+    Structured lifecycle state lives in Postgres. Upload and artifact bytes
+    remain on disk under ``task_root`` so existing file-serving and tool
+    boundaries stay local to the task workspace.
+    """
+
+    def __init__(self, task_root: Path, database_url: str):
+        if not database_url:
+            raise ValueError("MYAGENT_DATABASE_URL 未配置")
         self.task_root = task_root.resolve()
         self.task_root.mkdir(parents=True, exist_ok=True)
+        self.database_url = database_url
         self._lock = threading.RLock()
+
+    def initialize(self) -> None:
+        with self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS tasks (
+                        task_id TEXT PRIMARY KEY,
+                        title TEXT,
+                        status TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL,
+                        error TEXT,
+                        needs_input JSONB,
+                        active_run_id TEXT,
+                        latest_event_seq INTEGER NOT NULL DEFAULT 0
+                    )
+                    """
+            )
+            cur.execute("ALTER TABLE tasks ADD COLUMN IF NOT EXISTS title TEXT")
+            cur.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS runs (
+                        task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                        id TEXT NOT NULL,
+                        status TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        model TEXT NOT NULL,
+                        started_at TIMESTAMPTZ NOT NULL,
+                        completed_at TIMESTAMPTZ,
+                        error TEXT,
+                        needs_input JSONB,
+                        artifact_base_path TEXT NOT NULL,
+                        artifact_names JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        PRIMARY KEY (task_id, id)
+                    )
+                    """
+            )
+            cur.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS messages (
+                        id BIGSERIAL PRIMARY KEY,
+                        task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                        run_id TEXT,
+                        role TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        level TEXT
+                    )
+                    """
+            )
+            cur.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS events (
+                        id TEXT PRIMARY KEY,
+                        task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                        seq INTEGER NOT NULL,
+                        type TEXT NOT NULL,
+                        message TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+                        run_id TEXT,
+                        level TEXT,
+                        idempotency_key TEXT,
+                        UNIQUE (task_id, seq)
+                    )
+                    """
+            )
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_events_task_seq ON events(task_id, seq)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id, id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, id)")
+
+    def _connect(self):
+        return psycopg.connect(self.database_url, row_factory=dict_row)
 
     def task_dir(self, task_id: str) -> Path:
         if not task_id or task_id in {".", ".."}:
@@ -237,42 +351,44 @@ class TaskStorage:
         task_dir = self.task_dir(task_id)
         for child in ("uploads", "artifacts", "subagents", "logs"):
             (task_dir / child).mkdir(parents=True, exist_ok=True)
-        state = TaskState(
-            task_id=task_id,
-            status="idle",
-            model=model,
-            created_at=now,
-            updated_at=now,
-        )
-        self._write_state(state)
-        self.append_event(task_id, "task_created", "任务目录已创建。", {"model": model})
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                    INSERT INTO tasks (
+                        task_id, status, model, created_at, updated_at, latest_event_seq
+                    )
+                    VALUES (%s, %s, %s, %s, %s, 0)
+                    """,
+                (task_id, "idle", model, now, now),
+            )
+            self._append_event_with_cursor(
+                cur,
+                task_id,
+                "task_created",
+                "任务目录已创建。",
+                {"model": model},
+            )
         return self.get_task(task_id)
 
     def get_task(self, task_id: str, *, include_events: bool = True) -> TaskState:
-        with self._lock:
-            state = self._read_state(task_id, synthesize_legacy=True)
-            state.events = self.read_events(task_id) if include_events else []
-            state.artifacts = self._artifact_records_for_state(task_id, state)
-            state.upload_count = len(self.list_uploads(task_id))
-            state.run_count = len(state.runs)
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            state = self._state_from_db(cur, task_id, include_events=include_events)
             return state
 
     def list_task_summaries(self) -> list[TaskSummary]:
-        with self._lock:
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM tasks ORDER BY updated_at DESC, created_at DESC, task_id DESC")
             summaries: list[TaskSummary] = []
-            for state in (
-                self.get_task(task_id, include_events=False) for task_id in self.list_task_ids()
-            ):
-                has_user_message = any(
-                    message.role == "user" and message.content.strip()
-                    for message in state.messages
-                )
-                if not has_user_message:
+            for row in cur.fetchall():
+                state = self._state_from_row(cur, row, include_events=False)
+                if not any(
+                    message.role == "user" and message.content.strip() for message in state.messages
+                ):
                     continue
                 summaries.append(
                     TaskSummary(
                         task_id=state.task_id,
-                        title=summary_title(state.messages),
+                        title=state.title or summary_title(state.messages),
                         status=state.status,
                         model=state.model,
                         created_at=state.created_at,
@@ -282,13 +398,27 @@ class TaskStorage:
                             (message.created_at for message in state.messages),
                             default=None,
                         ),
-                    ),
+                    )
                 )
-            return sorted(
-                summaries,
-                key=lambda item: (item.updated_at, item.created_at, item.task_id),
-                reverse=True,
-            )
+            return summaries
+
+    def rename_task(self, task_id: str, title: str) -> TaskState:
+        normalized = " ".join(title.split())
+        if not normalized:
+            raise ValueError("会话名称不能为空")
+        if len(normalized) > 80:
+            raise ValueError("会话名称不能超过 80 个字符")
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=True)
+            cur.execute("UPDATE tasks SET title = %s WHERE task_id = %s", (normalized, task_id))
+        return self.get_task(task_id, include_events=False)
+
+    def delete_task(self, task_id: str) -> None:
+        task_path = self.task_dir(task_id)
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=True)
+            cur.execute("DELETE FROM tasks WHERE task_id = %s", (task_id,))
+        shutil.rmtree(task_path, ignore_errors=True)
 
     def update_task(
         self,
@@ -301,10 +431,11 @@ class TaskStorage:
         run_id: str | None = None,
         artifact_names: list[str] | None = None,
     ) -> TaskState:
-        with self._lock:
-            state = self._read_state(task_id, synthesize_legacy=True)
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=True)
             self._apply_task_update(
-                state,
+                cur,
+                task_id,
                 status=status,
                 error=error,
                 needs_input=needs_input,
@@ -312,8 +443,7 @@ class TaskStorage:
                 run_id=run_id,
                 artifact_names=artifact_names,
             )
-            self._write_state(state)
-            return self.get_task(task_id)
+        return self.get_task(task_id)
 
     def start_run(
         self,
@@ -323,36 +453,51 @@ class TaskStorage:
         model: str,
         expected_statuses: set[TaskStatus],
     ) -> tuple[TaskState, str] | None:
-        with self._lock:
-            state = self._read_state(task_id, synthesize_legacy=True)
-            if state.status not in expected_statuses:
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            row = self._fetch_task_row(cur, task_id, lock=True)
+            if row["status"] not in expected_statuses:
                 return None
             now = utc_now()
             run_id = generate_run_id()
             run_dir = self.run_artifact_dir(task_id, run_id)
             run_dir.mkdir(parents=True, exist_ok=True)
-            state.status = "running"
-            state.model = model
-            state.error = None
-            state.needs_input = None
-            state.active_run_id = run_id
-            state.updated_at = now
-            state.runs.append(
-                TaskRunRecord(
-                    id=run_id,
-                    status="running",
-                    message=message,
-                    model=model,
-                    started_at=now,
-                    artifact_base_path=f"artifacts/runs/{run_id}",
-                )
+            cur.execute(
+                """
+                    UPDATE tasks
+                    SET status = %s,
+                        model = %s,
+                        error = NULL,
+                        needs_input = NULL,
+                        active_run_id = %s,
+                        updated_at = %s
+                    WHERE task_id = %s
+                    """,
+                ("running", model, run_id, now, task_id),
             )
-            state.run_count = len(state.runs)
-            state.messages.append(
-                ChatMessage(role="user", content=message, created_at=now, run_id=run_id)
+            cur.execute(
+                """
+                    INSERT INTO runs (
+                        task_id, id, status, message, model, started_at, artifact_base_path
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                (
+                    task_id,
+                    run_id,
+                    "running",
+                    message,
+                    model,
+                    now,
+                    f"artifacts/runs/{run_id}",
+                ),
             )
-            self._write_state(state)
-            return self.get_task(task_id, include_events=False), run_id
+            self._insert_message(
+                cur,
+                task_id,
+                ChatMessage(role="user", content=message, created_at=now, run_id=run_id),
+                run_id,
+            )
+        return self.get_task(task_id, include_events=False), run_id
 
     def update_task_if_status(
         self,
@@ -366,23 +511,17 @@ class TaskStorage:
         run_id: str | None = None,
         artifact_names: list[str] | None = None,
     ) -> TaskState | None:
-        with self._lock:
-            state = self._read_state(task_id, synthesize_legacy=True)
-            if state.status not in expected_statuses:
-                return None
-            if run_id and state.active_run_id and state.active_run_id != run_id:
-                return None
-            self._apply_task_update(
-                state,
-                status=status,
-                error=error,
-                needs_input=needs_input,
-                append_message=append_message,
-                run_id=run_id,
-                artifact_names=artifact_names,
-            )
-            self._write_state(state)
-            return self.get_task(task_id)
+        return self.update_task_if_status_and_append_events(
+            task_id,
+            expected_statuses,
+            events=[],
+            status=status,
+            error=error,
+            needs_input=needs_input,
+            append_message=append_message,
+            run_id=run_id,
+            artifact_names=artifact_names,
+        )
 
     def update_task_if_status_and_append_events(
         self,
@@ -397,14 +536,16 @@ class TaskStorage:
         run_id: str | None = None,
         artifact_names: list[str] | None = None,
     ) -> TaskState | None:
-        with self._lock:
-            state = self._read_state(task_id, synthesize_legacy=True)
-            if state.status not in expected_statuses:
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            row = self._fetch_task_row(cur, task_id, lock=True)
+            if row["status"] not in expected_statuses:
                 return None
-            if run_id and state.active_run_id and state.active_run_id != run_id:
+            active_run_id = row.get("active_run_id")
+            if run_id and active_run_id and active_run_id != run_id:
                 return None
             self._apply_task_update(
-                state,
+                cur,
+                task_id,
                 status=status,
                 error=error,
                 needs_input=needs_input,
@@ -413,7 +554,8 @@ class TaskStorage:
                 artifact_names=artifact_names,
             )
             for event_type, event_message, event_payload, event_level in events:
-                self._append_event_unlocked(
+                self._append_event_with_cursor(
+                    cur,
                     task_id,
                     event_type,
                     event_message,
@@ -421,8 +563,7 @@ class TaskStorage:
                     run_id=run_id,
                     level=event_level,
                 )
-            self._write_state(state)
-            return self.get_task(task_id)
+        return self.get_task(task_id)
 
     def update_task_if_status_and_append_event(
         self,
@@ -462,11 +603,11 @@ class TaskStorage:
         max_request_bytes: int,
     ) -> list[Path]:
         with self._lock:
+            self.get_task(task_id, include_events=False)
             upload_dir = self.task_dir(task_id) / "uploads"
+            upload_dir.mkdir(parents=True, exist_ok=True)
             if len(self.list_uploads(task_id)) + len(uploads) > max_files:
-                raise UploadLimitError(
-                    f"最多只能上传 {max_files} 个 Markdown 或 JSON 文件"
-                )
+                raise UploadLimitError(f"最多只能上传 {max_files} 个 Markdown 或 JSON 文件")
 
             batch = self._validate_upload_batch(task_id, uploads)
             staged: list[tuple[Path, Path, int]] = []
@@ -566,13 +707,9 @@ class TaskStorage:
                     break
                 bytes_written += len(chunk)
                 if bytes_written > max_file_bytes:
-                    raise UploadLimitError(
-                        f"上传文档超过 {max_file_bytes} 字节单文件限制"
-                    )
+                    raise UploadLimitError(f"上传文档超过 {max_file_bytes} 字节单文件限制")
                 if current_request_bytes + bytes_written > max_request_bytes:
-                    raise UploadLimitError(
-                        f"上传请求超过 {max_request_bytes} 字节总量限制"
-                    )
+                    raise UploadLimitError(f"上传请求超过 {max_request_bytes} 字节总量限制")
                 handle.write(chunk)
         return bytes_written
 
@@ -586,8 +723,9 @@ class TaskStorage:
         run_id: str | None = None,
         level: EventLevel | None = None,
     ) -> EventRecord:
-        with self._lock:
-            return self._append_event_unlocked(
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            return self._append_event_with_cursor(
+                cur,
                 task_id,
                 event_type,
                 message,
@@ -597,8 +735,9 @@ class TaskStorage:
             )
 
     def emit_event(self, session_id: str, event: NewSessionEvent) -> SessionEvent:
-        with self._lock:
-            record = self._append_event_unlocked(
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            record = self._append_event_with_cursor(
+                cur,
                 session_id,
                 event.type,
                 event.message,
@@ -610,13 +749,14 @@ class TaskStorage:
             return session_event_from_record(record)
 
     def get_session(self, session_id: str) -> SessionSnapshot:
-        state = self.get_task(session_id, include_events=False)
-        return SessionSnapshot(
-            session_id=state.task_id,
-            created_at=parse_utc_timestamp(state.created_at),
-            latest_seq=self._latest_event_seq(session_id),
-            metadata={"model": state.model, "status": state.status},
-        )
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            row = self._fetch_task_row(cur, session_id, lock=False)
+            return SessionSnapshot(
+                session_id=session_id,
+                created_at=parse_utc_timestamp(format_db_timestamp(row["created_at"])),
+                latest_seq=int(row["latest_event_seq"]),
+                metadata={"model": row["model"], "status": row["status"]},
+            )
 
     def get_events(
         self,
@@ -639,37 +779,6 @@ class TaskStorage:
         model = str(metadata.get("model") or "deepseek:deepseek-chat")
         state = self.create_task(None, model)
         return self.get_session(state.task_id)
-
-    def _append_event_unlocked(
-        self,
-        task_id: str,
-        event_type: str,
-        message: str,
-        payload: dict[str, Any],
-        *,
-        run_id: str | None = None,
-        level: EventLevel | None = None,
-        idempotency_key: str | None = None,
-    ) -> EventRecord:
-        if run_id:
-            validate_run_id(run_id)
-        seq = self._next_event_seq(task_id)
-        event = EventRecord(
-            id=uuid.uuid4().hex,
-            session_id=task_id,
-            seq=seq,
-            type=event_type,
-            message=message,
-            created_at=utc_now(),
-            payload=payload,
-            run_id=run_id,
-            level=level,
-            idempotency_key=idempotency_key,
-        )
-        events_path = self.task_dir(task_id) / "logs" / "events.jsonl"
-        with events_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(event.model_dump(), ensure_ascii=False) + "\n")
-        return event
 
     def append_file_tool_audit(
         self, task_id: str, run_id: str | None, record: Mapping[str, Any]
@@ -723,99 +832,62 @@ class TaskStorage:
         )
 
     def read_events(self, task_id: str, *, after_id: str | None = None) -> list[EventRecord]:
-        with self._lock:
-            events_path = self.task_dir(task_id) / "logs" / "events.jsonl"
-            if not events_path.exists():
-                return []
-            lines = events_path.read_text(encoding="utf-8").splitlines()
-            events: list[EventRecord] = []
-            include = after_id is None
-            for index, line in enumerate(lines):
-                if not line.strip():
-                    continue
-                try:
-                    event = self._event_record_from_json(task_id, json.loads(line), index + 1)
-                except JSONDecodeError:
-                    if index == len(lines) - 1:
-                        break
-                    raise
-                if include:
-                    events.append(event)
-                elif event.id == after_id:
-                    include = True
-            return events
-
-    def _event_record_from_json(
-        self, task_id: str, raw_event: Mapping[str, Any], fallback_seq: int
-    ) -> EventRecord:
-        data = dict(raw_event)
-        data.setdefault("session_id", task_id)
-        data.setdefault("seq", fallback_seq)
-        return EventRecord(**data)
-
-    def _next_event_seq(self, task_id: str) -> int:
-        return self._latest_event_seq(task_id) + 1
-
-    def _latest_event_seq(self, task_id: str) -> int:
-        events_path = self.task_dir(task_id) / "logs" / "events.jsonl"
-        if not events_path.exists():
-            return 0
-        latest_seq = 0
-        lines = events_path.read_text(encoding="utf-8").splitlines()
-        for index, line in enumerate(lines):
-            if not line.strip():
-                continue
-            try:
-                raw_event = json.loads(line)
-            except JSONDecodeError:
-                if index == len(lines) - 1:
-                    break
-                raise
-            raw_seq = raw_event.get("seq")
-            if isinstance(raw_seq, int) and raw_seq > 0:
-                latest_seq = max(latest_seq, raw_seq)
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=False)
+            if after_id is None:
+                cur.execute(
+                    "SELECT * FROM events WHERE task_id = %s ORDER BY seq ASC",
+                    (task_id,),
+                )
             else:
-                latest_seq = max(latest_seq, index + 1)
-        return latest_seq
+                cur.execute(
+                    """
+                        SELECT seq FROM events
+                        WHERE task_id = %s AND id = %s
+                        """,
+                    (task_id, after_id),
+                )
+                after_row = cur.fetchone()
+                if after_row is None:
+                    return []
+                cur.execute(
+                    """
+                        SELECT * FROM events
+                        WHERE task_id = %s AND seq > %s
+                        ORDER BY seq ASC
+                        """,
+                    (task_id, after_row["seq"]),
+                )
+            return [self._event_record_from_row(row) for row in cur.fetchall()]
 
     def list_task_ids(self) -> list[str]:
-        with self._lock:
-            return sorted(
-                path.name
-                for path in self.task_root.iterdir()
-                if path.is_dir() and (path / "state.json").exists()
-            )
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT task_id FROM tasks ORDER BY task_id ASC")
+            return [str(row["task_id"]) for row in cur.fetchall()]
 
     def interrupt_running_tasks(self, reason: str) -> list[str]:
         interrupted = []
-        with self._lock:
-            for task_id in self.list_task_ids():
-                if self.mark_interrupted_if_running(task_id, reason):
-                    interrupted.append(task_id)
+        for task_id in self.list_task_ids():
+            if self.mark_interrupted_if_running(task_id, reason):
+                interrupted.append(task_id)
         return interrupted
 
     def mark_interrupted_if_running(self, task_id: str, reason: str) -> bool:
-        with self._lock:
-            state = self._read_state(task_id, synthesize_legacy=True)
-            if state.status != "running":
-                return False
-            run_id = state.active_run_id
-            self._apply_task_update(
-                state,
-                status="interrupted",
-                error=reason,
-                needs_input=None,
-                run_id=run_id,
-            )
-            self._write_state(state)
-            self.append_event(
-                task_id,
-                "task_interrupted",
-                reason,
-                {"previous_status": "running"},
-                run_id=run_id,
-            )
-            return True
+        state = self.get_task(task_id, include_events=False)
+        run_id = state.active_run_id
+        updated = self.update_task_if_status_and_append_event(
+            task_id,
+            {"running"},
+            event_type="task_interrupted",
+            event_message=reason,
+            event_payload={"previous_status": "running"},
+            event_level="warning",
+            status="interrupted",
+            error=reason,
+            needs_input=None,
+            run_id=run_id,
+        )
+        return updated is not None
 
     def write_json(self, task_id: str, relative_path: str, data: Any) -> Path:
         path = self._task_relative_path(task_id, relative_path)
@@ -934,9 +1006,8 @@ class TaskStorage:
     ) -> None:
         name = normalize_artifact_name(artifact_name)
         validate_run_id(run_id)
-        with self._lock:
-            state = self._read_state(task_id, synthesize_legacy=True)
-            run = self._find_run(state, run_id)
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            run = self._fetch_run_row(cur, task_id, run_id)
             if run is None:
                 raise ValueError("未找到运行记录")
             if artifact_ref is None:
@@ -945,59 +1016,193 @@ class TaskStorage:
                     artifact_ref = self._artifact_ref_payload(
                         task_id, run_id, name, artifact_path
                     )
-            if name not in run.artifact_names:
-                run.artifact_names.append(name)
-                run.artifact_names.sort()
-                state.run_count = len(state.runs)
-                self._write_state(state)
-            if artifact_ref is not None:
-                self._merge_run_manifest_artifact_ref(task_id, run_id, artifact_ref)
+            names = set(_json_list(run["artifact_names"]))
+            if name not in names:
+                names.add(name)
+                cur.execute(
+                    """
+                        UPDATE runs
+                        SET artifact_names = %s
+                        WHERE task_id = %s AND id = %s
+                        """,
+                    (Jsonb(sorted(names)), task_id, run_id),
+                )
+        if artifact_ref is not None:
+            self._merge_run_manifest_artifact_ref(task_id, run_id, artifact_ref)
 
     def list_artifacts(self, task_id: str) -> list[ArtifactRecord]:
-        with self._lock:
-            return self._artifact_records_for_state(
-                task_id, self._read_state(task_id, synthesize_legacy=True)
-            )
+        return self.get_task(task_id, include_events=False).artifacts
 
     def resolve_artifact(self, task_id: str, artifact_name: str) -> Path:
         name = normalize_artifact_name(artifact_name)
-        with self._lock:
-            state = self._read_state(task_id, synthesize_legacy=True)
-            for run in reversed(state.runs):
-                if run.status == "complete" and name in run.artifact_names:
-                    return self._resolve_run_artifact_path(task_id, run, name)
-            legacy_path = self._resolve_top_level_artifact_path(task_id, name)
-            if legacy_path.exists():
-                return legacy_path
-            raise FileNotFoundError(name)
+        state = self.get_task(task_id, include_events=False)
+        for run in reversed(state.runs):
+            if run.status == "complete" and name in run.artifact_names:
+                return self._resolve_run_artifact_path(task_id, run, name)
+        legacy_path = self._resolve_top_level_artifact_path(task_id, name)
+        if legacy_path.exists():
+            return legacy_path
+        raise FileNotFoundError(name)
 
     def resolve_run_artifact(self, task_id: str, run_id: str, artifact_name: str) -> Path:
         name = normalize_artifact_name(artifact_name)
         validate_run_id(run_id)
-        with self._lock:
-            state = self._read_state(task_id, synthesize_legacy=True)
-            run = self._find_run(state, run_id)
-            if run is None or name not in run.artifact_names:
-                raise FileNotFoundError(name)
-            return self._resolve_run_artifact_path(task_id, run, name)
+        state = self.get_task(task_id, include_events=False)
+        run = self._find_run(state, run_id)
+        if run is None or name not in run.artifact_names:
+            raise FileNotFoundError(name)
+        return self._resolve_run_artifact_path(task_id, run, name)
 
-    def _read_state(self, task_id: str, *, synthesize_legacy: bool = False) -> TaskState:
-        state_path = self.task_dir(task_id) / "state.json"
-        try:
-            data = json.loads(state_path.read_text(encoding="utf-8"))
-        except JSONDecodeError as exc:
-            raise ValueError(f"任务 {task_id} 的状态文件损坏：{exc}") from exc
-        data.pop("events", None)
-        data.pop("artifacts", None)
-        state = TaskState(**data)
-        state.run_count = len(state.runs)
-        if synthesize_legacy:
-            state = self._synthesize_legacy_run(task_id, state)
+    def _fetch_task_row(self, cur, task_id: str, *, lock: bool) -> dict[str, Any]:
+        suffix = " FOR UPDATE" if lock else ""
+        cur.execute(f"SELECT * FROM tasks WHERE task_id = %s{suffix}", (task_id,))
+        row = cur.fetchone()
+        if row is None:
+            raise FileNotFoundError(task_id)
+        return cast("dict[str, Any]", row)
+
+    def _fetch_run_row(self, cur, task_id: str, run_id: str) -> dict[str, Any] | None:
+        cur.execute("SELECT * FROM runs WHERE task_id = %s AND id = %s", (task_id, run_id))
+        row = cur.fetchone()
+        return cast("dict[str, Any] | None", row)
+
+    def _state_from_db(self, cur, task_id: str, *, include_events: bool) -> TaskState:
+        row = self._fetch_task_row(cur, task_id, lock=False)
+        return self._state_from_row(cur, row, include_events=include_events)
+
+    def _state_from_row(self, cur, row: Mapping[str, Any], *, include_events: bool) -> TaskState:
+        task_id = str(row["task_id"])
+        cur.execute("SELECT * FROM runs WHERE task_id = %s ORDER BY started_at ASC, id ASC", (task_id,))
+        runs = [self._run_record_from_row(run_row) for run_row in cur.fetchall()]
+        cur.execute("SELECT * FROM messages WHERE task_id = %s ORDER BY id ASC", (task_id,))
+        messages = [self._message_from_row(message_row) for message_row in cur.fetchall()]
+        events: list[EventRecord] = []
+        if include_events:
+            cur.execute("SELECT * FROM events WHERE task_id = %s ORDER BY seq ASC", (task_id,))
+            events = [self._event_record_from_row(event_row) for event_row in cur.fetchall()]
+        state = TaskState(
+            task_id=task_id,
+            title=cast("str | None", row.get("title")),
+            status=cast(TaskStatus, row["status"]),
+            model=str(row["model"]),
+            created_at=format_db_timestamp(row["created_at"]),
+            updated_at=format_db_timestamp(row["updated_at"]),
+            messages=messages,
+            events=events,
+            runs=runs,
+            active_run_id=cast("str | None", row["active_run_id"]),
+            run_count=len(runs),
+            upload_count=len(self.list_uploads(task_id)),
+            error=cast("str | None", row["error"]),
+            needs_input=_json_dict(row["needs_input"]),
+        )
+        state.artifacts = self._artifact_records_for_state(task_id, state)
         return state
+
+    def _run_record_from_row(self, row: Mapping[str, Any]) -> TaskRunRecord:
+        return TaskRunRecord(
+            id=str(row["id"]),
+            status=cast(TaskStatus, row["status"]),
+            message=str(row["message"]),
+            model=str(row["model"]),
+            started_at=format_db_timestamp(row["started_at"]),
+            completed_at=(
+                format_db_timestamp(row["completed_at"]) if row.get("completed_at") is not None else None
+            ),
+            error=cast("str | None", row["error"]),
+            needs_input=_json_dict(row["needs_input"]),
+            artifact_base_path=str(row["artifact_base_path"]),
+            artifact_names=_json_list(row["artifact_names"]),
+        )
+
+    def _message_from_row(self, row: Mapping[str, Any]) -> ChatMessage:
+        return ChatMessage(
+            role=cast(Literal["user", "assistant", "system"], row["role"]),
+            content=str(row["content"]),
+            created_at=format_db_timestamp(row["created_at"]),
+            run_id=cast("str | None", row["run_id"]),
+            level=cast("Literal['info', 'warning', 'error'] | None", row["level"]),
+        )
+
+    def _event_record_from_row(self, row: Mapping[str, Any]) -> EventRecord:
+        return EventRecord(
+            id=str(row["id"]),
+            session_id=str(row["task_id"]),
+            seq=int(row["seq"]),
+            type=str(row["type"]),
+            message=str(row["message"]),
+            created_at=format_db_timestamp(row["created_at"]),
+            payload=dict(row["payload"]) if isinstance(row["payload"], Mapping) else {},
+            run_id=cast("str | None", row["run_id"]),
+            level=cast("Literal['info', 'success', 'warning', 'error'] | None", row["level"]),
+            idempotency_key=cast("str | None", row["idempotency_key"]),
+        )
+
+    def _append_event_with_cursor(
+        self,
+        cur,
+        task_id: str,
+        event_type: str,
+        message: str,
+        payload: dict[str, Any],
+        *,
+        run_id: str | None = None,
+        level: EventLevel | None = None,
+        idempotency_key: str | None = None,
+    ) -> EventRecord:
+        if run_id:
+            validate_run_id(run_id)
+        cur.execute(
+            """
+            UPDATE tasks
+            SET latest_event_seq = latest_event_seq + 1
+            WHERE task_id = %s
+            RETURNING latest_event_seq
+            """,
+            (task_id,),
+        )
+        seq_row = cur.fetchone()
+        if seq_row is None:
+            raise FileNotFoundError(task_id)
+        seq = int(seq_row["latest_event_seq"])
+        event = EventRecord(
+            id=uuid.uuid4().hex,
+            session_id=task_id,
+            seq=seq,
+            type=event_type,
+            message=message,
+            created_at=utc_now(),
+            payload=payload,
+            run_id=run_id,
+            level=level,
+            idempotency_key=idempotency_key,
+        )
+        cur.execute(
+            """
+            INSERT INTO events (
+                id, task_id, seq, type, message, created_at, payload, run_id, level, idempotency_key
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            (
+                event.id,
+                task_id,
+                seq,
+                event_type,
+                message,
+                event.created_at,
+                Jsonb(payload),
+                run_id,
+                level,
+                idempotency_key,
+            ),
+        )
+        return event
 
     def _apply_task_update(
         self,
-        state: TaskState,
+        cur,
+        task_id: str,
         *,
         status: TaskStatus | None,
         error: str | None,
@@ -1007,71 +1212,84 @@ class TaskStorage:
         artifact_names: list[str] | None = None,
     ) -> None:
         now = utc_now()
-        effective_run_id = run_id or state.active_run_id
+        cur.execute("SELECT active_run_id FROM tasks WHERE task_id = %s", (task_id,))
+        task_row = cur.fetchone()
+        if task_row is None:
+            raise FileNotFoundError(task_id)
+        effective_run_id = run_id or task_row.get("active_run_id")
         if effective_run_id:
-            validate_run_id(effective_run_id)
-        if status:
-            state.status = status
-        state.error = error
-        state.needs_input = needs_input
-        state.updated_at = now
+            validate_run_id(str(effective_run_id))
+        active_run_id = None if status and status != "running" else effective_run_id
+        task_status_sql = "status = COALESCE(%s, status),"
+        cur.execute(
+            f"""
+            UPDATE tasks
+            SET {task_status_sql}
+                error = %s,
+                needs_input = %s,
+                active_run_id = %s,
+                updated_at = %s
+            WHERE task_id = %s
+            """,
+            (
+                status,
+                error,
+                Jsonb(needs_input) if needs_input is not None else None,
+                active_run_id,
+                now,
+                task_id,
+            ),
+        )
         if append_message:
             if effective_run_id and append_message.run_id is None:
-                append_message.run_id = effective_run_id
-            state.messages.append(append_message)
+                append_message.run_id = str(effective_run_id)
+            self._insert_message(cur, task_id, append_message, append_message.run_id)
 
-        run = self._find_run(state, effective_run_id) if effective_run_id else None
-        if run is not None:
-            if status:
-                run.status = status
-                if status != "running":
-                    run.completed_at = now
-                    state.active_run_id = None
-            run.error = error
-            run.needs_input = needs_input
-            if artifact_names:
-                merged = set(run.artifact_names)
-                merged.update(normalize_artifact_name(name) for name in artifact_names)
-                run.artifact_names = sorted(merged)
-        elif status and status != "running":
-            state.active_run_id = None
-        state.run_count = len(state.runs)
+        if effective_run_id:
+            run = self._fetch_run_row(cur, task_id, str(effective_run_id))
+            if run is not None:
+                completed_at = now if status and status != "running" else run.get("completed_at")
+                names = set(_json_list(run["artifact_names"]))
+                if artifact_names:
+                    names.update(normalize_artifact_name(name) for name in artifact_names)
+                cur.execute(
+                    """
+                    UPDATE runs
+                    SET status = COALESCE(%s, status),
+                        completed_at = %s,
+                        error = %s,
+                        needs_input = %s,
+                        artifact_names = %s
+                    WHERE task_id = %s AND id = %s
+                    """,
+                    (
+                        status,
+                        completed_at,
+                        error,
+                        Jsonb(needs_input) if needs_input is not None else None,
+                        Jsonb(sorted(names)),
+                        task_id,
+                        effective_run_id,
+                    ),
+                )
 
-    def _synthesize_legacy_run(self, task_id: str, state: TaskState) -> TaskState:
-        if state.runs:
-            state.run_count = len(state.runs)
-            return state
-        artifact_names = self._top_level_artifact_names(task_id)
-        if not artifact_names and not state.messages and state.status == "idle" and not state.error:
-            state.run_count = 0
-            return state
-
-        first_user_message = next(
-            (message.content for message in state.messages if message.role == "user"),
-            "",
+    def _insert_message(
+        self, cur, task_id: str, message: ChatMessage, run_id: str | None
+    ) -> None:
+        cur.execute(
+            """
+            INSERT INTO messages (task_id, run_id, role, content, created_at, level)
+            VALUES (%s, %s, %s, %s, %s, %s)
+            """,
+            (
+                task_id,
+                run_id,
+                message.role,
+                message.content,
+                message.created_at or utc_now(),
+                message.level,
+            ),
         )
-        completed_at = None if state.status == "running" else state.updated_at
-        state.runs = [
-            TaskRunRecord(
-                id=LEGACY_RUN_ID,
-                status=state.status,
-                message=first_user_message,
-                model=state.model,
-                started_at=state.created_at,
-                completed_at=completed_at,
-                error=state.error,
-                needs_input=state.needs_input,
-                artifact_base_path="artifacts",
-                artifact_names=artifact_names,
-            )
-        ]
-        for message in state.messages:
-            if message.run_id is None:
-                message.run_id = LEGACY_RUN_ID
-        state.run_count = 1
-        if state.status == "running" and state.active_run_id is None:
-            state.active_run_id = LEGACY_RUN_ID
-        return state
 
     @staticmethod
     def _find_run(state: TaskState, run_id: str | None) -> TaskRunRecord | None:
@@ -1137,12 +1355,5 @@ class TaskStorage:
             raise ValueError("产物路径超出本轮运行目录")
         return path
 
-    def _write_state(self, state: TaskState) -> None:
-        state.run_count = len(state.runs)
-        data = state.model_dump()
-        data["events"] = []
-        data["artifacts"] = []
-        path = self.task_dir(state.task_id) / "state.json"
-        temp_path = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-        temp_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp_path.replace(path)
+
+TaskStorage = PostgresTaskStorage

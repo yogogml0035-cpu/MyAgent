@@ -25,6 +25,10 @@ class MessageRequest(BaseModel):
     input_scope: InputScope = "auto"
 
 
+class TaskRenameRequest(BaseModel):
+    title: str = Field(..., min_length=1, max_length=80)
+
+
 class ChatMessage(BaseModel):
     role: Literal["user", "assistant", "system"]
     content: str
@@ -69,6 +73,7 @@ class TaskRunRecord(BaseModel):
 
 class TaskState(BaseModel):
     task_id: str
+    title: str | None = None
     status: TaskStatus
     model: str
     created_at: str

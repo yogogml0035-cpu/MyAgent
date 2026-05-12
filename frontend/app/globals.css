@@ -201,13 +201,42 @@ p {
   gap: 5px;
 }
 
-.historyItem {
+.historyItemShell {
+  position: relative;
   display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  align-items: center;
+  min-height: 42px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  background: transparent;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    color 0.16s ease;
+}
+
+.historyItemShell-active,
+.historyItemShell:hover,
+.historyItemShell:focus-within {
+  border-color: var(--hairline);
+  background: var(--surface-card);
+  color: var(--ink);
+}
+
+.historyItemShell-active {
+  box-shadow: 0 10px 28px rgba(57, 81, 116, 0.1);
+}
+
+.historyItem {
+  display: flex;
   align-items: center;
   width: 100%;
-  min-height: 42px;
-  padding: 8px 10px;
-  border: 1px solid transparent;
+  min-width: 0;
+  min-height: 40px;
+  padding: 8px 4px 8px 10px;
+  border: 0;
   border-radius: var(--radius-md);
   background: transparent;
   color: var(--text);
@@ -227,11 +256,148 @@ p {
   white-space: nowrap;
 }
 
-.historyItem-active,
-.historyItem:hover {
-  border-color: var(--hairline);
-  background: var(--surface-card);
+.historyItem:hover,
+.historyItem:focus-visible {
   color: var(--ink);
+}
+
+.historyMenuButton {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  margin-right: 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease,
+    opacity 0.16s ease;
+}
+
+.historyMenuButton span {
+  position: relative;
+  top: -2px;
+  font-size: 16px;
+  line-height: 1;
+  letter-spacing: 0;
+}
+
+.historyItemShell:hover .historyMenuButton,
+.historyItemShell:focus-within .historyMenuButton,
+.historyItemShell-active .historyMenuButton {
+  opacity: 1;
+}
+
+.historyMenuButton:hover,
+.historyMenuButton[aria-expanded="true"] {
+  background: #dbe5f3;
+  color: #31415c;
+}
+
+.historyActionMenu {
+  position: absolute;
+  top: 32px;
+  right: 6px;
+  z-index: 20;
+  display: grid;
+  min-width: 116px;
+  padding: 6px;
+  border: 1px solid rgba(201, 211, 224, 0.92);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: 0 16px 38px rgba(38, 52, 74, 0.18);
+}
+
+.historyMenuItem {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+  min-height: 34px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #23324d;
+  font-size: 13px;
+  text-align: left;
+}
+
+.historyMenuItem:hover,
+.historyMenuItem:focus-visible {
+  background: #f3f6fb;
+}
+
+.historyMenuItem-danger {
+  color: #e11d48;
+}
+
+.historyMenuItem-danger:hover,
+.historyMenuItem-danger:focus-visible {
+  background: #fff1f2;
+}
+
+.historyActionIcon {
+  width: 16px;
+  height: 16px;
+  background: currentColor;
+}
+
+.historyActionIcon-rename {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 20h9' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 20h9' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+}
+
+.historyActionIcon-delete {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 6h18' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M8 6V4h8v2' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='m19 6-1 14H6L5 6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M10 11v5M14 11v5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M3 6h18' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3Cpath d='M8 6V4h8v2' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='m19 6-1 14H6L5 6' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='M10 11v5M14 11v5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round'/%3E%3C/svg%3E") center / 16px 16px no-repeat;
+}
+
+.historyRenameForm {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 5px;
+  align-items: center;
+  padding: 5px;
+}
+
+.historyRenameForm input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 9px;
+  border: 1px solid #bcd0ee;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+}
+
+.historyRenameForm input:focus {
+  border-color: #78a8f6;
+  box-shadow: 0 0 0 3px rgba(120, 168, 246, 0.16);
+}
+
+.historyRenameForm button {
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 7px;
+  background: #fff;
+  color: #32445f;
+  font-size: 12px;
+}
+
+.historyRenameForm button[type="submit"] {
+  border-color: rgba(64, 108, 179, 0.26);
+  background: #edf4ff;
+  color: #28528f;
 }
 
 .chatWorkspace {

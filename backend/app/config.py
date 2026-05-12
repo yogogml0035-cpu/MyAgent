@@ -15,6 +15,9 @@ class Settings:
 
     task_root: Path
     workspace_root: Path
+    database_url: str | None = None
+    qdrant_url: str | None = None
+    qdrant_collection: str = "myagent_memories"
 
     # Model provider keys
     deepseek_api_key: str | None = None
@@ -22,6 +25,10 @@ class Settings:
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
     tavily_api_key: str | None = None
+    dashscope_api_key: str | None = None
+    embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    embedding_model: str = "text-embedding-v3"
+    embedding_dimensions: int = 1024
 
     # Agent defaults
     default_model: str = "deepseek:deepseek-chat"
@@ -100,11 +107,21 @@ def load_settings() -> Settings:
     return Settings(
         task_root=task_root.resolve(),
         workspace_root=task_root.resolve(),
+        database_url=env_value("MYAGENT_DATABASE_URL", "DATABASE_URL") or None,
+        qdrant_url=os.getenv("MYAGENT_QDRANT_URL") or None,
+        qdrant_collection=os.getenv("MYAGENT_QDRANT_COLLECTION", "myagent_memories"),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         tavily_api_key=os.getenv("TAVILY_API_KEY") or None,
+        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY") or None,
+        embedding_base_url=os.getenv(
+            "MYAGENT_EMBEDDING_BASE_URL",
+            "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        ),
+        embedding_model=os.getenv("MYAGENT_EMBEDDING_MODEL", "text-embedding-v3"),
+        embedding_dimensions=read_int_env("MYAGENT_EMBEDDING_DIMENSIONS", 1024),
         default_model=os.getenv("MYAGENT_DEFAULT_MODEL", "deepseek:deepseek-chat"),
         skills_dirs=skills_dirs,
         max_concurrent_subagents=read_int_env("MYAGENT_MAX_CONCURRENT_SUBAGENTS", 3),
@@ -188,7 +205,7 @@ def read_float_env(name: str, default: float) -> float:
 
 
 def enforce_single_process_runtime() -> None:
-    """Reject multi-worker deployments that would break local JSON storage."""
+    """Reject multi-worker deployments that would break the in-process runner."""
     for name in WORKER_COUNT_ENV_VARS:
         raw_value = os.getenv(name)
         if raw_value is None:
@@ -199,6 +216,6 @@ def enforce_single_process_runtime() -> None:
             continue
         if worker_count > 1:
             raise RuntimeError(
-                "MyAgent 使用进程内任务运行器和本地 JSON 任务存储；"
+                "MyAgent 使用进程内任务运行器和 Postgres 任务存储；"
                 f"{name}={worker_count} 会把任务状态拆分到多个 worker。"
             )

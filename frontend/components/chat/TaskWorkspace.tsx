@@ -12,7 +12,10 @@ export function TaskWorkspace() {
     <main className="agentShell">
       <ChatSidebar
         historyItems={workspace.historyItems}
+        isBusy={workspace.isBusy}
+        onDeleteConversation={workspace.handleDeleteConversation}
         onNewConversation={workspace.handleNewConversation}
+        onRenameConversation={workspace.handleRenameConversation}
         onSelectConversation={workspace.handleSelectConversation}
       />
 

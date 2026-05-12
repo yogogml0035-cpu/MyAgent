@@ -10,6 +10,7 @@ from app.schemas import (
     EventRecord,
     MessageRequest,
     TaskCreateRequest,
+    TaskRenameRequest,
     TaskState,
     TaskSummary,
 )
@@ -79,6 +80,29 @@ def list_tasks(request: Request) -> list[TaskSummary]:
 @router.get("/{task_id}", response_model=TaskState)
 def get_task(task_id: str, request: Request, include_events: bool = True) -> TaskState:
     return _get_existing_task(_storage(request), task_id, include_events=include_events)
+
+
+@router.patch("/{task_id}", response_model=TaskState)
+def rename_task(task_id: str, body: TaskRenameRequest, request: Request) -> TaskState:
+    storage = _storage(request)
+    _get_existing_task(storage, task_id, include_events=False)
+    try:
+        return storage.rename_task(task_id, body.title)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
+
+
+@router.delete("/{task_id}", status_code=204)
+def delete_task(task_id: str, request: Request) -> None:
+    storage = _storage(request)
+    runner = _runner(request)
+    state = _get_existing_task(storage, task_id, include_events=False)
+    if state.status == "running" or runner.is_running(task_id):
+        raise HTTPException(status_code=409, detail="任务运行中，不能删除")
+    try:
+        storage.delete_task(task_id)
+    except (FileNotFoundError, ValueError):
+        raise HTTPException(status_code=404, detail="任务不存在") from None
 
 
 @router.get("/{task_id}/events", response_model=list[EventRecord])

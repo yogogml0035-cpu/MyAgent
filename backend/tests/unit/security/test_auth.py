@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from tests.fakes import InMemoryTaskStorage
 
 
 def _make_app_with_token(tmp_path, access_token: str = "test-secret"):
@@ -12,7 +13,7 @@ def _make_app_with_token(tmp_path, access_token: str = "test-secret"):
         workspace_root=tmp_path / "tasks",
         access_token=access_token,
     )
-    app = create_app(settings)
+    app = create_app(settings, storage=InMemoryTaskStorage(settings.task_root))
     return TestClient(app)
 
 
@@ -91,7 +92,7 @@ class TestLocalOnlyAccess:
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
         )
-        app = create_app(settings)
+        app = create_app(settings, storage=InMemoryTaskStorage(settings.task_root))
         client = TestClient(app)
         resp = client.get("/api/tasks")
         assert resp.status_code == 200

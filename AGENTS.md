@@ -7,7 +7,7 @@
 - 后端：`backend/`，FastAPI + `uv`，入口为 `backend/app/main.py`。
 - 前端：`frontend/`，Next.js app router，主界面由 `frontend/app/page.tsx` 挂载，聊天工作区组件在 `frontend/components/chat/`，任务状态编排在 `frontend/hooks/use-task-workspace.ts`，API 封装在 `frontend/lib/task-api.ts`。
 - 前端 E2E 验收目录：`frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`，用于浏览器端严格 E2E 验收、Playwright 相关资产和网页端截图证据，其中 `YYYYMMDDHHMMSS` 为验收时间戳。该目录下由验收运行生成的截图证据只需本地留存和在交付说明中引用路径，不需要提交到 git。
-- 默认任务存储：`backend/storage/sessions/`。
+- 默认结构化任务存储：Postgres（任务、运行、消息、事件日志）；默认文件存储：`backend/storage/sessions/`（上传和产物文件）。
 - 后端测试：`backend/tests/`，按 `unit/`（agent、models、tools、skills、streaming、runner、api、security、storage、session）、`integration/`、`e2e/`（预留）分目录，文件名必须以 `test_` 开头。
 - 前端测试：`frontend/tests/`，按 `state/`、`workspace/`、`upload/`、`model/` 分类，文件名必须以 `test_` 开头。
 - 当前长期主知识包：`asset/deepagents_platform_knowledge_pack.md`，覆盖 DeepAgents 通用 Agent 平台架构、create_deep_agent 工厂、多模型 Provider、中间件栈、流式 SSE 输出、SubAgent 子智能体、Skill 加载、文件系统工具、联网搜索工具、TaskRunner 运行时、API 路由、前端 SSE 适配、安全边界、测试布局及已知坑点。
@@ -104,6 +104,7 @@
 | 后端字段 | 前端字段 | 说明 |
 |---------|---------|------|
 | `task_id` | `id` | 任务唯一标识 |
+| `title` | `title` | 历史会话自定义标题 |
 | `created_at` | `createdAt` | 创建时间 |
 | `updated_at` | `updatedAt` | 更新时间 |
 | `active_run_id` | `activeRunId` | 当前运行 ID |
@@ -117,8 +118,9 @@
 `TaskRunner` 和 `TaskStorage` 存在隐式耦合：
 
 - `TaskRunner` 通过 `storage.append_event`、`storage.update_task_if_status` 等接口写入状态
-- `TaskStorage` 不感知 runner 存在，但 runner 的并发操作依赖 storage 的 RLock 保证线程安全
+- `TaskStorage` 不感知 runner 存在，但 runner 的并发操作依赖 storage 的事务与单进程调度边界保证一致性
 - 任何直接操作 storage 的代码都应假设 runner 可能在并发写入
+- 事件 seq 由 Postgres 在同一事务中递增 `tasks.latest_event_seq` 并插入 `events`，禁止恢复每次追加前全量扫描事件日志的模式
 
 ## 本地开发参考与建议
 
@@ -177,7 +179,9 @@ git diff --check
 - `DEEPSEEK_API_KEY`、`TAVILY_API_KEY` 等 provider 密钥只能放在 `backend/.env` 或后端运行环境中。
 - `NEXT_PUBLIC_*` 会暴露给浏览器，不能写入 provider 密钥、客户数据或私密样例。
 - 任务 API 默认只允许 loopback；对非本机访问必须配置 `MYAGENT_ACCESS_TOKEN` 并同步前端 `NEXT_PUBLIC_MYAGENT_TOKEN`。
-- 当前后端使用进程内 runner 和本地 JSON 任务存储，不允许多 worker 部署；不要绕过 `WEB_CONCURRENCY`、`UVICORN_WORKERS`、`GUNICORN_WORKERS` 的单进程保护。
+- 当前后端使用进程内 runner 和 Postgres 任务存储，不允许多 worker 部署；不要绕过 `WEB_CONCURRENCY`、`UVICORN_WORKERS`、`GUNICORN_WORKERS` 的单进程保护。
+- `MYAGENT_DATABASE_URL`、`MYAGENT_QDRANT_URL`、`DASHSCOPE_API_KEY` 等数据库、向量库和 embedding 凭据只能放在 `backend/.env` 或后端运行环境中。
+- Qdrant 长期记忆只允许保存成功任务的高层摘要；禁止把上传原文、完整产物正文、流式 token、工具原始日志、密钥或客户敏感内容写入向量库。
 - 不要把上传的真实客户文档、生成的敏感报告、密钥、令牌或本地绝对私密路径写入文档、测试夹具或知识包。
 
 ## 审查收敛的运行时边界
@@ -188,7 +192,7 @@ git diff --check
 
 - `TaskRunner.__init__` 必须同时接收 `settings` 和 `storage`，由 `main.py` 在 `create_app()` 中注入到 `app.state`。
 - `TaskRunner.start_background()` 必须接收 `run_id` 参数（来自 `storage.start_run()`），确保 storage 层和 streaming 层的 run_id 一致。
-- Agent 运行产出的事件必须通过 `storage.append_event()` 持久化到 `events.jsonl`，不可丢弃。
+- Agent 运行产出的事件必须通过 `storage.append_event()` 持久化到 Postgres `events` 表，seq 必须连续且由事务生成，事件不可丢弃。
 - Agent 运行结束后必须调用 `storage.update_task_if_status()` 将任务状态更新为终态（`complete`/`failed`/`cancelled`）。
 - 任何修改 TaskRunner 的变更必须同步验证 `backend/tests/unit/runner/` 中的测试覆盖。
 

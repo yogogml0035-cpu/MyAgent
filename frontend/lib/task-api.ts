@@ -96,6 +96,35 @@ export async function fetchTask(id: string, options: { includeEvents?: boolean }
   );
 }
 
+export async function renameTask(id: string, title: string) {
+  return normalizeTaskState(
+    await requestTaskJson<unknown>(`/api/tasks/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+    id,
+  );
+}
+
+export async function deleteTask(id: string) {
+  let response: Response;
+  try {
+    response = await fetch(`${TASK_API_BASE_URL}/api/tasks/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+      headers: {
+        ...(TASK_API_ACCESS_TOKEN ? { "X-MyAgent-Token": TASK_API_ACCESS_TOKEN } : {}),
+      },
+    });
+  } catch (caught) {
+    throw new Error(formatRequestFailure(caught, TASK_API_BASE_URL));
+  }
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(formatHttpErrorMessage(response.status, response.statusText, text));
+  }
+}
+
 export async function fetchTaskEvents(id: string, afterId?: string): Promise<ExecutionLog[]> {
   const query = afterId ? `?after_id=${encodeURIComponent(afterId)}` : "";
   return normalizeEventRecords(

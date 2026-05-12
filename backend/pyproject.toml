@@ -17,6 +17,7 @@ dependencies = [
   "langchain-deepseek>=0.1,<2.0.0",
   "tavily-python>=0.5,<1.0.0",
   "langgraph-checkpoint",
+  "psycopg[binary]>=3.2,<4.0",
 ]
 
 [dependency-groups]

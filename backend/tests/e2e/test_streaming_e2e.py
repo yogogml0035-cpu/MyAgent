@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from tests.fakes import InMemoryTaskStorage
 
 
 @pytest.fixture
@@ -16,7 +17,7 @@ def app_client(tmp_path):
         task_root=tmp_path / "tasks",
         workspace_root=tmp_path / "tasks",
     )
-    app = create_app(settings)
+    app = create_app(settings, storage=InMemoryTaskStorage(settings.task_root))
     return TestClient(app)
 
 

@@ -6,8 +6,9 @@ import inspect
 import pytest
 from langchain_core.messages import AIMessage
 
+from app.memory import MemoryServiceError
 from app.runner.core import TaskRunner
-from app.storage import TaskStorage
+from tests.fakes import InMemoryTaskStorage
 
 
 class TestTaskRunnerInit:
@@ -47,7 +48,7 @@ class TestTaskRunnerTerminalEvents:
     async def test_successful_background_run_writes_task_completed_event(
         self, test_settings, monkeypatch
     ):
-        storage = TaskStorage(test_settings.task_root)
+        storage = InMemoryTaskStorage(test_settings.task_root)
         runner = TaskRunner(test_settings, storage)
         state = storage.create_task(message=None, model="deepseek:deepseek-chat")
         run_result = storage.start_run(
@@ -81,7 +82,7 @@ class TestTaskRunnerTerminalEvents:
     async def test_failed_background_run_writes_task_failed_event(
         self, test_settings, monkeypatch
     ):
-        storage = TaskStorage(test_settings.task_root)
+        storage = InMemoryTaskStorage(test_settings.task_root)
         runner = TaskRunner(test_settings, storage)
         state = storage.create_task(message=None, model="deepseek:deepseek-chat")
         run_result = storage.start_run(
@@ -109,10 +110,39 @@ class TestTaskRunnerTerminalEvents:
         assert storage.get_task(state.task_id).status == "failed"
 
     @pytest.mark.asyncio
+    async def test_memory_runtime_failure_marks_task_failed(self, test_settings, monkeypatch):
+        storage = InMemoryTaskStorage(test_settings.task_root)
+        runner = TaskRunner(test_settings, storage)
+        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        run_result = storage.start_run(
+            state.task_id,
+            message="hello",
+            model="deepseek:deepseek-chat",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+
+        async def fake_start(*args, **kwargs):
+            raise MemoryServiceError("Embedding 服务不可用")
+
+        monkeypatch.setattr(runner, "start", fake_start)
+
+        runner.start_background(state.task_id, "hello", model="deepseek:deepseek-chat", run_id=run_id)
+        await _wait_for_runner(runner, state.task_id)
+
+        failed = [event for event in storage.read_events(state.task_id) if event.type == "task_failed"]
+
+        assert len(failed) == 1
+        assert failed[0].run_id == run_id
+        assert failed[0].payload == {"error": "Embedding 服务不可用", "source": "memory"}
+        assert storage.get_task(state.task_id).status == "failed"
+
+    @pytest.mark.asyncio
     async def test_cancelled_background_run_writes_run_scoped_cancel_event(
         self, test_settings, monkeypatch
     ):
-        storage = TaskStorage(test_settings.task_root)
+        storage = InMemoryTaskStorage(test_settings.task_root)
         runner = TaskRunner(test_settings, storage)
         state = storage.create_task(message=None, model="deepseek:deepseek-chat")
         run_result = storage.start_run(

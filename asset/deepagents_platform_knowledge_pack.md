@@ -25,16 +25,18 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Streaming uses `agent.astream(input, stream_mode=["messages", "updates"], version="v2")` via the v2 adapter (`v2_adapter.py`). LangGraph v2 returns chunks as **dicts** with keys `{type, ns, data}`, not `(namespace, mode, payload)` tuples. The adapter must handle both formats for robustness. Events are converted to `EventRecord` objects via `event_converter.py`.
 - SSE endpoint at `GET /api/tasks/{task_id}/stream` provides real-time output. Frontend uses `EventSource` API with token as query parameter.
 - SSE `_event_stream` polls `storage.read_events(task_id, after_id=last_event_id)` every 0.5s. `last_event_id` must be initialized to `None` (not `""`) so the first poll returns all existing events. An empty string causes `read_events` to skip every event because `after_id is None` evaluates to `False` and no event has `id == ""`.
-- `TaskRunner` manages agent lifecycle: build agent → stream events → convert → collect → persist events to storage → update task status. `TaskRunner.__init__` requires both `settings` and `storage` (injected from `main.py`). `start_background()` accepts `run_id` from `storage.start_run()` to ensure unified run_id across storage and streaming events. After agent execution, events are persisted via `storage.append_event()` and task status is updated to terminal state (`complete`/`failed`/`cancelled`). The runner also writes run-scoped terminal events (`task_completed`, `task_failed`, `task_cancelled`) together with the terminal status update, so the UI can correlate completion, failure, or cancellation with the active run. Supports cancellation via `cancel()`. Enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`.
+- `TaskRunner` manages agent lifecycle: build agent → recall long-term memory → stream events → convert → collect → persist events to storage → write completed-run memory → update task status. `TaskRunner.__init__` receives `settings`, `storage`, and optional `memory_service` from `main.py`. `start_background()` accepts `run_id` from `storage.start_run()` to ensure unified run_id across storage and streaming events. After agent execution, events are persisted via `storage.append_event()` and task status is updated to terminal state (`complete`/`failed`/`cancelled`). The runner also writes run-scoped terminal events (`task_completed`, `task_failed`, `task_cancelled`) together with terminal status updates, so the UI can correlate completion, failure, or cancellation with the active run. Supports cancellation via `cancel()`. Enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`.
 - `create_app()` uses FastAPI `lifespan` instead of `@app.on_event("startup")`. Startup interruption of stale running tasks must stay inside that lifespan handler, and tests that need startup side effects must enter `TestClient` as a context manager (`with TestClient(app):`).
 - API endpoints `create_task` and `send_message` are `async def` to allow `asyncio.create_task` on the event loop. `cancel_task` delegates terminal status and event persistence to `TaskRunner.cancel()`/the running background task rather than appending a second unscoped cancellation event.
 - Filesystem tools are scoped to per-task workspace (`settings.workspace_root / task_id`), not the global sessions root. This prevents cross-task file access.
-- Task API routes follow REST conventions: `POST /api/tasks` (create), `GET /api/tasks` (list), `GET /api/tasks/{id}` (read), `POST /api/tasks/{id}/messages` (send message), `POST /api/tasks/{id}/cancel` (cancel). `GET /api/tasks/{id}?include_events=false` is the lightweight refresh path and must return the same task shape with an empty `events` list. Artifact routes are first-class API routes: `GET /api/tasks/{id}/artifacts/{name}` for latest or legacy artifacts and `GET /api/tasks/{id}/runs/{run_id}/artifacts/{name}` for run-scoped artifacts.
+- Task API routes follow REST conventions: `POST /api/tasks` (create), `GET /api/tasks` (list), `GET /api/tasks/{id}` (read), `PATCH /api/tasks/{id}` (rename history title), `DELETE /api/tasks/{id}` (delete non-running task), `POST /api/tasks/{id}/messages` (send message), `POST /api/tasks/{id}/cancel` (cancel). `GET /api/tasks/{id}?include_events=false` is the lightweight refresh path and must return the same task shape with an empty `events` list. Artifact routes are first-class API routes: `GET /api/tasks/{id}/artifacts/{name}` for latest or legacy artifacts and `GET /api/tasks/{id}/runs/{run_id}/artifacts/{name}` for run-scoped artifacts.
 - Upload validation errors must map to stable client-facing HTTP status codes: duplicate filename conflicts return 409, size/count/request limits return 413, unsupported extensions or invalid JSON content return 400, and missing tasks return 404. The storage layer may raise domain exceptions, but API routes must not leak these as 500 responses.
 - Auth middleware enforces loopback-only access by default; non-local access requires `MYAGENT_ACCESS_TOKEN`.
 - Frontend local development keeps `next dev` output in `.next-dev` and production builds in `.next` via `NEXT_DIST_DIR`, so dev caches and production build artifacts never share one output directory.
 - Frontend type checking runs `next typegen && tsc --noEmit`; `next-env.d.ts` is generated and ignored instead of being version-controlled.
 - Frontend CI treats lint warnings as failures because `frontend/package.json` runs `eslint . --max-warnings=0`; a warning-free local run is required before pushing, and a remote lint warning is a blocking CI failure, not a soft signal.
+- Structured task state uses Postgres as the production authority for tasks, runs, messages, and append-only events. Uploads and artifacts remain files under the task workspace. Event seq is generated by incrementing `tasks.latest_event_seq` and inserting the event in one database transaction; do not restore per-append full log scans.
+- Long-term memory uses Qdrant plus DashScope-compatible embeddings. Startup requires Postgres, Qdrant, and embedding configuration to be available. Qdrant only stores deterministic high-level summaries for successful completed runs; it must not store uploaded source text, complete artifacts, stream deltas, raw tool logs, secrets, or customer-sensitive text.
 - Any bug fix, feature, or other behavior change must pass live browser E2E acceptance against a running frontend and backend, and screenshot evidence must be stored under `frontend/e2e-playwright/`. Unit, integration, API, lint, or build checks do not replace this requirement.
 - `frontend/e2e-playwright/` must keep a `README.md` comment file that explains the directory purpose, screenshot evidence role, and redaction expectations. If the repo lacks an E2E entrypoint for the changed scenario, add it in the same change before considering the work complete.
 - Repository-wide line-ending normalization is enforced with a root `.gitattributes`: text files default to LF, while PowerShell scripts use CRLF on checkout.
@@ -45,6 +47,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Create task: `POST /api/tasks` → `{"task_id": "...", "status": "idle", "model": "deepseek:deepseek-chat", ...}`
 - Lightweight task refresh: `GET /api/tasks/{id}?include_events=false` → same task state shape with `"events": []`
 - Send message: `POST /api/tasks/{id}/messages` body: `{"message": "搜索最新的AI新闻", "model": "deepseek:deepseek-chat"}`
+- Rename history item: `PATCH /api/tasks/{id}` body: `{"title": "项目复盘"}` updates the custom title used by `GET /api/tasks`.
+- Delete history item: `DELETE /api/tasks/{id}` removes a non-running task and its local task files; running tasks must be cancelled or completed before deletion.
 - Download artifact: `GET /api/tasks/{id}/runs/{run_id}/artifacts/report.html` → `FileResponse` with the artifact MIME type and safe filename.
 - Build agent: `build_agent(settings, tools=get_platform_tools(settings), skills=["./skills"])`
 - Model ID format: `"deepseek:deepseek-chat"`, `"openai:gpt-4o"`, `"anthropic:claude-sonnet-4-20250514"`
@@ -53,10 +57,11 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 ## Boundary Conditions
 
 - `create_deep_agent()` does NOT accept duplicate middleware instances — assertion error if duplicates found.
-- `storage.py` depends on compatibility shims in `app/contracts/__init__.py` and `app/reasoning_trace.py` that recreate deleted module types. These shims must not be removed until storage.py is rewritten.
+- `storage.py` still depends on compatibility shims in `app/contracts/__init__.py` and `app/reasoning_trace.py` for session events, resource refs, and reasoning trace payloads. Do not remove the shims until those contracts are replaced across storage, streaming, and tools.
 - `schemas.py` inlines `TaskMode` and `InputScope` Literal types (previously from deleted `intent.py`).
 - Missing API keys cause graceful errors in provider (not crashes). Tavily tool returns error string if key missing.
 - Missing provider API keys make affected models unavailable at `/api/models` and must block run-starting requests before background scheduling. This avoids creating task runs that are guaranteed to fail only after storage state changes.
+- History rename/delete are real task API operations, not frontend-only state. Rename stores a bounded custom task title; delete must reject running tasks to avoid orphaning an active in-process runner.
 - Artifact names are normalized file names only, not paths. Artifact download routes must resolve through `TaskStorage.resolve_artifact()` or `TaskStorage.resolve_run_artifact()` so path traversal and cross-run access stay blocked.
 - `SKILL.md` files without valid YAML frontmatter are silently skipped during discovery.
 - `next typegen` loads `next.config.mjs` with the production build phase; keep any required config inputs available before running frontend type checks in CI.
@@ -71,10 +76,10 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **Run-scoped terminal events**: Do not append terminal events from API endpoints after calling the runner. The runner owns terminal status plus terminal event writes so the `run_id` stays consistent and duplicate unscoped events are not produced.
 - **Artifact route drift**: Frontend artifact cards depend on `ArtifactRecord.url` pointing to real backend routes. Adding new artifact storage locations requires updating both the URL generator and the corresponding FastAPI download route.
 - **Upload exception leakage**: Storage upload validation exceptions should be translated by the API layer. A malformed user upload is a 4xx client error, never an unhandled 500.
-- **storage.py coupling**: TaskStorage is deeply coupled to old contracts/reasoning_trace types via compatibility shims. A future storage rewrite should use native DeepAgents state management.
-- **Single-process runtime**: The platform uses in-process runner and local JSON storage. Multi-worker deployment will break.
+- **storage.py coupling**: TaskStorage is now Postgres-backed for structured state, but still exposes compatibility methods for session events, artifact refs, and reasoning traces. Keep storage changes synchronized with API, runner, streaming, and file tools.
+- **Single-process runtime**: The platform uses an in-process runner even though task state is in Postgres. Multi-worker deployment will break cancellation and active-run ownership until a lease/queue design is added.
 - **Timeout enforcement**: `TaskRunner.start()` enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`. If the deepagents SDK or LLM call hangs, the run is terminated after the configured timeout and a warning is logged.
-- **checkpointer/store passthrough**: `build_agent()` passes `checkpointer` and `store` to `create_deep_agent()`, but the current deployment uses no checkpointer (state is managed by TaskStorage in JSON files). To enable LangGraph-native persistence, pass an `InMemorySaver` or `PostgresSaver` instance when constructing the agent.
+- **checkpointer/store passthrough**: `build_agent()` passes `checkpointer` and `store` to `create_deep_agent()`, but the current deployment does not use LangGraph-native persistence. Task lifecycle state is managed by Postgres TaskStorage; enabling LangGraph-native persistence would be a separate design.
 - **LangGraph checkpoint source pin**: `backend/pyproject.toml` pins `langgraph-checkpoint` through `tool.uv.sources` to the `langchain-ai/langgraph` Git commit `2e5025ec1ac8d435840ed4a972097de87aaa2eab` (`libs/checkpoint`). This is intentional: the latest PyPI stable release still emits the startup `LangChainPendingDeprecationWarning`, while that upstream commit already switched `jsonplus.py` to `Reviver(allowed_objects="core")`.
 - **LangGraph v2 stream format**: `agent.astream(..., version="v2")` returns chunks as dicts `{type, ns, data}`, NOT tuples `(namespace, mode, payload)`. Unpacking as a 3-tuple silently iterates dict keys (`"type"`, `"ns"`, `"data"`), causing `mode = "ns"` to be logged and all events dropped. The v2_adapter must check `isinstance(chunk, dict)` and extract `chunk["type"]` / `chunk["data"]`.
 - **Generated Next type files**: `next-env.d.ts` and route types are generated artifacts. Do not review or commit them as source changes; rerun `npm run typecheck` if they are missing locally.
@@ -96,6 +101,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Entry point: `backend/app/main.py`
 - Skills directory: `backend/skills/web_research/SKILL.md`, `backend/skills/code_review/SKILL.md`
 - Compatibility shims: `backend/app/contracts/__init__.py`, `backend/app/reasoning_trace.py`
+- Memory service: `backend/app/memory.py`
 - Frontend CI workflow: `.github/workflows/frontend-ci.yml`
 - Backend CI workflow: `.github/workflows/backend-ci.yml`
 - Frontend type generation and ignore rules: `frontend/package.json`, `frontend/.gitignore`, `frontend/tsconfig.json`
@@ -114,10 +120,12 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
   - `backend/tests/unit/api/`
   - `backend/tests/unit/security/`
   - `backend/tests/unit/storage/`
+  - `backend/tests/unit/runner/test_memory.py`
   - `backend/tests/unit/session/`
 - Runtime contract tests: `backend/tests/unit/api/test_artifacts.py`, `backend/tests/unit/api/test_models.py`, `backend/tests/unit/api/test_tasks.py`, `backend/tests/unit/runner/test_core.py`, `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`
 - Integration tests: `backend/tests/integration/`
 - E2E tests: `backend/tests/e2e/test_streaming_e2e.py`
+- Real-service integration tests: `backend/tests/integration/test_postgres_memory_storage.py` (runs when Postgres/Qdrant/DashScope env is configured)
 - Frontend tests:
   - `frontend/tests/state/`
   - `frontend/tests/workspace/`
@@ -183,6 +191,8 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 
 - Middleware duplication if future developer re-adds default middleware to the stack.
 - storage.py breakage if compatibility shims are deleted without rewriting storage.
+- Memory privacy regression if Qdrant receives raw uploads, full reports, stream deltas, or tool logs instead of bounded high-level completed-task summaries.
+- Startup reliability regression if Postgres/Qdrant/embedding checks are bypassed while production code assumes those services exist.
 - Model format mismatch if frontend sends old-style `deepseek-reasoner` instead of `deepseek:deepseek-chat`.
 - Model availability regression if `/api/models` stops exposing `available` or task/message endpoints schedule runs for unavailable providers.
 - Artifact download regression if `ArtifactRecord.url` no longer matches FastAPI routes or run-scoped artifacts fall back to the latest legacy artifact.

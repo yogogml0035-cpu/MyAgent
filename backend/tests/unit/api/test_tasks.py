@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from tests.fakes import InMemoryTaskStorage
 
 
 @pytest.fixture
@@ -14,7 +15,7 @@ def app_client(tmp_path):
         workspace_root=tmp_path / "tasks",
         deepseek_api_key="sk-test",
     )
-    app = create_app(settings)
+    app = create_app(settings, storage=InMemoryTaskStorage(settings.task_root))
     return TestClient(app)
 
 
@@ -57,7 +58,7 @@ class TestCreateTask:
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
         )
-        client = TestClient(create_app(settings))
+        client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
 
         response = client.post(
             "/api/tasks",
@@ -94,6 +95,73 @@ class TestGetTask:
 
         assert response.status_code == 200
         assert response.json()["events"] == []
+
+
+class TestTaskHistoryActions:
+    def test_rename_task_updates_history_title(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        runner = app_client.app.state.runner
+        original_start = runner.start_background
+
+        def mock_start_background(*args, **kwargs):
+            pass
+
+        runner.start_background = mock_start_background
+        try:
+            message_response = app_client.post(
+                f"/api/tasks/{task_id}/messages",
+                json={"message": "原始标题内容", "model": "deepseek:deepseek-chat"},
+            )
+        finally:
+            runner.start_background = original_start
+        assert message_response.status_code == 200
+
+        response = app_client.patch(
+            f"/api/tasks/{task_id}",
+            json={"title": "  项目复盘  "},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["title"] == "项目复盘"
+        summaries = app_client.get("/api/tasks").json()
+        assert any(item["task_id"] == task_id and item["title"] == "项目复盘" for item in summaries)
+
+    def test_rename_task_rejects_blank_title(self, create_idle_task, app_client):
+        created = create_idle_task()
+
+        response = app_client.patch(
+            f"/api/tasks/{created['task_id']}",
+            json={"title": "   "},
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "会话名称不能为空"
+
+    def test_delete_task_removes_task_state(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+
+        response = app_client.delete(f"/api/tasks/{task_id}")
+
+        assert response.status_code == 204
+        assert app_client.get(f"/api/tasks/{task_id}").status_code == 404
+
+    def test_delete_running_task_returns_409(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+        assert storage.start_run(
+            task_id,
+            message="hello",
+            model="deepseek:deepseek-chat",
+            expected_statuses={"idle"},
+        )
+
+        response = app_client.delete(f"/api/tasks/{task_id}")
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "任务运行中，不能删除"
 
 
 class TestGetEvents:
@@ -168,7 +236,7 @@ class TestSendMessage:
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
         )
-        client = TestClient(create_app(settings))
+        client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
         created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
 
         response = client.post(
@@ -244,7 +312,7 @@ class TestUploadFiles:
             deepseek_api_key="sk-test",
             max_upload_files=1,
         )
-        client = TestClient(create_app(settings))
+        client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
         created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
 
         response = client.post(
@@ -264,7 +332,7 @@ class TestUploadFiles:
             deepseek_api_key="sk-test",
             max_upload_file_bytes=4,
         )
-        client = TestClient(create_app(settings))
+        client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
         created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
 
         response = client.post(
