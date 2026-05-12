@@ -26,6 +26,27 @@ test("task workspace follows components, hook, and api-client boundaries", () =>
   });
 });
 
+test("history sidebar exposes compact rename and delete actions", () => {
+  const sidebarSource = readFileSync(
+    new URL("../../components/chat/ChatSidebar.tsx", import.meta.url),
+    "utf-8",
+  );
+  const workspaceSource = readFileSync(
+    new URL("../../components/chat/TaskWorkspace.tsx", import.meta.url),
+    "utf-8",
+  );
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.equal(sidebarSource.includes("historyMenuButton"), true);
+  assert.equal(sidebarSource.includes("重命名"), true);
+  assert.equal(sidebarSource.includes("删除"), true);
+  assert.equal(sidebarSource.includes("historyRenameForm"), true);
+  assert.equal(workspaceSource.includes("onRenameConversation"), true);
+  assert.equal(workspaceSource.includes("onDeleteConversation"), true);
+  assert.match(cssSource, /\.historyActionMenu\s*\{[\s\S]*?position: absolute;[\s\S]*?box-shadow:/);
+  assert.match(cssSource, /\.historyMenuItem-danger\s*\{[\s\S]*?color: #e11d48;/);
+});
+
 test("frontend dev server uses an isolated Next dist directory", () => {
   const nextConfigSource = readFileSync(
     new URL("../../next.config.mjs", import.meta.url),

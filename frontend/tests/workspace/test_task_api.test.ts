@@ -11,6 +11,8 @@ void describe("task-api exports", () => {
     assert.strictEqual(typeof api.uploadTaskFiles, "function");
     assert.strictEqual(typeof api.postTaskMessage, "function");
     assert.strictEqual(typeof api.cancelTask, "function");
+    assert.strictEqual(typeof api.renameTask, "function");
+    assert.strictEqual(typeof api.deleteTask, "function");
     assert.strictEqual(typeof api.fetchArtifactBlob, "function");
   });
 });

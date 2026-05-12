@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from app.config import Settings
 from app.main import create_app
+from tests.fakes import InMemoryTaskStorage
 
 
 def _client(tmp_path):
@@ -12,7 +13,7 @@ def _client(tmp_path):
         workspace_root=tmp_path / "tasks",
         deepseek_api_key="sk-test",
     )
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
 
 
 def test_download_legacy_artifact(tmp_path):
@@ -67,4 +68,3 @@ def test_download_rejects_invalid_artifact_name(tmp_path):
     response = client.get(f"/api/tasks/{created['task_id']}/artifacts/%2e%2e")
 
     assert response.status_code == 400
-

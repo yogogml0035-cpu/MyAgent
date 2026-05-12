@@ -6,14 +6,15 @@ import asyncio
 import contextlib
 import logging
 from collections.abc import Callable
-from typing import Any
+from typing import Any, Protocol
 
-from langchain_core.messages import HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.factory import build_agent
 from app.config import Settings
-from app.schemas import ChatMessage, EventRecord
-from app.storage import TaskStorage
+from app.contracts import EventLevel
+from app.memory import AgentMemoryService, MemoryServiceError
+from app.schemas import ChatMessage, EventRecord, TaskStatus
 from app.streaming.event_converter import convert_stream_event
 from app.streaming.v2_adapter import extract_final_answer, stream_agent
 from app.tools.registry import get_platform_tools
@@ -21,12 +22,48 @@ from app.tools.registry import get_platform_tools
 logger = logging.getLogger(__name__)
 
 
+class RunnerStorage(Protocol):
+    def append_event(
+        self,
+        task_id: str,
+        event_type: str,
+        message: str,
+        payload: dict[str, Any] | None = None,
+        *,
+        run_id: str | None = None,
+        level: EventLevel | None = None,
+    ) -> EventRecord: ...
+
+    def update_task_if_status_and_append_event(
+        self,
+        task_id: str,
+        expected_statuses: set[TaskStatus],
+        *,
+        event_type: str,
+        event_message: str,
+        event_payload: dict[str, Any] | None = None,
+        event_level: EventLevel | None = None,
+        status: TaskStatus | None = None,
+        error: str | None = None,
+        needs_input: dict[str, Any] | None = None,
+        append_message: ChatMessage | None = None,
+        run_id: str | None = None,
+        artifact_names: list[str] | None = None,
+    ) -> Any: ...
+
+
 class TaskRunner:
     """Orchestrates agent execution for a task: build, stream, convert, collect."""
 
-    def __init__(self, settings: Settings, storage: TaskStorage | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        storage: RunnerStorage | None = None,
+        memory_service: AgentMemoryService | None = None,
+    ) -> None:
         self.settings = settings
         self.storage = storage
+        self.memory_service = memory_service
         self._active_runs: dict[str, asyncio.Task[None]] = {}
 
     async def start(
@@ -58,7 +95,12 @@ class TaskRunner:
             workspace_dir=task_workspace,
         )
 
-        messages: list[Any] = [HumanMessage(content=message)]
+        messages: list[Any] = []
+        if self.memory_service is not None:
+            memory_context = self.memory_service.recall_context(message)
+            if memory_context:
+                messages.append(SystemMessage(content=memory_context))
+        messages.append(HumanMessage(content=message))
         config: dict[str, Any] = {
             "configurable": {"thread_id": task_id},
         }
@@ -131,6 +173,13 @@ class TaskRunner:
 
                 append_message: ChatMessage | None = None
                 if final_answer:
+                    if self.memory_service is not None:
+                        self.memory_service.remember_completed_run(
+                            task_id=task_id,
+                            run_id=run_id,
+                            user_goal=message,
+                            final_answer=final_answer,
+                        )
                     append_message = ChatMessage(
                         role="assistant",
                         content=final_answer,
@@ -185,6 +234,19 @@ class TaskRunner:
                     event_message="任务已取消。",
                     event_payload={"previous_status": "running"},
                     event_level="warning",
+                )
+                raise
+            except MemoryServiceError as exc:
+                self.storage.update_task_if_status_and_append_event(
+                    task_id,
+                    {"running"},
+                    status="failed",
+                    error=str(exc),
+                    run_id=run_id,
+                    event_type="task_failed",
+                    event_message=str(exc),
+                    event_payload={"error": str(exc), "source": "memory"},
+                    event_level="error",
                 )
                 raise
             except Exception as exc:

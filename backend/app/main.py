@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from hmac import compare_digest
 from ipaddress import ip_address
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -18,21 +19,47 @@ from .api.models import router as models_router
 from .api.streaming import router as streaming_router
 from .api.tasks import router as tasks_router
 from .config import Settings, enforce_single_process_runtime, load_settings
+from .memory import AgentMemoryService, MemoryServiceError
 from .runner.core import TaskRunner
-from .storage import TaskStorage
+from .storage import PostgresTaskStorage
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    *,
+    storage: Any | None = None,
+    memory_service: AgentMemoryService | None = None,
+) -> FastAPI:
     resolved = settings or load_settings()
     enforce_single_process_runtime()
 
-    storage = TaskStorage(resolved.task_root)
-    runner = TaskRunner(resolved, storage)
+    startup_errors: list[str] = []
+    external_services_required = storage is None
+    if storage is None:
+        if not resolved.database_url:
+            startup_errors.append("MYAGENT_DATABASE_URL 未配置")
+        else:
+            storage = PostgresTaskStorage(resolved.task_root, resolved.database_url)
+
+    if external_services_required and memory_service is None:
+        try:
+            memory_service = AgentMemoryService(resolved)
+        except MemoryServiceError as exc:
+            startup_errors.append(str(exc))
+
+    runner = TaskRunner(resolved, storage, memory_service)
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+        if startup_errors:
+            raise RuntimeError("；".join(startup_errors))
+        assert storage is not None
+        if hasattr(storage, "initialize"):
+            storage.initialize()
+        if memory_service is not None:
+            memory_service.startup_check()
         interrupted = storage.interrupt_running_tasks("后端启动或重载时中断了任务。")
         if interrupted:
             logger.info("Startup interrupted %d running task(s): %s", len(interrupted), interrupted)

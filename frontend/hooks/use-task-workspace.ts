@@ -33,6 +33,7 @@ import {
   cancelTask,
   createTask,
   createTaskEventSource,
+  deleteTask,
   fetchArtifactBlob,
   fetchModelOptions,
   fetchTask,
@@ -40,6 +41,7 @@ import {
   fetchTaskSummaries,
   formatTaskApiFailure,
   postTaskMessage,
+  renameTask,
   uploadTaskFiles,
 } from "../lib/task-api";
 
@@ -434,6 +436,61 @@ export function useTaskWorkspace() {
     [isBusy, refreshTask, taskId],
   );
 
+  const handleRenameConversation = useCallback(
+    async (id: string, title: string) => {
+      const normalizedTitle = title.trim();
+      if (!id || !normalizedTitle || isBusy) {
+        return;
+      }
+
+      setError("");
+      setIsBusy(true);
+      try {
+        await renameTask(id, normalizedTitle);
+        await refreshTaskSummaries();
+        if (id === taskId) {
+          await refreshTaskSummary(id);
+        }
+      } catch (caught) {
+        setErrorLevel("error");
+        setError(formatTaskApiFailure(caught));
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [isBusy, refreshTaskSummaries, refreshTaskSummary, taskId],
+  );
+
+  const handleDeleteConversation = useCallback(
+    async (id: string) => {
+      if (!id || isBusy) {
+        return;
+      }
+      const summary = taskSummaries.find((item) => item.id === id);
+      if (summary?.status === "running") {
+        setErrorLevel("warning");
+        setError("任务运行中，暂时不能删除。");
+        return;
+      }
+
+      setError("");
+      setIsBusy(true);
+      try {
+        await deleteTask(id);
+        if (id === taskId) {
+          handleNewConversation();
+        }
+        await refreshTaskSummaries();
+      } catch (caught) {
+        setErrorLevel("error");
+        setError(formatTaskApiFailure(caught));
+      } finally {
+        setIsBusy(false);
+      }
+    },
+    [handleNewConversation, isBusy, refreshTaskSummaries, taskId, taskSummaries],
+  );
+
   const showCopyFeedback = useCallback((copyKey?: string) => {
     if (!copyKey) {
       return;
@@ -533,6 +590,8 @@ export function useTaskWorkspace() {
     handleFileSelection,
     handleNewConversation,
     handleOpenArtifact,
+    handleDeleteConversation,
+    handleRenameConversation,
     handleSelectConversation,
     handleStop,
     handleSubmit,

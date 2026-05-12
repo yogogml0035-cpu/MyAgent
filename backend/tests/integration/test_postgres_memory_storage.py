@@ -1,0 +1,88 @@
+from __future__ import annotations
+
+import os
+
+import pytest
+
+from app.config import Settings
+from app.memory import AgentMemoryService
+from app.storage import PostgresTaskStorage
+
+
+def _is_placeholder(value: str | None) -> bool:
+    if not value:
+        return True
+    markers = ("USER", "PASSWORD", "DBNAME", "your-", "xxx", "example")
+    return any(marker in value for marker in markers)
+
+
+def _database_url() -> str | None:
+    value = os.getenv("MYAGENT_TEST_DATABASE_URL") or os.getenv("MYAGENT_DATABASE_URL")
+    return None if _is_placeholder(value) else value
+
+
+@pytest.mark.skipif(not _database_url(), reason="Postgres integration env is not configured")
+def test_postgres_event_seq_survives_storage_reinstantiation(tmp_path):
+    database_url = _database_url()
+    assert database_url is not None
+    storage = PostgresTaskStorage(tmp_path / "tasks", database_url)
+    storage.initialize()
+    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+    for index in range(50):
+        storage.append_event(state.task_id, "assistant_answer_delta", f"chunk {index}")
+
+    restarted = PostgresTaskStorage(tmp_path / "tasks", database_url)
+    restarted.initialize()
+    restarted.append_event(state.task_id, "final_answer", "done")
+
+    events = restarted.read_events(state.task_id)
+    assert [event.seq for event in events] == list(range(1, 53))
+
+
+@pytest.mark.skipif(not _database_url(), reason="Postgres integration env is not configured")
+def test_postgres_rename_and_delete_task(tmp_path):
+    database_url = _database_url()
+    assert database_url is not None
+    storage = PostgresTaskStorage(tmp_path / "tasks", database_url)
+    storage.initialize()
+    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+
+    renamed = storage.rename_task(state.task_id, "  历史菜单验收  ")
+
+    assert renamed.title == "历史菜单验收"
+    storage.delete_task(state.task_id)
+    with pytest.raises(FileNotFoundError):
+        storage.get_task(state.task_id)
+
+
+def _memory_env_ready() -> bool:
+    return not _is_placeholder(os.getenv("MYAGENT_QDRANT_URL")) and not _is_placeholder(
+        os.getenv("DASHSCOPE_API_KEY")
+    )
+
+
+@pytest.mark.skipif(
+    not (_database_url() and _memory_env_ready()),
+    reason="Qdrant/DashScope integration env is not configured",
+)
+def test_memory_service_writes_and_recalls_completed_task_summary(tmp_path):
+    settings = Settings(
+        task_root=tmp_path / "tasks",
+        workspace_root=tmp_path / "tasks",
+        database_url=_database_url(),
+        qdrant_url=os.getenv("MYAGENT_QDRANT_URL"),
+        dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
+    )
+    service = AgentMemoryService(settings)
+    service.startup_check()
+    service.remember_completed_run(
+        task_id="memory-integration-task",
+        run_id="run-memory-integration",
+        user_goal="记住我喜欢先做架构边界再写实现",
+        final_answer="后续同类任务会先明确存储边界、失败策略和测试入口。",
+    )
+
+    context = service.recall_context("下一次存储架构设计应该怎么开始？")
+
+    assert context is not None
+    assert "长期记忆" in context
