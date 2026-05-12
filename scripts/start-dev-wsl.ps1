@@ -152,6 +152,9 @@ function Set-Wsl2Setting {
 }
 
 function Get-WindowsProxyServer {
+  if (-not (Get-PSDrive -Name HKCU -ErrorAction SilentlyContinue)) {
+    return ""
+  }
   $settings = Get-ItemProperty "HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings"
   if ($settings.ProxyEnable -ne 1) {
     return ""
