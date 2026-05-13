@@ -778,6 +778,10 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
     conversationSource,
     /<details className=\{`\$\{statusClassName\} liveStatusRow-details`\} key=\{item\.id\}>/,
   );
+  assert.equal(conversationSource.includes("<dl>"), false);
+  assert.equal(conversationSource.includes("<dt>{row.label}</dt>"), false);
+  assert.equal(conversationSource.includes("<dd>{row.value}</dd>"), false);
+  assert.equal(conversationSource.includes("<pre>{details.rawJson}</pre>"), true);
   assert.match(
     cssSource,
     /\.copyButton-copied,\s*\n\.copyButton-copied:hover:not\(:disabled\)\s*\{[\s\S]*?border-color: rgba\(204, 120, 92, 0\.52\);[\s\S]*?color: var\(--primary-active\);/,

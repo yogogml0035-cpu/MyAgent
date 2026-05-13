@@ -248,8 +248,10 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
 
     await rows.nth(2).locator("summary").click();
     await expect(rows.nth(2)).toHaveAttribute("open", "");
-    await expect(rows.nth(2).getByText("事件类型")).toBeVisible();
-    await expect(rows.nth(2).getByText("流式片段已折叠为生成状态")).toBeVisible();
+    await expect(rows.nth(2).locator("dl")).toHaveCount(0);
+    await expect(rows.nth(2).locator("pre")).toContainText('"type": "assistant_answer_delta"');
+    await expect(rows.nth(2).locator("pre")).toContainText('"content_hidden": true');
+    await expect(rows.nth(2).locator("dt")).toHaveCount(0);
     await expect(rows.nth(2).getByText("这段原始流式内容不应显示")).toHaveCount(0);
     await page.screenshot({
       fullPage: true,
@@ -258,8 +260,10 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
 
     await rows.nth(1).locator("summary").click();
     await expect(rows.nth(1)).toHaveAttribute("open", "");
-    await expect(rows.nth(1).locator("dt").filter({ hasText: "工具" }).first()).toBeVisible();
-    await expect(rows.nth(1).locator("dd").filter({ hasText: /^tavily_search$/ }).first()).toBeVisible();
+    await expect(rows.nth(1).locator("dl")).toHaveCount(0);
+    await expect(rows.nth(1).locator("pre")).toContainText('"type": "tool_result"');
+    await expect(rows.nth(1).locator("pre")).toContainText('"tool_name": "tavily_search"');
+    await expect(rows.nth(1).locator("dt")).toHaveCount(0);
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "04-tool-row-expanded.png"),
@@ -267,7 +271,10 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
 
     await rows.nth(0).locator("summary").click();
     await expect(rows.nth(0)).toHaveAttribute("open", "");
-    await expect(rows.nth(0).getByText("节点")).toBeVisible();
+    await expect(rows.nth(0).locator("dl")).toHaveCount(0);
+    await expect(rows.nth(0).locator("pre")).toContainText('"type": "status_update"');
+    await expect(rows.nth(0).locator("pre")).toContainText('"diagnostic_label": "model"');
+    await expect(rows.nth(0).locator("dt")).toHaveCount(0);
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "05-thinking-row-expanded.png"),
