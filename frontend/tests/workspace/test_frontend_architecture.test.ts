@@ -44,7 +44,22 @@ test("history sidebar exposes compact rename and delete actions", () => {
   assert.equal(workspaceSource.includes("onRenameConversation"), true);
   assert.equal(workspaceSource.includes("onDeleteConversation"), true);
   assert.match(cssSource, /\.historyActionMenu\s*\{[\s\S]*?position: absolute;[\s\S]*?box-shadow:/);
-  assert.match(cssSource, /\.historyMenuItem-danger\s*\{[\s\S]*?color: #e11d48;/);
+  assert.match(cssSource, /\.historyActionMenu\s*\{[\s\S]*?background:[\s\S]*?var\(--surface\);/);
+  assert.match(
+    cssSource,
+    /\.historyMenuButton:hover,\s*\n\.historyMenuButton\[aria-expanded="true"\]\s*\{[\s\S]*?color: var\(--primary-active\);/,
+  );
+  assert.match(cssSource, /\.historyMenuButton\s*\{[\s\S]*?border: 0;/);
+  assert.match(cssSource, /\.historyMenuButton:focus-visible\s*\{[\s\S]*?outline: none;/);
+  assert.match(cssSource, /\.historyMenuItem-danger\s*\{[\s\S]*?color: var\(--text-strong\);/);
+  assert.match(
+    cssSource,
+    /\.historyMenuItem-danger:hover,\s*\n\.historyMenuItem-danger:focus-visible\s*\{[\s\S]*?background: rgba\(204, 120, 92, 0\.1\);[\s\S]*?color: var\(--primary-active\);/,
+  );
+  assert.equal(cssSource.includes("#dbe5f3"), false);
+  assert.equal(cssSource.includes("#31415c"), false);
+  assert.equal(cssSource.includes("#e11d48"), false);
+  assert.equal(cssSource.includes("#fff1f2"), false);
 });
 
 test("frontend dev server uses an isolated Next dist directory", () => {
@@ -74,9 +89,18 @@ test("frontend dev server uses an isolated Next dist directory", () => {
   );
 
   assert.match(nextConfigSource, /distDir: process\.env\.NEXT_DIST_DIR \|\| "\.next"/);
-  assert.match(packageSource, /"dev": "NEXT_DIST_DIR=\.next-dev next dev -p 3001"/);
+  assert.match(
+    nextConfigSource,
+    /watchOptions:\s*\{[\s\S]*?pollIntervalMs: Number\(process\.env\.NEXT_WATCH_POLL_INTERVAL_MS \|\| "300"\),/,
+  );
+  assert.match(
+    packageSource,
+    /"dev": "NEXT_DIST_DIR=\.next-dev WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true CHOKIDAR_INTERVAL=300 next dev -p 3001"/,
+  );
   assert.match(packageSource, /"typecheck": "next typegen && tsc --noEmit"/);
   assert.match(devRunnerSource, /export NEXT_DIST_DIR="\$\{NEXT_DIST_DIR:-\.next-dev\}"/);
+  assert.match(devRunnerSource, /WATCHFILES_FORCE_POLLING="\$\{WATCHFILES_FORCE_POLLING:-true\}"/);
+  assert.match(devRunnerSource, /WATCHPACK_POLLING="\$\{WATCHPACK_POLLING:-true\}"/);
   assert.match(eslintConfigSource, /"\.next-dev\/\*\*"/);
   assert.match(tsconfigSource, /"\.next-dev\/types\/\*\*\/\*\.ts"/);
   assert.match(gitignoreSource, /^next-env\.d\.ts$/m);

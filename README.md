@@ -163,10 +163,12 @@ cd D:\AgentProject\MyAgent
 
 脚本会先停止 WSL 内监听后端端口 `8001` 和前端端口 `3001` 的进程，然后通过 Windows Terminal 分别打开两个 WSL 窗口。Postgres、Qdrant 和 DashScope 配置由用户自管，脚本不会自动启动容器：
 
-- 后端：`uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`
-- 前端：`NEXT_DIST_DIR=.next-dev next dev -p 3001 -H 127.0.0.1`
+- 后端：`WATCHFILES_FORCE_POLLING=true uv run uvicorn app.main:app --reload --reload-delay 0.25 --host 127.0.0.1 --port 8001`
+- 前端：`NEXT_DIST_DIR=.next-dev WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true CHOKIDAR_INTERVAL=300 next dev -p 3001 -H 127.0.0.1`
 
 启动后可以在各自终端中用 `Ctrl+C` 停止单个服务，也可以回到 WSL 仓库路径运行 `./scripts/stop-dev-ports.sh` 统一释放端口。启动脚本依赖 Windows 侧可调用的 `wt.exe` 和 `wsl.exe`。前端开发服务写入 `.next-dev`，因此运行 `npm run build` 验证生产构建时写入 `.next`，不会再覆盖正在热更新的开发缓存。
+
+当前仓库放在 `/mnt/d` 这类 Windows 挂载盘时，WSL 里的 Linux 进程经常收不到稳定的文件系统变更事件，表现为“刷新页面不生效，必须重启服务”。开发脚本默认开启轮询 watcher 来保证前端热更新和后端 `uvicorn --reload` 能感知修改。若仓库迁移到 WSL 原生路径（例如 `~/projects/MyAgent`）并确认热更新正常，可临时用 `MYAGENT_DEV_FORCE_POLLING=0` 关闭脚本里的轮询以降低 CPU 占用。
 
 仓库根目录的 `.gitattributes` 负责统一换行策略，避免在 Windows、WSL 和 GitHub Web 编辑器之间来回切换时，把 YAML、Shell、TypeScript 等文本文件意外改成 CRLF。
 

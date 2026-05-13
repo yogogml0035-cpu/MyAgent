@@ -139,6 +139,39 @@ function seedRunningProgressLogTask(taskId, title) {
       },
     },
     {
+      type: "tool_result",
+      message: "Tool result: tavily_search failed",
+      createdAt: nowIso(3500),
+      level: "error",
+      payload: {
+        live: {
+          schema_version: 1,
+          kind: "tool_result",
+          stage: "failed",
+          tool_name: "tavily_search",
+          tool_call_id: "tool-progress-e2e-failed",
+          result_status: "failed",
+          parameter_items: [],
+        },
+      },
+    },
+    {
+      type: "status_update",
+      message: "State update: failed",
+      createdAt: nowIso(3600),
+      level: "error",
+      payload: {
+        live: {
+          schema_version: 1,
+          kind: "status",
+          stage: "failed",
+          display_text: "处理遇到问题，正在调整处理方式",
+          diagnostic_label: "error-node",
+          parameter_items: [],
+        },
+      },
+    },
+    {
       type: "assistant_answer_delta",
       message: "AI reply chunk",
       createdAt: nowIso(4000),
@@ -222,17 +255,19 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     const logPanel = page.getByRole("region", { name: /进度日志/ }).first();
     await expect(logPanel).toBeVisible();
     const rows = logPanel.locator(".liveStatusRow, .liveToolCard");
-    await expect(rows).toHaveCount(3);
+    await expect(rows).toHaveCount(5);
     await expect(rows.nth(0).locator("summary").getByText("AI正在思考...")).toBeVisible();
     await expect(rows.nth(1).locator("summary").getByText("联网搜索已返回结果")).toBeVisible();
-    await expect(rows.nth(2).locator("summary").getByText("AI正在生成结果")).toBeVisible();
+    await expect(rows.nth(2).locator("summary").getByText("联网搜索遇到问题")).toBeVisible();
+    await expect(rows.nth(3).locator("summary").getByText("处理遇到问题，正在调整处理方式")).toBeVisible();
+    await expect(rows.nth(4).locator("summary").getByText("AI正在生成结果")).toBeVisible();
     await expect(logPanel.getByText("这段原始流式内容不应显示")).toHaveCount(0);
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "02-progress-log-collapsed.png"),
     });
 
-    for (let index = 0; index < 3; index += 1) {
+    for (let index = 0; index < 5; index += 1) {
       const row = rows.nth(index);
       await expect(row).toHaveJSProperty("tagName", "DETAILS");
       const summary = row.locator("summary");
@@ -246,13 +281,13 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
       expect(timeBox.x - rowBox.x).toBeLessThan(20);
     }
 
-    await rows.nth(2).locator("summary").click();
-    await expect(rows.nth(2)).toHaveAttribute("open", "");
-    await expect(rows.nth(2).locator("dl")).toHaveCount(0);
-    await expect(rows.nth(2).locator("pre")).toContainText('"type": "assistant_answer_delta"');
-    await expect(rows.nth(2).locator("pre")).toContainText('"content_hidden": true');
-    await expect(rows.nth(2).locator("dt")).toHaveCount(0);
-    await expect(rows.nth(2).getByText("这段原始流式内容不应显示")).toHaveCount(0);
+    await rows.nth(4).locator("summary").click();
+    await expect(rows.nth(4)).toHaveAttribute("open", "");
+    await expect(rows.nth(4).locator("dl")).toHaveCount(0);
+    await expect(rows.nth(4).locator("pre")).toContainText('"type": "assistant_answer_delta"');
+    await expect(rows.nth(4).locator("pre")).toContainText('"content_hidden": true');
+    await expect(rows.nth(4).locator("dt")).toHaveCount(0);
+    await expect(rows.nth(4).getByText("这段原始流式内容不应显示")).toHaveCount(0);
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "03-generation-row-expanded.png"),
@@ -264,9 +299,34 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(1).locator("pre")).toContainText('"type": "tool_result"');
     await expect(rows.nth(1).locator("pre")).toContainText('"tool_name": "tavily_search"');
     await expect(rows.nth(1).locator("dt")).toHaveCount(0);
+    const successfulToolOpenBorderColor = await rows.nth(1).evaluate(
+      (element) => getComputedStyle(element).borderTopColor,
+    );
+    expect(successfulToolOpenBorderColor).not.toMatch(/204,\s*120,\s*92/);
+    expect(successfulToolOpenBorderColor).not.toMatch(/198,\s*69,\s*69/);
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "04-tool-row-expanded.png"),
+    });
+
+    await rows.nth(2).locator("summary").click();
+    await expect(rows.nth(2)).toHaveAttribute("open", "");
+    await expect(rows.nth(2).locator("pre")).toContainText('"result_status": "failed"');
+    const failedToolBorderColor = await rows.nth(2).evaluate(
+      (element) => getComputedStyle(element).borderTopColor,
+    );
+    expect(failedToolBorderColor).not.toMatch(/198,\s*69,\s*69/);
+
+    await rows.nth(3).locator("summary").click();
+    await expect(rows.nth(3)).toHaveAttribute("open", "");
+    await expect(rows.nth(3).locator("pre")).toContainText('"stage": "failed"');
+    const failedStatusBorderColor = await rows.nth(3).evaluate(
+      (element) => getComputedStyle(element).borderTopColor,
+    );
+    expect(failedStatusBorderColor).not.toMatch(/198,\s*69,\s*69/);
+    await page.screenshot({
+      fullPage: true,
+      path: path.join(evidenceDir, "05-failed-rows-expanded-neutral.png"),
     });
 
     await rows.nth(0).locator("summary").click();
@@ -277,7 +337,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(0).locator("dt")).toHaveCount(0);
     await page.screenshot({
       fullPage: true,
-      path: path.join(evidenceDir, "05-thinking-row-expanded.png"),
+      path: path.join(evidenceDir, "06-thinking-row-expanded.png"),
     });
   } finally {
     runSql(`

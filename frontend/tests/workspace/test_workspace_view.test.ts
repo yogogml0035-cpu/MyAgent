@@ -770,6 +770,10 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
     /\.liveStatusRow\[open\] summary::after,\s*\n\.liveToolCard\[open\] summary::after\s*\{[\s\S]*?transform: rotate\(225deg\);/,
   );
   assert.match(
+    cssSource,
+    /\.liveToolCard\[open\]\s*\{[\s\S]*?border-color: rgba\(250, 249, 245, 0\.1\);/,
+  );
+  assert.match(
     conversationSource,
     /<time>\{formatTime\(item\.createdAt\)\}<\/time>\s*<strong>\{item\.title\}<\/strong>/,
   );
@@ -809,6 +813,20 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
     /\.copyButton-copied span::before,\s*\n\.copyButton-copied span::after\s*\{[\s\S]*?display: none;/,
   );
   assert.match(cssSource, /\.copyButton\.userCopyButton\.copyButton-copied span::before\s*\{[\s\S]*?display: none;/);
+  assert.match(
+    cssSource,
+    /\.traceCard-failed,\s*\n\.traceCard-cancelled\s*\{[\s\S]*?border-color: rgba\(250, 249, 245, 0\.12\);/,
+  );
+  assert.match(
+    cssSource,
+    /\.liveStatusRow-error\s*\{[\s\S]*?border-color: rgba\(250, 249, 245, 0\.1\);/,
+  );
+  assert.match(
+    cssSource,
+    /\.liveToolCard-failed\s*\{[\s\S]*?border-color: rgba\(250, 249, 245, 0\.1\);/,
+  );
+  assert.doesNotMatch(cssSource, /\.liveStatusRow-error\s*\{[\s\S]*?rgba\(198, 69, 69/);
+  assert.doesNotMatch(cssSource, /\.liveToolCard-failed\s*\{[\s\S]*?rgba\(198, 69, 69/);
   assert.equal(cssSource.includes("color: #8bd899;"), false);
   assert.equal(cssSource.includes("box-shadow: 3px -3px 0"), false);
   assert.equal(cssSource.includes(".liveToolIcon"), false);

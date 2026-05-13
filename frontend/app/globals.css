@@ -266,24 +266,43 @@ p {
   place-items: center;
   width: 24px;
   height: 24px;
-  margin-right: 4px;
+  margin-right: 6px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   background: transparent;
   color: var(--muted);
   opacity: 0;
   transition:
-    background 0.16s ease,
     color 0.16s ease,
-    opacity 0.16s ease;
+    opacity 0.16s ease,
+    transform 0.16s ease;
 }
 
 .historyMenuButton span {
   position: relative;
-  top: -2px;
-  font-size: 16px;
+  display: block;
+  width: 15px;
+  height: 15px;
+  overflow: hidden;
+  color: inherit;
+  font-size: 0;
   line-height: 1;
   letter-spacing: 0;
+}
+
+.historyMenuButton span::before {
+  position: absolute;
+  content: "";
+  left: 50%;
+  top: 50%;
+  width: 3px;
+  height: 3px;
+  border-radius: 999px;
+  background: currentColor;
+  box-shadow:
+    -5px 0 0 currentColor,
+    5px 0 0 currentColor;
+  transform: translate(-50%, -50%);
 }
 
 .historyItemShell:hover .historyMenuButton,
@@ -294,22 +313,28 @@ p {
 
 .historyMenuButton:hover,
 .historyMenuButton[aria-expanded="true"] {
-  background: #dbe5f3;
-  color: #31415c;
+  background: transparent;
+  color: var(--primary-active);
+  transform: translateY(-1px);
 }
 
 .historyActionMenu {
   position: absolute;
-  top: 32px;
+  top: 34px;
   right: 6px;
   z-index: 20;
   display: grid;
-  min-width: 116px;
+  min-width: 128px;
   padding: 6px;
-  border: 1px solid rgba(201, 211, 224, 0.92);
-  border-radius: 8px;
-  background: #fff;
-  box-shadow: 0 16px 38px rgba(38, 52, 74, 0.18);
+  border: 1px solid rgba(230, 223, 216, 0.94);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(180deg, rgba(250, 249, 245, 0.98), rgba(245, 240, 232, 0.98)),
+    var(--surface);
+  box-shadow:
+    0 18px 34px rgba(20, 20, 19, 0.12),
+    0 0 0 1px rgba(250, 249, 245, 0.72) inset;
+  backdrop-filter: blur(14px);
 }
 
 .historyMenuItem {
@@ -318,27 +343,33 @@ p {
   gap: 8px;
   align-items: center;
   min-height: 34px;
-  padding: 0 8px;
+  padding: 0 9px;
   border: 0;
   border-radius: 6px;
   background: transparent;
-  color: #23324d;
+  color: var(--text-strong);
   font-size: 13px;
+  font-weight: 500;
   text-align: left;
+  transition:
+    background 0.16s ease,
+    color 0.16s ease;
 }
 
 .historyMenuItem:hover,
 .historyMenuItem:focus-visible {
-  background: #f3f6fb;
+  background: rgba(232, 224, 210, 0.7);
+  color: var(--ink);
 }
 
 .historyMenuItem-danger {
-  color: #e11d48;
+  color: var(--text-strong);
 }
 
 .historyMenuItem-danger:hover,
 .historyMenuItem-danger:focus-visible {
-  background: #fff1f2;
+  background: rgba(204, 120, 92, 0.1);
+  color: var(--primary-active);
 }
 
 .historyActionIcon {
@@ -361,43 +392,69 @@ p {
   grid-column: 1 / -1;
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;
-  gap: 5px;
+  gap: 6px;
   align-items: center;
-  padding: 5px;
+  padding: 5px 6px;
+  border: 1px solid rgba(204, 120, 92, 0.22);
+  border-radius: var(--radius-md);
+  background:
+    linear-gradient(180deg, rgba(250, 249, 245, 0.96), rgba(239, 233, 222, 0.72)),
+    var(--surface-card);
+  box-shadow: 0 10px 22px rgba(20, 20, 19, 0.08);
 }
 
 .historyRenameForm input {
   min-width: 0;
-  height: 30px;
-  padding: 0 9px;
-  border: 1px solid #bcd0ee;
-  border-radius: 7px;
-  background: #fff;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-sm);
+  background: rgba(250, 249, 245, 0.92);
   color: var(--ink);
   font: inherit;
   font-size: 13px;
   outline: none;
+  box-shadow: 0 1px 0 rgba(250, 249, 245, 0.8) inset;
 }
 
 .historyRenameForm input:focus {
-  border-color: #78a8f6;
-  box-shadow: 0 0 0 3px rgba(120, 168, 246, 0.16);
+  border-color: rgba(204, 120, 92, 0.62);
+  box-shadow: 0 0 0 3px rgba(204, 120, 92, 0.1);
 }
 
 .historyRenameForm button {
-  height: 30px;
-  padding: 0 8px;
-  border: 1px solid var(--hairline);
-  border-radius: 7px;
-  background: #fff;
-  color: #32445f;
+  height: 32px;
+  padding: 0 9px;
+  border: 1px solid rgba(230, 223, 216, 0.92);
+  border-radius: var(--radius-sm);
+  background: rgba(250, 249, 245, 0.9);
+  color: var(--muted);
   font-size: 12px;
+  font-weight: 500;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.historyRenameForm button:hover:not(:disabled),
+.historyRenameForm button:focus-visible {
+  border-color: rgba(204, 120, 92, 0.32);
+  background: var(--surface);
+  color: var(--ink);
 }
 
 .historyRenameForm button[type="submit"] {
-  border-color: rgba(64, 108, 179, 0.26);
-  background: #edf4ff;
-  color: #28528f;
+  border-color: rgba(204, 120, 92, 0.3);
+  background: var(--primary);
+  color: var(--on-primary);
+}
+
+.historyRenameForm button[type="submit"]:hover:not(:disabled),
+.historyRenameForm button[type="submit"]:focus-visible {
+  border-color: var(--primary-active);
+  background: var(--primary-active);
+  color: var(--on-primary);
 }
 
 .chatWorkspace {
@@ -1086,7 +1143,7 @@ p {
 
 .traceCard-failed,
 .traceCard-cancelled {
-  border-color: rgba(198, 69, 69, 0.62);
+  border-color: rgba(250, 249, 245, 0.12);
 }
 
 .traceCard-unknown {
@@ -1344,7 +1401,7 @@ p {
 }
 
 .liveStatusRow-error {
-  border-color: rgba(198, 69, 69, 0.38);
+  border-color: rgba(250, 249, 245, 0.1);
 }
 
 .thinkingDots {
@@ -1379,7 +1436,7 @@ p {
 }
 
 .liveToolCard[open] {
-  border-color: rgba(204, 120, 92, 0.42);
+  border-color: rgba(250, 249, 245, 0.1);
 }
 
 .liveToolCard summary {
@@ -1464,7 +1521,7 @@ p {
 }
 
 .liveToolCard-failed {
-  border-color: rgba(198, 69, 69, 0.42);
+  border-color: rgba(250, 249, 245, 0.1);
 }
 
 .liveToolCard-empty,
@@ -2135,6 +2192,10 @@ button:focus-visible,
 .downloadSecondaryButton:focus-visible {
   outline: 2px solid rgba(204, 120, 92, 0.36);
   outline-offset: 2px;
+}
+
+.historyMenuButton:focus-visible {
+  outline: none;
 }
 
 .promptTextarea:focus-visible {

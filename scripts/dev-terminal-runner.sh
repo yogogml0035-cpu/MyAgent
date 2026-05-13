@@ -8,6 +8,21 @@ BACKEND_PORT="${BACKEND_PORT:-8001}"
 FRONTEND_HOST="${FRONTEND_HOST:-127.0.0.1}"
 FRONTEND_PORT="${FRONTEND_PORT:-3001}"
 
+enable_polling_watchers() {
+  local force_polling="${MYAGENT_DEV_FORCE_POLLING:-1}"
+  case "$force_polling" in
+    0|false|False|FALSE|no|No|NO)
+      return
+      ;;
+  esac
+
+  export WATCHFILES_FORCE_POLLING="${WATCHFILES_FORCE_POLLING:-true}"
+  export WATCHFILES_POLL_DELAY_MS="${WATCHFILES_POLL_DELAY_MS:-300}"
+  export WATCHPACK_POLLING="${WATCHPACK_POLLING:-true}"
+  export CHOKIDAR_USEPOLLING="${CHOKIDAR_USEPOLLING:-true}"
+  export CHOKIDAR_INTERVAL="${CHOKIDAR_INTERVAL:-300}"
+}
+
 finish() {
   local status=$?
   trap - EXIT INT TERM
@@ -26,13 +41,19 @@ case "$SERVICE" in
   backend)
     cd "$ROOT_DIR/backend"
     printf '[dev] starting backend on http://localhost:%s (bind %s)\n\n' "$BACKEND_PORT" "$BACKEND_HOST"
-    uv run uvicorn app.main:app --reload --host "$BACKEND_HOST" --port "$BACKEND_PORT"
+    enable_polling_watchers
+    printf '[dev] backend reload polling: WATCHFILES_FORCE_POLLING=%s WATCHFILES_POLL_DELAY_MS=%s\n\n' \
+      "${WATCHFILES_FORCE_POLLING:-false}" "${WATCHFILES_POLL_DELAY_MS:-default}"
+    uv run uvicorn app.main:app --reload --reload-delay 0.25 --host "$BACKEND_HOST" --port "$BACKEND_PORT"
     ;;
   frontend)
     cd "$ROOT_DIR/frontend"
     printf '[dev] starting frontend on http://localhost:%s (bind %s)\n\n' "$FRONTEND_PORT" "$FRONTEND_HOST"
 
+    enable_polling_watchers
     export NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-dev}"
+    printf '[dev] frontend hot reload polling: WATCHPACK_POLLING=%s CHOKIDAR_USEPOLLING=%s CHOKIDAR_INTERVAL=%s\n\n' \
+      "${WATCHPACK_POLLING:-false}" "${CHOKIDAR_USEPOLLING:-false}" "${CHOKIDAR_INTERVAL:-default}"
     if [[ "$FRONTEND_PORT" == "3001" && -z "$FRONTEND_HOST" ]]; then
       npm run dev
     else

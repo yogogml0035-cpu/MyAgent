@@ -40,6 +40,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Multipart upload request limits must be enforced before FastAPI `UploadFile` parsing reaches storage. `main.py` checks `Content-Length` and wraps the ASGI receive stream for `multipart/form-data`; storage-level per-file and aggregate limits remain a second line of defense.
 - Auth middleware enforces loopback-only access by default; non-local access requires `MYAGENT_ACCESS_TOKEN`.
 - Frontend local development keeps `next dev` output in `.next-dev` and production builds in `.next` via `NEXT_DIST_DIR`, so dev caches and production build artifacts never share one output directory.
+- Local development on WSL-mounted Windows paths such as `/mnt/c` or `/mnt/d` must assume native filesystem notifications can be unreliable. Keep polling watchers enabled for hot reload: frontend uses `watchOptions.pollIntervalMs`, `WATCHPACK_POLLING=true`, and `CHOKIDAR_USEPOLLING=true`; backend uses `WATCHFILES_FORCE_POLLING=true` with `uvicorn --reload`. `MYAGENT_DEV_FORCE_POLLING=0` is only for confirmed-stable WSL-native Linux paths.
 - Local WSL dev scripts default backend and frontend bind hosts to `127.0.0.1`. Binding to `0.0.0.0` is an explicit LAN exposure mode and must be paired with access token and CORS configuration.
 - Frontend type checking runs `next typegen && tsc --noEmit`; `next-env.d.ts` is generated and ignored instead of being version-controlled.
 - Frontend CI treats lint warnings as failures because `frontend/package.json` runs `eslint . --max-warnings=0`; a warning-free local run is required before pushing, and a remote lint warning is a blocking CI failure, not a soft signal.
@@ -48,6 +49,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Long-term memory uses Qdrant plus DashScope-compatible embeddings. Startup requires Postgres, Qdrant, and embedding configuration to be available. Qdrant only stores deterministic high-level summaries for successful completed runs; it must not store uploaded source text, complete artifacts, stream deltas, raw tool logs, secrets, authorization headers, API keys, provider key env names, customer canary markers, or customer-sensitive text. Memory summaries must be sanitized before embedding/upsert and must be skipped if sanitized text still scans as sensitive.
 - Long-term memory is an auxiliary subsystem. Runner recall and completed-run writes must run off the event loop thread (for example via `asyncio.to_thread`). Recall failures should degrade to running without memory context, and completed-run memory write failures must not block `task_completed`/`final_answer` emission or change a successful task to `failed`.
 - Any bug fix, feature, or other behavior change must pass live browser E2E acceptance against a running frontend and backend, and screenshot evidence must be stored under `frontend/e2e-playwright/`. Unit, integration, API, lint, or build checks do not replace this requirement.
+- Browser E2E follows a layered workflow: Chrome DevTools MCP may be used during development to explore local pages, console, network, DOM state, screenshots, and performance signals; once the flow is understood, stable expectations must be encoded as Playwright specs. CI and delivery gates only trust repeatable Playwright/test command results, not one-off DevTools observations.
 - `frontend/e2e-playwright/` must keep a `README.md` comment file that explains the directory purpose, screenshot evidence role, and redaction expectations. If the repo lacks an E2E entrypoint for the changed scenario, add it in the same change before considering the work complete.
 - Repository-wide line-ending normalization is enforced with a root `.gitattributes`: text files default to LF, while PowerShell scripts use CRLF on checkout.
 - If the work includes pushing a branch, opening/updating a PR, or merging a PR, completion requires the GitHub remote checks to finish successfully. Local green runs are necessary but not sufficient while remote Actions are still pending or failing.
@@ -81,6 +83,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - `SKILL.md` files without valid YAML frontmatter are silently skipped during discovery.
 - `next typegen` loads `next.config.mjs` with the production build phase; keep any required config inputs available before running frontend type checks in CI.
 - Remote CI status is part of the verification boundary for GitHub actions such as PR creation and merge. A pending run is not a pass, and a warning that escalates to job failure must be fixed the same as an error.
+- DevTools MCP is a diagnostic aid, not an acceptance oracle. After a Playwright failure, first inspect Playwright error output, trace, screenshots, videos, and logs; use Chrome DevTools MCP only when live-page console/network/DOM/performance inspection is needed, then promote any stable failure signal back into Playwright or lower-level tests.
 
 ## Known Pitfalls
 
@@ -105,6 +108,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **Generated Next type files**: `next-env.d.ts` and route types are generated artifacts. Do not review or commit them as source changes; rerun `npm run typecheck` if they are missing locally.
 - **Warning-as-error CI**: The frontend workflow fails on ESLint warnings because lint runs with `--max-warnings=0`. Treat “warning only” reports from GitHub Actions as blocking failures.
 - **Local-vs-remote verification gap**: A local pass does not prove a PR is merge-ready. GitHub Actions may still fail because of workflow environment differences, matrix jobs, or warning-as-error settings; do not stop at push/PR creation when the request includes completing that remote action.
+- **DevTools acceptance drift**: Chrome DevTools MCP checks are useful for exploration and root cause analysis, but they are not repeatable CI evidence. Do not close behavior changes on DevTools screenshots or console/network observations unless the stable expectation is also covered by Playwright or another automated test.
+- **WSL mounted-path hot reload**: If frontend or backend changes only show up after a restart, first check whether the repo is under `/mnt/c` or `/mnt/d` and whether polling watcher env vars are active. Do not remove polling from dev scripts without replacing it with an equally reliable WSL-mounted-path strategy.
 
 ## Related Code Paths
 
@@ -181,6 +186,8 @@ npm run build
 
 For any behavior-changing task, also run the relevant live browser E2E flow against the started app and save acceptance screenshots under `frontend/e2e-playwright/`. If the repo does not yet expose the needed E2E entrypoint for that flow, add it in the same change before closing the task.
 
+For new, unstable, or failing browser flows, use Chrome DevTools MCP as the exploratory/debugging step: open the local page, observe console and network, inspect visible UI state, capture useful screenshots, and identify stable user-facing assertions. Encode those assertions in Playwright before treating the flow as covered. If Playwright fails, inspect its trace/video/screenshot/logs first, then use DevTools MCP for live diagnosis only when those artifacts are insufficient.
+
 If the task includes pushing a branch, opening/updating a PR, or merging a PR, also wait for GitHub remote CI / checks to complete and confirm that all required jobs are green before closing the task.
 
 ## Frontend Stream Accumulation And Dynamic States
@@ -193,6 +200,9 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 - `buildLogClipboardText()` copies raw diagnostic JSONL, one event per line. The default progress card remains a Chinese user-facing timeline; row expansion must show only the raw pretty JSON payload and must not repeat derived summary rows such as event type, original message, node, tool name, parameters, or result status.
 - `buildLiveLogItems` checks `agentActivity.status` (`completed`/`failed`/`skipped`) as additional terminal condition alongside `isTerminalLiveStage(live.stage)`.
 - Progress log rows in `TaskConversation.tsx` are always expandable `<details>` rows. The collapsed row layout must keep the timestamp in the leftmost column for both status rows and tool rows, the display label in the middle, and the disclosure arrow on the right. Synthetic active rows such as `"AI正在思考..."` or answer-generation rows still need sanitized diagnostics so every visible line can expand; assistant answer deltas must remain hidden behind the stable `"AI正在生成结果"` label and diagnostics must not expose raw delta content.
+- Frontend history action controls should stay within the warm-canvas visual system from `DESIGN.md`: use `--surface*`, `--hairline`, `--primary`, and `--primary-active` tokens for the compact menu, rename form, and delete affordance. Avoid reintroducing blue system-menu colors or bright destructive red fills for history rename/delete actions unless the whole design system changes.
+- The history sidebar three-dot menu trigger is an affordance, not a selected pill. Hover/open/focus states must not introduce a circular border or focus ring around the dots; use subtle color and the menu surface itself to communicate the open state. Browser acceptance for this lives in `frontend/e2e-playwright/test_history_menu_affordance.spec.mjs`.
+- Progress log diagnostics may communicate status through copy and glyphs, but expandable row borders and failed trace card containers should remain neutral on the dark surface. Do not use red or warm-red outline boxes around expanded raw JSON diagnostics, including successful tool-result rows, because they make normal troubleshooting output look like a blocking UI error.
 
 ## Final Answer vs Intermediate Process Distinction
 
@@ -246,5 +256,7 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 - **Race condition regression**: If the `final_answer` event in `runner/core.py` is moved before `storage.update_task_if_status()`, the frontend may refresh before the ChatMessage is persisted, showing stale or missing final answers.
 - **Log scroll regression**: `TaskConversation.tsx` keeps each log list pinned to the bottom while the user has not intentionally scrolled upward. If the pinned-state tracking or `conversationStreamItems` dependency is removed, progress log cards will stop following new rows and active-row text changes.
 - **Progress row disclosure regression**: If status rows fall back to plain `<article>` or tool rows move timestamps back to the right side, progress logs become visually inconsistent and some lines cannot reveal diagnostics. Frontend regression tests should assert shared timestamp-left/disclosure-right CSS for `.liveStatusRow` and `.liveToolCard`.
+- **History menu trigger regression**: If `.historyMenuButton` regains a border, circular radius, or global focus ring, the sidebar again shows a selected-looking circle around the three dots. Unit CSS checks plus `test_history_menu_affordance.spec.mjs` guard the intended no-ring behavior.
 - Acceptance drift if future changes rely only on unit/integration results and skip live browser E2E plus screenshot evidence; this repository now treats that as an incomplete delivery for behavior changes.
+- DevTools/Playwright boundary drift if future changes treat one-off Chrome DevTools MCP exploration as CI-grade acceptance evidence instead of promoting stable assertions into Playwright specs.
 - CI drift if future fixes stop after a local pass while remote GitHub Actions are still pending or red; PR-related work in this repo is incomplete until the remote checks finish successfully.

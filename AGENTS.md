@@ -7,6 +7,7 @@
 - 后端：`backend/`，FastAPI + `uv`，入口为 `backend/app/main.py`。
 - 前端：`frontend/`，Next.js app router，主界面由 `frontend/app/page.tsx` 挂载，聊天工作区组件在 `frontend/components/chat/`，任务状态编排在 `frontend/hooks/use-task-workspace.ts`，API 封装在 `frontend/lib/task-api.ts`。
 - 前端 E2E 验收目录：`frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`，用于浏览器端严格 E2E 验收、Playwright 相关资产和网页端截图证据，其中 `YYYYMMDDHHMMSS` 为验收时间戳。该目录下由验收运行生成的截图证据只需本地留存和在交付说明中引用路径，不需要提交到 git。
+- 浏览器端 E2E 分层方式：开发期可用 Chrome DevTools MCP 探路和诊断页面、console、network、截图、性能等现场信号；稳定回归与 CI 准入只认 Playwright spec、trace、截图和退出码。
 - 默认结构化任务存储：Postgres（任务、运行、消息、事件日志）；默认文件存储：`backend/storage/sessions/`（上传和产物文件）。
 - 后端测试：`backend/tests/`，按 `unit/`（agent、models、tools、skills、streaming、runner、api、security、storage、session）、`integration/`、`e2e/`（预留）分目录，文件名必须以 `test_` 开头。
 - 前端测试：`frontend/tests/`，按 `state/`、`workspace/`、`upload/`、`model/` 分类，文件名必须以 `test_` 开头。
@@ -17,7 +18,7 @@
 
 - 涉及后端任务生命周期、API、存储、权限、模型或分析流程时，先读相关 `backend/app/` 代码和 `backend/tests/`。
 - 涉及前端表单、任务状态、URL 映射、产物打开或轮询时，先读 `frontend/app/page.tsx`、`frontend/hooks/use-task-workspace.ts`、`frontend/lib/task-api.ts`、`frontend/app/task-state.ts` 和 `frontend/tests/`。
-- 涉及 bug 修复、功能新增、交互改动或其他行为变更时，必须计划进行E2E测试，并在`frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 增加E2E 场景和截图约定。
+- 涉及 bug 修复、功能新增、交互改动或其他行为变更时，必须计划进行 E2E 测试，并在 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 增加 E2E 场景和截图约定；涉及新的或不稳定的浏览器流程时，先用 Chrome DevTools MCP 探路，再固化为 Playwright。
 - 涉及长期规则或已形成稳定主题边界时，直接读取 `asset/` 下与当前主题最相关的知识包。
 - 搜索优先用 `rg` 或 `rg --files`。
 
@@ -34,6 +35,10 @@
 - 后端行为变化至少补或更新 API、任务生命周期、存储、权限、模型路由或分析服务测试。
 - 前端行为变化至少补或更新表单、状态转换器、URL 映射、产物请求或注册表测试。
 - 本地或远程 CI 中任何会导致非零退出码的 warning 都按失败处理，不能以“只是告警”为由交付；当前前端 lint 明确使用 `eslint . --max-warnings=0`，因此 ESLint warning 与 error 一样会阻塞 CI。
+- 新增、重构或修复浏览器关键流程时，优先用 Chrome DevTools MCP 打开本地页面做探索性检查：确认页面路径、登录或任务流程、控制台错误、关键 network 请求/响应、截图和必要的性能信号；探路结果只用于理解和定位，不算可交付验收。
+- 流程确认稳定后，必须把可重复判断写入 Playwright spec：包括成功后跳转 URL、关键角色/操作按钮、接口返回后的 UI 状态变化、错误提示、加载态、产物打开/下载和受影响的异步状态；Playwright 断言应表达用户可感知结果和必要的网络契约。
+- CI 和交付准入只信 Playwright、单元/集成测试、lint/typecheck/build 等可重复命令，不以一次性的 Chrome DevTools MCP 检查作为通过依据；DevTools 截图或观察记录可以作为补充诊断材料，但不能替代 Playwright spec、trace 或验收截图。
+- Playwright 失败时先查看 Playwright error、trace、video/screenshot 和测试日志；若仍无法定位，再用 Chrome DevTools MCP 连接 live 页面深挖 console、network、DOM、storage、performance 或截图差异，并将稳定复现条件回写到 Playwright。
 - 用户提出修复代码、修 bug、优化交互、调整行为、新增功能、改接口、改状态流或改前后端联动时，默认都属于行为变更，必须安排并执行与本次需求对应的浏览器端 E2E 场景测试；不得偷懒用“改动很小”“已有单测”“接口自测通过”“看代码没问题”替代 E2E。
 - 对行为变更所需的启动服务、执行 E2E、上传文件、网页端复核和截图留证，智能体必须默认直接执行，不得向用户回问“是否继续做 E2E”“是否请你手动测试”“是否由你启动前后端”之类把必做步骤重新变成可选项。
 - 任何 bug 修复、功能新增或其他行为变更，除对应单元/集成测试外，必须执行严格的浏览器端 E2E 验证；单测、集成测试、接口自测或静态代码检查都不能替代该验收。
@@ -130,6 +135,7 @@
 - WSL 本地开发启动入口在 `scripts/start-dev-wsl.ps1`，由 Windows PowerShell 拉起 WSL 前后端终端；`scripts/dev-terminal-runner.sh` 是新开 WSL 标签页内的服务 runner，`scripts/stop-dev-ports.sh` 负责释放默认或指定端口。
 - 修改本地脚本时至少运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -Help`、`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -DryRun`、`bash -n scripts/dev-terminal-runner.sh`、`bash -n scripts/stop-dev-ports.sh`、`./scripts/stop-dev-ports.sh --dry-run` 和 `git diff --check`。
 - 前端开发服务必须使用隔离的 `NEXT_DIST_DIR=.next-dev`，生产构建保留 `.next`；不要让 `next dev` 和 `next build` 写同一个目录。
+- 仓库位于 `/mnt/c`、`/mnt/d` 等 Windows 挂载盘时，WSL 文件事件可能不会稳定触发；本地开发默认启用轮询 watcher。前端保持 `watchOptions.pollIntervalMs`、`WATCHPACK_POLLING=true`、`CHOKIDAR_USEPOLLING=true`，后端保持 `WATCHFILES_FORCE_POLLING=true` 和 `uvicorn --reload`。只有仓库迁移到 WSL 原生 Linux 文件系统且确认热更新稳定时，才可通过 `MYAGENT_DEV_FORCE_POLLING=0` 关闭脚本里的轮询。
 - 同一个前端开发产物目录只运行一个 `next dev`；并行开发服务可能污染生成产物。
 - 浏览器端验收截图统一放在 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`；截图只做本地验收证据，不提交到 git，交付说明写明路径即可。
 - 启动脚本不得嵌入 provider 密钥、访问令牌、客户文档路径或本机私密绝对路径。非 loopback 访问仍必须遵守访问令牌与 CORS 边界。
@@ -166,14 +172,17 @@ git diff --check
 - 若本次操作包含推送分支、创建 PR、更新 PR 或合并 PR，除本地验证外，还必须等待 GitHub 远程 CI / checks 跑完并确认全部通过。
 - 远程 checks 未结束前，不能把“已提交 PR / 已可合并 / 已完成合并”作为最终结论。
 - 若远程 CI 失败，必须继续修复并重新验证；若受限于权限、外部服务或 GitHub 平台故障无法继续，需在交付说明中明确阻塞点。
+- 远程 CI 的浏览器验收准入只基于 Playwright 等可重复测试结果；Chrome DevTools MCP 是开发和故障诊断工具，不作为 CI 通过条件。
 
 行为变更额外验收（必跑）：
 
 - 用户请求修复代码或新增功能时，默认必须执行本节 E2E 场景测试，除非本次修改被明确限定为纯文档/纯注释且不改变运行行为。
+- 新的或不稳定的网页流程先用 Chrome DevTools MCP 探路：打开本地页面，走通关键用户路径，观察 console、network、DOM 状态和截图，明确哪些信号应被 Playwright 固化。
 - 启动实际后端与前端服务实例，而不是只跑离线测试。
-- 执行当前仓库为本次需求准备的浏览器端 E2E 用例；若缺失则先补齐，再交付行为修改。
+- 将探路中确认的稳定断言写入 Playwright spec 后，执行当前仓库为本次需求准备的浏览器端 E2E 用例；若缺失则先补齐，再交付行为修改。
 - 在网页端完成人工复核并截图，截图存入 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`；这些截图不提交到 git。
 - 截图验收要高频且足量：在每个关键交互或状态变化后及时截图，并补充关键区域截图，避免因截图过少、过晚或只覆盖整页远景而漏掉细节问题。
+- Playwright 失败时优先分析 trace、video、screenshot 和测试日志；需要现场诊断时再用 Chrome DevTools MCP 复查 live 页面，并把新发现的稳定失败信号补进 Playwright 或相关单元/集成测试。
 - 以上步骤属于默认执行链路，不需要也不应再次向用户征求是否继续；只有遇到无法自助排除的客观阻塞时，才允许停下并说明原因、已完成内容和下一步所需外部条件。
 
 ## 安全与运行边界
@@ -227,6 +236,7 @@ git diff --check
 - 说明改了哪些文件和为什么。
 - 说明运行了哪些验证命令。
 - 说明执行了哪些 E2E 场景、访问了哪些页面或 URL、截图证据本地保存到了哪些 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 路径；截图证据不需要提交。
+- 若使用了 Chrome DevTools MCP，说明它用于探路还是失败诊断，并概述检查过的 console、network、页面状态或截图；同时明确最终准入依据仍是 Playwright 或其他可重复测试。
 - 若未补测试或知识包，说明原因。
 - 若未做 E2E 或未提供截图证据，必须明确说明这是纯文档变更；除纯文档/纯注释类修改外，不接受缺失。
 - 若发现用户需求本身会引入错误边界、过度设计或安全风险，必须直接指出并给出更稳妥的替代方案。
