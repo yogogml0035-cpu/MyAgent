@@ -1032,7 +1032,7 @@ export function deriveConversationTitle(value: string) {
     ? Array.from(new segmenter("zh-CN", { granularity: "grapheme" }).segment(normalized), (item) => item.segment)
     : Array.from(normalized);
 
-  return graphemes.slice(0, 5).join("") || "新对话";
+  return graphemes.slice(0, 10).join("") || "新对话";
 }
 
 export function normalizeTaskSummary(value: unknown): TaskSummary | null {

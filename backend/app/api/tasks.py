@@ -30,6 +30,10 @@ def _settings(request: Request) -> Settings:
     return request.app.state.settings
 
 
+def _title_generator(request: Request):
+    return request.app.state.title_generator
+
+
 def _get_existing_task(storage, task_id: str, **kwargs) -> TaskState:
     """Read task state; return 404 if the task directory does not exist."""
     try:
@@ -55,6 +59,18 @@ def _resolve_request_model(model: str | None, settings: Settings) -> str:
     return resolved_model
 
 
+async def _set_auto_title_if_empty(
+    request: Request,
+    task_id: str,
+    message: str,
+    model: str,
+    settings: Settings,
+) -> None:
+    storage = _storage(request)
+    title = await _title_generator(request)(message, model, settings)
+    storage.set_task_title_if_empty(task_id, title)
+
+
 @router.post("", response_model=TaskState, status_code=201)
 async def create_task(body: TaskCreateRequest, request: Request) -> TaskState:
     storage = _storage(request)
@@ -75,6 +91,7 @@ async def create_task(body: TaskCreateRequest, request: Request) -> TaskState:
         )
         if run_result is not None:
             _, run_id = run_result
+            await _set_auto_title_if_empty(request, state.task_id, body.message, model, settings)
             runner.start_background(state.task_id, body.message, model=model, run_id=run_id)
     return storage.get_task(state.task_id)
 
@@ -138,6 +155,7 @@ async def send_message(task_id: str, body: MessageRequest, request: Request) -> 
     if run_result is None:
         raise HTTPException(status_code=409, detail="任务状态不允许发送消息")
     _, run_id = run_result
+    await _set_auto_title_if_empty(request, task_id, body.message, model, settings)
     runner.start_background(task_id, body.message, model=model, run_id=run_id)
     return storage.get_task(task_id)
 

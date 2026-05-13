@@ -17,7 +17,15 @@ def app_client(tmp_path):
         workspace_root=tmp_path / "tasks",
         deepseek_api_key="sk-test",
     )
-    app = create_app(settings, storage=InMemoryTaskStorage(settings.task_root))
+
+    async def title_generator(message: str, model: str, settings: Settings) -> str:
+        return "模型会话名"
+
+    app = create_app(
+        settings,
+        storage=InMemoryTaskStorage(settings.task_root),
+        title_generator=title_generator,
+    )
     return TestClient(app)
 
 
@@ -97,6 +105,47 @@ class TestCreateTask:
         assert response.status_code == 400
         assert response.json()["detail"] == "模型服务未配置，请先在后端配置对应 API Key"
 
+    def test_create_task_with_message_sets_model_generated_history_title(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            deepseek_api_key="sk-test",
+        )
+        generated: dict[str, str] = {}
+
+        async def title_generator(message: str, model: str, settings: Settings) -> str:
+            generated["message"] = message
+            generated["model"] = model
+            return "需求命名"
+
+        client = TestClient(
+            create_app(
+                settings,
+                storage=InMemoryTaskStorage(settings.task_root),
+                title_generator=title_generator,
+            )
+        )
+        runner = cast(Any, client.app).state.runner
+        original_start = runner.start_background
+        runner.start_background = lambda *args, **kwargs: None
+        try:
+            response = client.post(
+                "/api/tasks",
+                json={"message": "请帮我总结用户消息并命名", "model": "deepseek:deepseek-chat"},
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["title"] == "需求命名"
+        summaries = client.get("/api/tasks").json()
+        assert summaries[0]["title"] == "需求命名"
+        assert generated == {
+            "message": "请帮我总结用户消息并命名",
+            "model": "deepseek:deepseek-chat",
+        }
+
 
 class TestGetTask:
     def test_get_idle_task_returns_state(self, create_idle_task, app_client):
@@ -170,11 +219,14 @@ class TestTaskHistoryActions:
     def test_delete_task_removes_task_state(self, create_idle_task, app_client):
         created = create_idle_task()
         task_id = created["task_id"]
+        task_dir = app_client.app.state.storage.task_dir(task_id)
+        assert task_dir.is_dir()
 
         response = app_client.delete(f"/api/tasks/{task_id}")
 
         assert response.status_code == 204
         assert app_client.get(f"/api/tasks/{task_id}").status_code == 404
+        assert not task_dir.exists()
 
     def test_delete_running_task_returns_409(self, create_idle_task, app_client):
         created = create_idle_task()
@@ -259,6 +311,46 @@ class TestSendMessage:
         user_messages = [m for m in messages if m["role"] == "user"]
         assert len(user_messages) == 1
         assert user_messages[0]["content"] == "test message content"
+
+    def test_send_message_sets_model_generated_history_title(self, create_idle_task, app_client):
+        created = create_idle_task()
+        runner = app_client.app.state.runner
+        original_start = runner.start_background
+        runner.start_background = lambda *args, **kwargs: None
+        try:
+            response = app_client.post(
+                f"/api/tasks/{created['task_id']}/messages",
+                json={"message": "请总结左侧历史会话标题", "model": "deepseek:deepseek-chat"},
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert response.status_code == 200
+        assert response.json()["title"] == "模型会话名"
+        summaries = app_client.get("/api/tasks").json()
+        assert summaries[0]["title"] == "模型会话名"
+
+    def test_send_message_keeps_manual_history_title(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        runner = app_client.app.state.runner
+        original_start = runner.start_background
+        runner.start_background = lambda *args, **kwargs: None
+        try:
+            rename_response = app_client.patch(
+                f"/api/tasks/{task_id}",
+                json={"title": "手动标题"},
+            )
+            message_response = app_client.post(
+                f"/api/tasks/{task_id}/messages",
+                json={"message": "这条消息不应覆盖标题", "model": "deepseek:deepseek-chat"},
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert rename_response.status_code == 200
+        assert message_response.status_code == 200
+        assert message_response.json()["title"] == "手动标题"
 
     def test_send_message_requires_configured_provider_key(self, tmp_path):
         settings = Settings(

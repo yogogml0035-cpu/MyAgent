@@ -61,6 +61,7 @@ RUN_ARTIFACT_NAMES = {
     "final-summary.md",
     "report.html",
 }
+TASK_FILE_WORKSPACE_DIRS = ("uploads",)
 FILE_TOOL_AUDIT_KEYS = {
     "tool",
     "tool_name",
@@ -214,7 +215,7 @@ def summary_title(messages: list[ChatMessage]) -> str:
             continue
         visible = " ".join(message.content.split())
         if visible:
-            return visible[:5]
+            return visible[:10]
     return "新对话"
 
 
@@ -354,7 +355,7 @@ class PostgresTaskStorage:
         now = utc_now()
         task_id = f"{now.replace(':', '').replace('-', '')}-{uuid.uuid4().hex[:8]}"
         task_dir = self.task_dir(task_id)
-        for child in ("uploads", "artifacts", "subagents", "logs"):
+        for child in TASK_FILE_WORKSPACE_DIRS:
             (task_dir / child).mkdir(parents=True, exist_ok=True)
         with self._lock, self._connect() as conn, conn.cursor() as cur:
             cur.execute(
@@ -418,6 +419,24 @@ class PostgresTaskStorage:
             cur.execute("UPDATE tasks SET title = %s WHERE task_id = %s", (normalized, task_id))
         return self.get_task(task_id, include_events=False)
 
+    def set_task_title_if_empty(self, task_id: str, title: str) -> TaskState:
+        normalized = " ".join(title.split())
+        if not normalized:
+            return self.get_task(task_id, include_events=False)
+        normalized = normalized[:80]
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=True)
+            cur.execute(
+                """
+                    UPDATE tasks
+                    SET title = %s
+                    WHERE task_id = %s
+                      AND (title IS NULL OR btrim(title) = '')
+                    """,
+                (normalized, task_id),
+            )
+        return self.get_task(task_id, include_events=False)
+
     def delete_task(self, task_id: str) -> None:
         task_path = self.task_dir(task_id)
         with self._lock, self._connect() as conn, conn.cursor() as cur:
@@ -464,8 +483,6 @@ class PostgresTaskStorage:
                 return None
             now = utc_now()
             run_id = generate_run_id()
-            run_dir = self.run_artifact_dir(task_id, run_id)
-            run_dir.mkdir(parents=True, exist_ok=True)
             cur.execute(
                 """
                     UPDATE tasks
@@ -923,7 +940,6 @@ class PostgresTaskStorage:
         run_path = self.run_artifact_dir(task_id, run_id) / "run.json"
         run_path.parent.mkdir(parents=True, exist_ok=True)
         run_path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-        self.write_json(task_id, "run.json", data)
         return run_path
 
     def _read_run_manifest(self, task_id: str, run_id: str) -> dict[str, Any]:

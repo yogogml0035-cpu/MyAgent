@@ -138,6 +138,7 @@
 - WSL 本地开发启动入口在 `scripts/start-dev-wsl.ps1`，由 Windows PowerShell 拉起 WSL 前后端终端；`scripts/dev-terminal-runner.sh` 是新开 WSL 标签页内的服务 runner，`scripts/stop-dev-ports.sh` 负责释放默认或指定端口。
 - 修改本地脚本时至少运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -Help`、`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -DryRun`、`bash -n scripts/dev-terminal-runner.sh`、`bash -n scripts/stop-dev-ports.sh`、`./scripts/stop-dev-ports.sh --dry-run` 和 `git diff --check`。
 - 前端开发服务必须使用隔离的 `NEXT_DIST_DIR=.next-dev`，生产构建保留 `.next`；不要让 `next dev` 和 `next build` 写同一个目录。
+- 浏览器端 E2E 前端服务默认固定使用 `NEXT_DIST_DIR=.next-dev-e2e`；不要按场景随意创建 `.next-dev-e2e-*` 目录，除非确实需要并行隔离多个 Next dev server，且验收结束后必须清理临时目录。
 - 仓库位于 `/mnt/c`、`/mnt/d` 等 Windows 挂载盘时，WSL 文件事件可能不会稳定触发；本地开发默认启用轮询 watcher。前端保持 `watchOptions.pollIntervalMs`、`WATCHPACK_POLLING=true`、`CHOKIDAR_USEPOLLING=true`，后端保持 `WATCHFILES_FORCE_POLLING=true` 和 `uvicorn --reload`。只有仓库迁移到 WSL 原生 Linux 文件系统且确认热更新稳定时，才可通过 `MYAGENT_DEV_FORCE_POLLING=0` 关闭脚本里的轮询。
 - 同一个前端开发产物目录只运行一个 `next dev`；并行开发服务可能污染生成产物。
 - 浏览器端验收截图统一放在 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`；截图只做本地验收证据，不提交到 git，交付说明写明路径即可。

@@ -55,6 +55,18 @@ npx playwright test e2e-playwright/test_history_menu_affordance.spec.mjs --repor
 
 The history-menu spec creates a temporary task through the public API, seeds one visible user-message history row through the same Postgres-backed task contract, verifies the three-dot menu trigger in hover and open states, captures screenshots, and deletes the task after the assertion.
 
+Run the auto-title acceptance test from `frontend/` when changing first-message task creation, automatic history naming, or title normalization:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_API_URL=http://127.0.0.1:8001 \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/auto-title-generation \
+MYAGENT_E2E_ACCESS_TOKEN=... \
+npx playwright test e2e-playwright/test_auto_title_generation.spec.mjs --reporter=line
+```
+
+The auto-title spec sends a first user message through the real browser UI, waits for the public message API response, asserts the returned history title is non-empty and at most 10 visible characters, verifies the same title appears in the left history sidebar, captures screenshots for the start, ready, visible-title, and selected-row states, then cancels/deletes the temporary task through the public API.
+
 Run the resource-upload harness acceptance test from `frontend/` when changing upload formats, uploaded-resource contracts, or resource tool progress:
 
 ```bash

@@ -1022,10 +1022,10 @@ test("normalizeTaskSummaries reads backend history titles without subtitles", ()
   ]);
 });
 
-test("deriveConversationTitle uses the first five visible characters", () => {
-  assert.equal(deriveConversationTitle("请分析这些 Markdown 文件"), "请分析这些");
-  assert.equal(deriveConversationTitle("Analyze these files"), "Analy");
-  assert.equal(deriveConversationTitle("  多行\n空白\t会压缩  "), "多行 空白");
+test("deriveConversationTitle uses the first ten visible characters", () => {
+  assert.equal(deriveConversationTitle("请分析这些 Markdown 文件"), "请分析这些 Mark");
+  assert.equal(deriveConversationTitle("Analyze these files"), "Analyze th");
+  assert.equal(deriveConversationTitle("  多行\n空白\t会压缩  "), "多行 空白 会压缩");
 });
 
 test("request error formatting distinguishes backend-down from auth detail", () => {

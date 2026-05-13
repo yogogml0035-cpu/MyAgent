@@ -13,6 +13,7 @@ from app.schemas import ChatMessage, EventRecord, TaskRunRecord, TaskState, Task
 from app.storage import (
     LEGACY_RUN_ID,
     SUPPORTED_UPLOAD_LABEL,
+    TASK_FILE_WORKSPACE_DIRS,
     TYPE_MAP,
     UPLOAD_CHUNK_SIZE,
     UPLOAD_FORMATS,
@@ -56,7 +57,7 @@ class InMemoryTaskStorage:
             raise ValueError("初始消息必须通过运行生命周期接口发送")
         now = utc_now()
         task_id = f"{now.replace(':', '').replace('-', '')}-{uuid.uuid4().hex[:8]}"
-        for child in ("uploads", "artifacts", "subagents", "logs"):
+        for child in TASK_FILE_WORKSPACE_DIRS:
             (self.task_dir(task_id) / child).mkdir(parents=True, exist_ok=True)
         self.states[task_id] = TaskState(
             task_id=task_id,
@@ -112,6 +113,13 @@ class InMemoryTaskStorage:
         state.title = normalized
         return self.get_task(task_id, include_events=False)
 
+    def set_task_title_if_empty(self, task_id: str, title: str) -> TaskState:
+        state = self.states[task_id]
+        normalized = " ".join(title.split())[:80]
+        if normalized and not state.title:
+            state.title = normalized
+        return self.get_task(task_id, include_events=False)
+
     def delete_task(self, task_id: str) -> None:
         if task_id not in self.states:
             raise FileNotFoundError(task_id)
@@ -133,7 +141,6 @@ class InMemoryTaskStorage:
             return None
         now = utc_now()
         run_id = generate_run_id()
-        self.run_artifact_dir(task_id, run_id).mkdir(parents=True, exist_ok=True)
         state.status = "running"
         state.model = model
         state.error = None

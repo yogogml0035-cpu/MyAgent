@@ -313,6 +313,7 @@ test("runtime task contracts expose artifacts and upload errors in the browser",
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("menuitem", { name: "删除" }).click();
   await expect(page.locator(".historyItemShell", { hasText: "历史菜单验收" })).toHaveCount(0);
+  await expect.poll(() => fs.existsSync(path.join(taskRoot, taskId))).toBe(false);
   await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "09-history-deleted.png") });
 
   await page.getByRole("button", { name: "新建会话" }).click();
@@ -354,6 +355,7 @@ test("runtime task contracts expose artifacts and upload errors in the browser",
   writeJson(path.join(evidenceDir, "assertions.json"), {
     artifactName,
     downloadedArtifact: "downloaded-report.html",
+    deletedTaskFolderRemoved: true,
     historyRenameDeletePassed: true,
     includeEventsFalseReturnedEmptyEvents: true,
     modelsExposeAvailable: true,

@@ -23,6 +23,7 @@ from .config import Settings, enforce_single_process_runtime, load_settings
 from .memory import AgentMemoryService, MemoryServiceError
 from .runner.core import TaskRunner
 from .storage import PostgresTaskStorage
+from .task_titles import generate_task_title
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,7 @@ def create_app(
     *,
     storage: Any | None = None,
     memory_service: AgentMemoryService | None = None,
+    title_generator: Callable[[str, str, Settings], Awaitable[str]] | None = None,
 ) -> FastAPI:
     resolved = settings or load_settings()
     enforce_single_process_runtime()
@@ -74,6 +76,7 @@ def create_app(
     app.state.settings = resolved
     app.state.storage = storage
     app.state.runner = runner
+    app.state.title_generator = title_generator or generate_task_title
 
     app.include_router(tasks_router)
     app.include_router(files_router)

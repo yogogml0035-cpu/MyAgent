@@ -46,8 +46,22 @@ class TestTaskStorageCreateTask:
         storage = InMemoryTaskStorage(tmp_path / "sessions")
         state = storage.create_task(message=None, model="deepseek:deepseek-chat")
         task_dir = storage.task_dir(state.task_id)
-        assert (task_dir / "uploads").is_dir()
-        assert (task_dir / "artifacts").is_dir()
+        assert sorted(path.name for path in task_dir.iterdir()) == ["uploads"]
+
+    def test_start_run_does_not_create_artifact_directory_before_writes(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+
+        run_result = storage.start_run(
+            state.task_id,
+            message="hello",
+            model="deepseek:deepseek-chat",
+            expected_statuses={"idle"},
+        )
+
+        assert run_result is not None
+        task_dir = storage.task_dir(state.task_id)
+        assert sorted(path.name for path in task_dir.iterdir()) == ["uploads"]
 
 
 class TestTaskStorageAppendEvent:
@@ -84,6 +98,16 @@ class TestTaskStorageHistoryActions:
         renamed = storage.rename_task(state.task_id, "  新标题  ")
 
         assert renamed.title == "新标题"
+
+    def test_set_task_title_if_empty_only_sets_blank_title(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+
+        titled = storage.set_task_title_if_empty(state.task_id, "  自动标题  ")
+        preserved = storage.set_task_title_if_empty(state.task_id, "另一个标题")
+
+        assert titled.title == "自动标题"
+        assert preserved.title == "自动标题"
 
     def test_delete_task_removes_state_and_files(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
@@ -161,3 +185,18 @@ class TestPostgresTaskStorageRunArtifacts:
         mirrored = tmp_path / "sessions" / task_id / "artifacts" / "report.html"
         assert mirrored.read_text(encoding="utf-8") == "<h1>报告</h1>"
         assert recorded == ["report.html"]
+
+    def test_write_run_manifest_stays_inside_run_artifacts_dir(self, tmp_path):
+        storage = PostgresTaskStorage(tmp_path / "sessions", "postgresql://unused")
+        task_id = "task-1"
+        run_id = "run-test-001"
+
+        path = storage.write_run_manifest(task_id, run_id, {"ok": True})
+
+        assert path == (
+            tmp_path / "sessions" / task_id / "artifacts" / "runs" / run_id / "run.json"
+        ).resolve()
+        assert path.read_text(encoding="utf-8") == '{\n  "ok": true\n}'
+        assert sorted(child.name for child in (tmp_path / "sessions" / task_id).iterdir()) == [
+            "artifacts"
+        ]
