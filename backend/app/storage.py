@@ -43,7 +43,7 @@ from .schemas import (
 )
 
 ArtifactType: TypeAlias = Literal["html", "markdown", "json", "text"]
-UploadSourceFormat: TypeAlias = Literal["markdown", "json"]
+UploadSourceFormat: TypeAlias = Literal["markdown", "json", "text", "word", "excel"]
 EventAppendSpec: TypeAlias = tuple[
     str,
     str,
@@ -88,7 +88,12 @@ TYPE_MAP: dict[str, ArtifactType] = {
 UPLOAD_FORMATS: dict[str, UploadSourceFormat] = {
     ".md": "markdown",
     ".json": "json",
+    ".txt": "text",
+    ".docx": "word",
+    ".xlsx": "excel",
+    ".xlsm": "excel",
 }
+SUPPORTED_UPLOAD_LABEL = "Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件"
 
 
 class UploadConflictError(ValueError):
@@ -149,7 +154,7 @@ def document_upload_filename(name: str) -> str:
     suffix = Path(filename).suffix
     normalized_suffix = suffix.lower()
     if normalized_suffix not in UPLOAD_FORMATS:
-        raise ValueError("仅支持上传 Markdown 或 JSON 文件")
+        raise ValueError(f"仅支持上传 {SUPPORTED_UPLOAD_LABEL}")
     normalized_name = f"{filename[: -len(suffix)]}{normalized_suffix}"
     if len(normalized_name.encode("utf-8")) > MAX_FILENAME_BYTES:
         raise ValueError(f"上传文件名超过 {MAX_FILENAME_BYTES} 字节限制")
@@ -607,7 +612,7 @@ class PostgresTaskStorage:
             upload_dir = self.task_dir(task_id) / "uploads"
             upload_dir.mkdir(parents=True, exist_ok=True)
             if len(self.list_uploads(task_id)) + len(uploads) > max_files:
-                raise UploadLimitError(f"最多只能上传 {max_files} 个 Markdown 或 JSON 文件")
+                raise UploadLimitError(f"最多只能上传 {max_files} 个 {SUPPORTED_UPLOAD_LABEL}")
 
             batch = self._validate_upload_batch(task_id, uploads)
             staged: list[tuple[Path, Path, int]] = []

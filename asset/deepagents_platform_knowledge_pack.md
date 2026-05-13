@@ -18,7 +18,11 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - `MODEL_REGISTRY` in `config.py` lists all supported models. The `/api/models` endpoint returns models with an `available` flag based on whether the provider API key is configured. Task creation and message sending accept an optional `model`; the API layer resolves missing values from `settings.default_model`, validates registry membership, and rejects unavailable provider-backed models before scheduling a run. Draft task creation without a message only needs registry validation.
 - Frontend default and fallback model IDs must also use the provider-prefixed registry format. A stale fallback such as `deepseek-reasoner` can still reach the backend when model-list loading fails or a user sends before refresh completes. Frontend model pickers must treat `available=false` as non-runnable: disabled in the menu, avoided as the automatic selection when any runnable model exists, and blocked before task creation/upload/message submission.
 - Default model is `deepseek:deepseek-chat` (configurable via `MYAGENT_DEFAULT_MODEL` env var).
-- Tools are LangChain `@tool` decorated functions: `read_file`, `write_file`, `list_files` (filesystem) and `tavily_search` (conditional on `settings.tavily_api_key`). Tavily must be created from the settings-bound key; do not register the tool from settings and then read only `os.environ` at runtime.
+- Tools are LangChain `@tool` decorated functions: deepagents filesystem tools, task-scoped resource tools, and `tavily_search` (conditional on `settings.tavily_api_key`). Tavily must be created from the settings-bound key; do not register the tool from settings and then read only `os.environ` at runtime.
+- Uploaded files are harness-style task Resources, not automatic context. Supported upload formats are `.md`, `.json`, `.txt`, `.docx`, `.xlsx`, and `.xlsm`; `.doc`, `.xls`, `.csv`, and arbitrary local paths are not accepted in v1. Upload events keep `file_uploaded` and include a `resource_ref` with stable `media_type` values: `markdown`, `json`, `text`, `word`, or `excel`.
+- Resource execution uses `app.execution.resources.LocalResourceExecutionAdapter` as an in-process Provision/Execute boundary. `list_uploaded_resources`, `inspect_resource`, `read_resource_text`, and `read_resource_table` are thin LangChain adapters over `ExecutionRequest`/`ExecutionResult`; failures return `{ok:false,error:{code,message,retryable}}` tool-call JSON rather than crashing the runner.
+- Resource tools may only resolve current task uploads under `settings.workspace_root / task_id / uploads`. Future local-path support must first register or copy the file as a current-task resource; do not let a resource tool read arbitrary host paths directly.
+- `TaskRunner.start()` injects a small resource manifest `SystemMessage` when uploads exist. The manifest includes filename, resource_id, format, size, and digest only; it must never include uploaded body text. `build_agent()` also passes `RESOURCE_TOOL_SYSTEM_PROMPT` so the model knows to inspect/list resources before reading pages or table ranges.
 - Filesystem tools validate paths stay within `workspace_root` for security.
 - SubAgents are `SubAgent` TypedDicts with `name`, `description`, `system_prompt`, and optional `model`/`tools`/`skills`. Three built-in: `researcher`, `coder`, `file-analyst`.
 - Skills follow the DeepAgents SKILL.md convention: YAML frontmatter with `name` and `description`, plus Markdown instructions. Loaded from directories listed in `settings.skills_dirs`.
@@ -32,7 +36,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Task API routes follow REST conventions: `POST /api/tasks` (create), `GET /api/tasks` (list), `GET /api/tasks/{id}` (read), `PATCH /api/tasks/{id}` (rename history title), `DELETE /api/tasks/{id}` (delete non-running task), `POST /api/tasks/{id}/messages` (send message), `POST /api/tasks/{id}/cancel` (cancel). `GET /api/tasks/{id}?include_events=false` is the lightweight refresh path and must return the same task shape with an empty `events` list. Artifact routes are first-class API routes: `GET /api/tasks/{id}/artifacts/{name}` for latest or legacy artifacts and `GET /api/tasks/{id}/runs/{run_id}/artifacts/{name}` for run-scoped artifacts.
 - Frontend artifact fetches must only use the current API origin and current task artifact routes: `/api/tasks/{id}/artifacts/{name}` or `/api/tasks/{id}/runs/{run_id}/artifacts/{name}`. Reject external origins, non-artifact paths, wrong task IDs, query/hash redirects, and artifact-name mismatches before attaching `X-MyAgent-Token`.
 - Opening an HTML artifact must not top-level navigate to a same-origin `blob:` URL. The frontend should keep the popup at `about:blank`, write a preview shell, and load the HTML blob inside an iframe with `sandbox=""` and no script permissions.
-- Upload validation errors must map to stable client-facing HTTP status codes: duplicate filename conflicts return 409, size/count/request limits return 413, unsupported extensions or invalid JSON content return 400, and missing tasks return 404. The storage layer may raise domain exceptions, but API routes must not leak these as 500 responses.
+- Upload validation errors must map to stable client-facing HTTP status codes: duplicate filename conflicts return 409, size/count/request limits return 413, unsupported extensions or invalid JSON content return 400, and missing tasks return 404. JSON files are still validated at upload time; Word/Excel parsing happens later through resource tools. The storage layer may raise domain exceptions, but API routes must not leak these as 500 responses.
 - Multipart upload request limits must be enforced before FastAPI `UploadFile` parsing reaches storage. `main.py` checks `Content-Length` and wraps the ASGI receive stream for `multipart/form-data`; storage-level per-file and aggregate limits remain a second line of defense.
 - Auth middleware enforces loopback-only access by default; non-local access requires `MYAGENT_ACCESS_TOKEN`.
 - Frontend local development keeps `next dev` output in `.next-dev` and production builds in `.next` via `NEXT_DIST_DIR`, so dev caches and production build artifacts never share one output directory.
@@ -57,6 +61,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Delete history item: `DELETE /api/tasks/{id}` removes a non-running task and its local task files; running tasks must be cancelled or completed before deletion.
 - Download artifact: `GET /api/tasks/{id}/runs/{run_id}/artifacts/report.html` → `FileResponse` with the artifact MIME type and safe filename.
 - Build agent: `build_agent(settings, tools=get_platform_tools(settings), skills=["./skills"])`
+- Resource tool result: `{"ok": true, "data": {"schema_version": 1, "resources": [{"name": "brief.docx", "format": "word"}]}}`
+- Resource tool error: `{"ok": false, "error": {"code": "resource_not_found", "message": "...", "retryable": false}}`
 - Model ID format: `"deepseek:deepseek-chat"`, `"openai:gpt-4o"`, `"anthropic:claude-sonnet-4-20250514"`
 - SSE event: `event: message\ndata: {"type": "agent_message", "text": "..."}\n\n`
 
@@ -69,6 +75,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Missing provider API keys make affected models unavailable at `/api/models` and must block run-starting requests before background scheduling. This avoids creating task runs that are guaranteed to fail only after storage state changes. The browser UI should surface unavailable models as disabled rather than allowing users to create an idle task or upload files before the send fails.
 - History rename/delete are real task API operations, not frontend-only state. Rename stores a bounded custom task title; delete must reject running tasks to avoid orphaning an active in-process runner.
 - Artifact names are normalized file names only, not paths. Artifact download routes must resolve through `TaskStorage.resolve_artifact()` or `TaskStorage.resolve_run_artifact()` so path traversal and cross-run access stay blocked.
+- Upload names are normalized leaf filenames only. Resource tool inputs may use resource_id or filename but must reject paths, traversal attempts, cross-task access, and unsupported suffixes.
 - Frontend artifact URL validation is an additional client boundary, not a replacement for backend path checks. Backend routes must keep resolving through storage, and frontend allowlists must continue to reject any URL that is not on the trusted API origin and artifact route shape.
 - `SKILL.md` files without valid YAML frontmatter are silently skipped during discovery.
 - `next typegen` loads `next.config.mjs` with the production build phase; keep any required config inputs available before running frontend type checks in CI.
@@ -85,6 +92,8 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **Artifact URL token leak**: Do not pass backend-provided artifact URLs directly to `fetch`. `buildArtifactRequest()` owns allowlist validation and is the only place that may attach `X-MyAgent-Token` for artifact downloads.
 - **HTML artifact preview XSS**: Do not navigate an opened window to an artifact blob. HTML reports must render through a sandboxed iframe without `allow-scripts` so generated scripts cannot run in the app origin.
 - **Upload exception leakage**: Storage upload validation exceptions should be translated by the API layer. A malformed user upload is a 4xx client error, never an unhandled 500.
+- **Resource tool boundary drift**: Do not put document parsing directly in `TaskRunner` or upload API side effects. Uploaded bodies stay out of model context until a resource tool explicitly reads a page, block, sheet, or range.
+- **Large document context blowup**: Resource tools must paginate or range-limit text/table output. Do not return complete Word/Excel contents by default.
 - **storage.py coupling**: TaskStorage is now Postgres-backed for structured state, but still exposes compatibility methods for session events, artifact refs, and reasoning traces. Keep storage changes synchronized with API, runner, streaming, and file tools.
 - **Single-process runtime**: The platform uses an in-process runner even though task state is in Postgres. Multi-worker deployment will break cancellation and active-run ownership until a lease/queue design is added.
 - **Timeout enforcement**: `TaskRunner.start()` enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`. If the deepagents SDK or LLM call hangs, the run is terminated after the configured timeout and a warning is logged.
@@ -101,7 +110,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Backend dependency source pin: `backend/pyproject.toml`, `backend/uv.lock`
 - Model provider: `backend/app/models/provider.py`, `backend/app/models/registry.py`
 - Agent factory: `backend/app/agent/factory.py`, `backend/app/agent/middleware.py`
-- Tools: `backend/app/tools/tavily_search.py`, `backend/app/tools/filesystem_bridge.py`, `backend/app/tools/registry.py`
+- Tools: `backend/app/tools/tavily_search.py`, `backend/app/tools/filesystem_bridge.py`, `backend/app/tools/registry.py`, `backend/app/execution/resources.py`
 - Streaming: `backend/app/streaming/v2_adapter.py`, `backend/app/streaming/event_converter.py`, `backend/app/streaming/sse.py`
 - Runner: `backend/app/runner/core.py`
 - SubAgents: `backend/app/subagents/definitions.py`, `backend/app/subagents/registry.py`
@@ -119,6 +128,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Frontend model availability UI: `frontend/app/model-ui.ts`, `frontend/components/chat/ChatComposer.tsx`, `frontend/hooks/use-task-workspace.ts`
 - Local dev scripts: `scripts/start-dev-wsl.ps1`, `scripts/dev-terminal-runner.sh`, `scripts/stop-dev-ports.sh`
 - Browser E2E acceptance evidence: `frontend/e2e-playwright/README.md`
+- Resource upload harness E2E: `frontend/e2e-playwright/test_resource_upload_harness.spec.mjs`
 - Repository line-ending policy: `.gitattributes`
 
 ## Related Test Paths
@@ -137,6 +147,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
   - `backend/tests/unit/security/test_scanner.py`
   - `backend/tests/unit/session/`
 - Runtime contract tests: `backend/tests/unit/api/test_artifacts.py`, `backend/tests/unit/api/test_models.py`, `backend/tests/unit/api/test_tasks.py`, `backend/tests/unit/runner/test_core.py`, `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`
+- Resource execution tests: `backend/tests/unit/tools/test_resource_execution.py`, `backend/tests/unit/tools/test_registry.py`, `backend/tests/unit/runner/test_core.py`, `frontend/tests/upload/test_file_upload.test.ts`
 - Integration tests: `backend/tests/integration/`
 - E2E tests: `backend/tests/e2e/test_streaming_e2e.py`
 - Real-service integration tests: `backend/tests/integration/test_postgres_memory_storage.py` (runs when Postgres/Qdrant/DashScope env is configured)

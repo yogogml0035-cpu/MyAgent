@@ -13,6 +13,11 @@ from langchain_core.messages import HumanMessage, SystemMessage
 from app.agent.factory import build_agent
 from app.config import Settings
 from app.contracts import EventLevel
+from app.execution.resources import (
+    RESOURCE_TOOL_SYSTEM_PROMPT,
+    build_resource_manifest,
+    format_resource_manifest_message,
+)
 from app.schemas import ChatMessage, EventRecord, TaskStatus
 from app.streaming.event_converter import convert_stream_event
 from app.streaming.v2_adapter import extract_final_answer, stream_agent
@@ -98,12 +103,13 @@ class TaskRunner:
 
         task_workspace = self.settings.workspace_root / task_id
         task_workspace.mkdir(parents=True, exist_ok=True)
-        tools = get_platform_tools(self.settings)
+        tools = get_platform_tools(self.settings, task_id=task_id)
 
         agent = build_agent(
             self.settings,
             model=model_id,
             tools=tools,
+            system_prompt=RESOURCE_TOOL_SYSTEM_PROMPT,
             skills=list(self.settings.skills_dirs),
             workspace_dir=task_workspace,
         )
@@ -112,6 +118,9 @@ class TaskRunner:
         memory_context = await self._recall_memory_context(message)
         if memory_context:
             messages.append(SystemMessage(content=memory_context))
+        resource_message = self._resource_manifest_context(task_id)
+        if resource_message:
+            messages.append(SystemMessage(content=resource_message))
         messages.append(HumanMessage(content=message))
         config: dict[str, Any] = {
             "configurable": {"thread_id": task_id},
@@ -277,6 +286,14 @@ class TaskRunner:
         except Exception:
             logger.warning("Long-term memory recall failed; continuing without memory", exc_info=True)
             return None
+
+    def _resource_manifest_context(self, task_id: str) -> str:
+        try:
+            manifest = build_resource_manifest(task_id, self.settings.workspace_root)
+        except Exception:
+            logger.warning("Resource manifest provisioning failed; continuing without it", exc_info=True)
+            return ""
+        return format_resource_manifest_message(manifest)
 
     def _schedule_completed_run_memory_write(
         self,

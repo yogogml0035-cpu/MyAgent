@@ -18,6 +18,8 @@ dependencies = [
   "tavily-python>=0.5,<1.0.0",
   "langgraph-checkpoint",
   "psycopg[binary]>=3.2,<4.0",
+  "python-docx>=1.1,<2.0",
+  "openpyxl>=3.1,<4.0",
 ]
 
 [dependency-groups]

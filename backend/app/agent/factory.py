@@ -40,6 +40,7 @@ def build_agent(
     *,
     model: str | None = None,
     tools: Sequence[BaseTool | Callable | dict] | None = None,
+    system_prompt: str | None = None,
     skills: list[str] | None = None,
     subagents: Sequence | None = None,
     workspace_dir: Path | None = None,
@@ -53,6 +54,7 @@ def build_agent(
     return create_deep_agent(
         model=chat_model,
         tools=tools or [],
+        system_prompt=system_prompt,
         skills=skills,
         subagents=subagents,
         backend=backend,
@@ -66,6 +68,7 @@ def build_agent_with_middleware(
     *,
     model: str | None = None,
     tools: Sequence[BaseTool | Callable | dict] | None = None,
+    system_prompt: str | None = None,
     skills: list[str] | None = None,
     subagents: Sequence | None = None,
     workspace_dir: Path | None = None,
@@ -86,6 +89,7 @@ def build_agent_with_middleware(
     return create_deep_agent(
         model=chat_model,
         tools=tools or [],
+        system_prompt=system_prompt,
         middleware=extra_middleware,
         skills=skills,
         subagents=subagents,

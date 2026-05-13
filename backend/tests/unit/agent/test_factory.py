@@ -50,3 +50,14 @@ class TestBuildAgent:
         call_kwargs = mock_create.call_args
         assert dummy_tool in call_kwargs.kwargs["tools"]
         assert call_kwargs.kwargs["skills"] == ["./skills"]
+
+    @patch("app.agent.factory._create_model", return_value=_mock_model())
+    @patch("app.agent.factory.create_deep_agent")
+    def test_passes_system_prompt(self, mock_create, mock_model_fn, test_settings):
+        fake_graph = MagicMock(spec=CompiledStateGraph)
+        mock_create.return_value = fake_graph
+
+        build_agent(test_settings, system_prompt="Use resource tools.")
+
+        call_kwargs = mock_create.call_args
+        assert call_kwargs.kwargs["system_prompt"] == "Use resource tools."

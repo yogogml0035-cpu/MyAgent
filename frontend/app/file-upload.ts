@@ -1,7 +1,15 @@
 export type UploadFileCandidate = Pick<File, "name" | "type">;
 
 export const FILE_INPUT_ACCEPT: string | undefined = undefined;
-export const SUPPORTED_UPLOAD_EXTENSIONS = [".md", ".json"] as const;
+export const SUPPORTED_UPLOAD_EXTENSIONS = [
+  ".md",
+  ".json",
+  ".txt",
+  ".docx",
+  ".xlsx",
+  ".xlsm",
+] as const;
+export const SUPPORTED_UPLOAD_LABEL = "Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件";
 
 export function isSupportedUploadFile(file: UploadFileCandidate) {
   const filename = file.name.trim().toLowerCase();

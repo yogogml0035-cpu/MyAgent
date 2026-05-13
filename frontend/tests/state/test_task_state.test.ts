@@ -993,7 +993,7 @@ test("formatNeedsInput localizes fixed payload keys and fallback messages", () =
   assert.equal(state.needsInput?.required_file_type, "markdown_or_json");
   assert.equal(
     formatNeedsInput(state.needsInput ?? {}),
-    "需要补充输入。 所需文件类型：Markdown 或 JSON 文件",
+    "需要补充输入。 所需文件类型：Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件",
   );
 });
 

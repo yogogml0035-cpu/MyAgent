@@ -160,6 +160,13 @@ def _safe_string(value: Any, fallback: str = "") -> str:
 
 def _tool_label(tool_name: str) -> str:
     normalized = tool_name.lower()
+    if "resource" in normalized or normalized in {
+        "list_uploaded_resources",
+        "inspect_resource",
+        "read_resource_text",
+        "read_resource_table",
+    }:
+        return "处理资源文件"
     if "tavily" in normalized or "search" in normalized:
         return "联网搜索"
     if normalized in {"read_file", "read"} or "read_file" in normalized:

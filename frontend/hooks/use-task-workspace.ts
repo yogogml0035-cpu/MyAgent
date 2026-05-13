@@ -21,7 +21,7 @@ import {
   buildModelDisplayOptions,
   selectedModelDisplayOption,
 } from "../app/model-ui";
-import { partitionSupportedUploadFiles } from "../app/file-upload";
+import { SUPPORTED_UPLOAD_LABEL, partitionSupportedUploadFiles } from "../app/file-upload";
 import {
   buildConversationHistoryItems,
   buildConversationStreamItems,
@@ -53,7 +53,7 @@ const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
   },
 ];
 
-const DEFAULT_FILE_PROMPT = "请分析已上传的 Markdown 或 JSON 文件是否存在串标围标嫌疑。";
+const DEFAULT_FILE_PROMPT = "请分析已上传文件，先按需读取资源内容，再总结关键差异。";
 export const MAX_SSE_RETRIES = 5;
 export const ARTIFACT_OBJECT_URL_REVOKE_DELAY_MS = 60_000;
 
@@ -478,7 +478,7 @@ export function useTaskWorkspace() {
     setErrorLevel("warning");
     setError(
       rejectedFiles.length > 0
-        ? `当前仅支持上传 Markdown 或 JSON 文件，已忽略 ${rejectedFiles.length} 个其他类型文件。`
+        ? `当前仅支持上传 ${SUPPORTED_UPLOAD_LABEL}，已忽略 ${rejectedFiles.length} 个其他类型文件。`
         : "",
     );
   }, []);

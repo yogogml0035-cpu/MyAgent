@@ -9,7 +9,7 @@ import {
   useState,
 } from "react";
 import type { ModelDisplayOption } from "../../app/model-ui";
-import { FILE_INPUT_ACCEPT } from "../../app/file-upload";
+import { FILE_INPUT_ACCEPT, SUPPORTED_UPLOAD_LABEL } from "../../app/file-upload";
 import { formatFileSize, shouldSubmitComposerKey } from "../../app/workspace-view";
 
 const FILE_INPUT_ID = "document-files";
@@ -131,7 +131,7 @@ export function ChatComposer({
           <div className="fileCard">
             <span className="fileIcon" aria-hidden="true" />
             <div className="fileInfo">
-              <span>Markdown / JSON</span>
+              <span>通用文件资源</span>
               <strong>{selectedFileNames}</strong>
               <small>{formatFileSize(selectedFileSize)}</small>
             </div>
@@ -160,7 +160,7 @@ export function ChatComposer({
 
         <div className="composerControls">
           <label
-            aria-label="上传 Markdown 或 JSON 文件"
+            aria-label={`上传 ${SUPPORTED_UPLOAD_LABEL}`}
             className="roundButton addFileButton"
             htmlFor={FILE_INPUT_ID}
           >

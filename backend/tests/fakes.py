@@ -12,6 +12,7 @@ from fastapi import UploadFile
 from app.schemas import ChatMessage, EventRecord, TaskRunRecord, TaskState, TaskStatus, TaskSummary
 from app.storage import (
     LEGACY_RUN_ID,
+    SUPPORTED_UPLOAD_LABEL,
     TYPE_MAP,
     UPLOAD_CHUNK_SIZE,
     UPLOAD_FORMATS,
@@ -258,7 +259,7 @@ class InMemoryTaskStorage:
         max_request_bytes: int,
     ) -> list[Path]:
         if len(self.list_uploads(task_id)) + len(uploads) > max_files:
-            raise UploadLimitError(f"最多只能上传 {max_files} 个 Markdown 或 JSON 文件")
+            raise UploadLimitError(f"最多只能上传 {max_files} 个 {SUPPORTED_UPLOAD_LABEL}")
         upload_dir = self.task_dir(task_id) / "uploads"
         upload_dir.mkdir(parents=True, exist_ok=True)
         existing_names = {path.name.casefold() for path in self.list_uploads(task_id)}

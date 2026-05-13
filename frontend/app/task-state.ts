@@ -506,7 +506,7 @@ const KNOWN_DISPLAY_TEXT: Record<string, string> = {
   "Cancellation ignored because the task is no longer running": "任务已不再运行，已忽略取消请求。",
   "Task was interrupted by backend startup or reload.": "后端启动或重载时中断了任务。",
   "Task was interrupted because no active runner owns it.": "任务已中断：当前没有运行器接管该任务。",
-  "Upload Markdown or JSON files before starting a document-analysis task.": "开始文档分析任务前，请先上传 Markdown 或 JSON 文件。",
+  "Upload Markdown or JSON files before starting a document-analysis task.": "开始文档分析任务前，请先上传 Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件。",
   "At least two uploaded bidder documents are required for comparison.": "至少需要上传两份投标人文档才能进行对比。",
   "Execution plan generated": "已生成执行计划。",
   "Concurrent sub-agent analysis started": "并发子任务分析已开始。",
@@ -608,7 +608,7 @@ function formatNeedsInputKey(key: string) {
 
 function formatNeedsInputValue(key: string, value: unknown) {
   if (key === "required_file_type" && value === "markdown_or_json") {
-    return "Markdown 或 JSON 文件";
+    return "Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件";
   }
   return formatValue(value);
 }

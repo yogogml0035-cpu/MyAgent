@@ -26,6 +26,18 @@ class TestGetPlatformTools:
         assert "read_file" not in names
         assert "write_file" not in names
         assert "list_files" not in names
+        assert "list_uploaded_resources" not in names
+
+    def test_includes_task_scoped_resource_tools_when_task_id_is_available(self, test_settings):
+        tools = get_platform_tools(test_settings, task_id="task-1")
+        names = [t.name for t in tools]
+
+        assert {
+            "list_uploaded_resources",
+            "inspect_resource",
+            "read_resource_text",
+            "read_resource_table",
+        }.issubset(set(names))
 
     def test_tavily_tool_uses_settings_key_not_runtime_environment(self, tmp_path, monkeypatch):
         captured: dict[str, str] = {}

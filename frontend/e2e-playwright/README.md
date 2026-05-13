@@ -39,3 +39,19 @@ npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --repor
 ```
 
 The progress-log spec seeds a temporary running task through the same Postgres-backed task/runs/messages/events contract, verifies collapsed row layout in the browser, expands status/tool/generation rows, captures screenshots, marks the temporary task complete, and deletes it through the public API.
+
+Run the resource-upload harness acceptance test from `frontend/` when changing upload formats, uploaded-resource contracts, or resource tool progress:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_API_URL=http://127.0.0.1:8001 \
+MYAGENT_E2E_TASK_ROOT=/tmp/myagent-e2e/tasks \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/resource-upload-harness \
+MYAGENT_E2E_ACCESS_TOKEN=... \
+MYAGENT_E2E_POSTGRES_CONTAINER=PostgreSQL \
+MYAGENT_E2E_POSTGRES_USER=postgres \
+MYAGENT_E2E_POSTGRES_DB=myagent \
+npx playwright test e2e-playwright/test_resource_upload_harness.spec.mjs --reporter=line
+```
+
+The resource-upload spec uses the real browser file picker path for `.docx`, `.xlsx`, `.json`, and `.txt`, uploads those files through the public API, seeds a completed run with resource-tool progress events, and captures screenshots for selection, uploaded state, tool progress, and completion.

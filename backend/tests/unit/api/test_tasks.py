@@ -315,6 +315,53 @@ class TestUploadFiles:
         )
         assert response.status_code == 201
 
+    def test_upload_accepts_modern_document_resource_formats(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+
+        response = app_client.post(
+            f"/api/tasks/{task_id}/files",
+            files=[
+                ("files", ("notes.txt", b"plain text", "text/plain")),
+                (
+                    "files",
+                    (
+                        "brief.docx",
+                        b"placeholder-docx-bytes",
+                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    ),
+                ),
+                (
+                    "files",
+                    (
+                        "data.xlsx",
+                        b"placeholder-xlsx-bytes",
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    ),
+                ),
+                (
+                    "files",
+                    (
+                        "macro.xlsm",
+                        b"placeholder-xlsm-bytes",
+                        "application/vnd.ms-excel.sheet.macroEnabled.12",
+                    ),
+                ),
+            ],
+        )
+
+        assert response.status_code == 201
+        events = response.json()["events"]
+        uploaded = [event for event in events if event["type"] == "file_uploaded"]
+        media_types = {
+            event["payload"]["resource_ref"]["name"]: event["payload"]["resource_ref"]["media_type"]
+            for event in uploaded
+        }
+        assert media_types["notes.txt"] == "text"
+        assert media_types["brief.docx"] == "word"
+        assert media_types["data.xlsx"] == "excel"
+        assert media_types["macro.xlsm"] == "excel"
+
     def test_upload_to_nonexistent_task_404(self, app_client):
         response = app_client.post(
             "/api/tasks/nonexistent-id/files",
@@ -344,11 +391,11 @@ class TestUploadFiles:
 
         response = app_client.post(
             f"/api/tasks/{created['task_id']}/files",
-            files={"files": ("notes.txt", b"hello", "text/plain")},
+            files={"files": ("notes.csv", b"hello", "text/csv")},
         )
 
         assert response.status_code == 400
-        assert response.json()["detail"] == "仅支持上传 Markdown 或 JSON 文件"
+        assert response.json()["detail"] == "仅支持上传 Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件"
 
     def test_upload_invalid_json_returns_400_without_partial_file(self, create_idle_task, app_client):
         created = create_idle_task()

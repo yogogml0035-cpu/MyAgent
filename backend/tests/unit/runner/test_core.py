@@ -99,6 +99,45 @@ class TestTaskRunnerStreamState:
         assert latest_state["scope"] == "root"
         assert [record.payload["is_subgraph"] for record in snapshots] == [False, True]
 
+    @pytest.mark.asyncio
+    async def test_start_injects_resource_manifest_system_message(
+        self, test_settings, monkeypatch
+    ):
+        task_id = "task-1"
+        upload_dir = test_settings.workspace_root / task_id / "uploads"
+        upload_dir.mkdir(parents=True)
+        (upload_dir / "notes.txt").write_text("alpha body", encoding="utf-8")
+        captured: dict[str, Any] = {}
+
+        async def fake_stream_agent(agent, messages, config):
+            captured["messages"] = messages
+            yield {"type": "values_snapshot", "data": {"messages": [AIMessage(content="done")]}}
+
+        def fake_build_agent(*args, **kwargs):
+            captured["tools"] = kwargs["tools"]
+            captured["system_prompt"] = kwargs["system_prompt"]
+            return object()
+
+        monkeypatch.setattr("app.runner.core.build_agent", fake_build_agent)
+        monkeypatch.setattr("app.runner.core.stream_agent", fake_stream_agent)
+
+        runner = TaskRunner(test_settings)
+        await runner.start(task_id, "summarize uploads", run_id="run-1")
+
+        assert "Uploaded files are task Resources" in captured["system_prompt"]
+        assert {tool.name for tool in captured["tools"]} >= {
+            "list_uploaded_resources",
+            "inspect_resource",
+            "read_resource_text",
+            "read_resource_table",
+        }
+        system_messages = [
+            message for message in captured["messages"] if isinstance(message, SystemMessage)
+        ]
+        manifest_text = "\n".join(str(message.content) for message in system_messages)
+        assert "notes.txt" in manifest_text
+        assert "alpha body" not in manifest_text
+
 
 class TestTaskRunnerMemory:
     @pytest.mark.asyncio
