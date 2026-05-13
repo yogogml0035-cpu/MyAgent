@@ -966,12 +966,12 @@ class PostgresTaskStorage:
         path.write_text(text, encoding="utf-8")
         if name in RUN_ARTIFACT_NAMES:
             self.write_text(task_id, f"artifacts/{name}", text)
-            self.record_run_artifact(
-                task_id,
-                run_id,
-                name,
-                artifact_ref=self._artifact_ref_payload(task_id, run_id, name, path),
-            )
+        self.record_run_artifact(
+            task_id,
+            run_id,
+            name,
+            artifact_ref=self._artifact_ref_payload(task_id, run_id, name, path),
+        )
         return path
 
     def run_artifact_dir(self, task_id: str, run_id: str) -> Path:

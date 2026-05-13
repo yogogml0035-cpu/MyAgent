@@ -76,6 +76,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - History rename/delete are real task API operations, not frontend-only state. Rename stores a bounded custom task title; delete must reject running tasks to avoid orphaning an active in-process runner.
 - Artifact names are normalized file names only, not paths. Artifact download routes must resolve through `TaskStorage.resolve_artifact()` or `TaskStorage.resolve_run_artifact()` so path traversal and cross-run access stay blocked.
 - Upload names are normalized leaf filenames only. Resource tool inputs may use resource_id or filename but must reject paths, traversal attempts, cross-task access, and unsupported suffixes.
+- Run-scoped artifact registration uses `runs.artifact_names` as the authoritative index for frontend rendering and `resolve_run_artifact()` downloads. `write_run_text()` / `write_run_json()` must record every valid run-scoped artifact name, while `RUN_ARTIFACT_NAMES` only controls which standard artifacts are additionally mirrored to the legacy top-level `artifacts/` path.
 - Frontend artifact URL validation is an additional client boundary, not a replacement for backend path checks. Backend routes must keep resolving through storage, and frontend allowlists must continue to reject any URL that is not on the trusted API origin and artifact route shape.
 - `SKILL.md` files without valid YAML frontmatter are silently skipped during discovery.
 - `next typegen` loads `next.config.mjs` with the production build phase; keep any required config inputs available before running frontend type checks in CI.
@@ -89,6 +90,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **SSE frontend backoff**: Browser-side SSE reconnect must be capped and use exponential backoff. Any backend SSE payload shaped as `{type: "error", detail: "..."}` is user-visible and should stop normal event processing for that message, then refresh task state defensively.
 - **Run-scoped terminal events**: Do not append terminal events from API endpoints after calling the runner. The runner owns terminal status plus terminal event writes so the `run_id` stays consistent and duplicate unscoped events are not produced.
 - **Artifact route drift**: Frontend artifact cards depend on `ArtifactRecord.url` pointing to real backend routes. Adding new artifact storage locations requires updating both the URL generator and the corresponding FastAPI download route.
+- **Run artifact index drift**: Do not make artifact registration depend on the legacy standard-report whitelist. If a run artifact is written but missing from `runs.artifact_names`, the file can exist on disk while the task state hides it and the run-scoped download route returns 404.
 - **Artifact URL token leak**: Do not pass backend-provided artifact URLs directly to `fetch`. `buildArtifactRequest()` owns allowlist validation and is the only place that may attach `X-MyAgent-Token` for artifact downloads.
 - **HTML artifact preview XSS**: Do not navigate an opened window to an artifact blob. HTML reports must render through a sandboxed iframe without `allow-scripts` so generated scripts cannot run in the app origin.
 - **Upload exception leakage**: Storage upload validation exceptions should be translated by the API layer. A malformed user upload is a 4xx client error, never an unhandled 500.
@@ -226,6 +228,7 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 - Model format mismatch if frontend sends old-style `deepseek-reasoner` instead of `deepseek:deepseek-chat`.
 - Model availability regression if `/api/models` stops exposing `available` or task/message endpoints schedule runs for unavailable providers.
 - Artifact download regression if `ArtifactRecord.url` no longer matches FastAPI routes or run-scoped artifacts fall back to the latest legacy artifact.
+- Run artifact visibility regression if `write_run_text()` or `write_run_json()` stops recording non-standard artifact names in `runs.artifact_names`.
 - Artifact security regression if external artifact URLs, same-origin non-artifact URLs, or wrong-task artifact URLs receive `X-MyAgent-Token`.
 - HTML preview regression if the artifact popup returns to `location.replace(blob:)` or grants iframe `allow-scripts`.
 - Upload API regression if duplicate names, limits, unsupported extensions, or invalid JSON again surface as 500 responses.

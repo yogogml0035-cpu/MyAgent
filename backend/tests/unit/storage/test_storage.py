@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from app.storage import PostgresTaskStorage
 from tests.fakes import InMemoryTaskStorage
 
 
@@ -98,3 +99,65 @@ class TestTaskStorageHistoryActions:
             pass
         else:
             raise AssertionError("Expected deleted task to be missing")
+
+
+class TestPostgresTaskStorageRunArtifacts:
+    def test_write_run_text_records_custom_run_artifact_without_database(self, tmp_path, monkeypatch):
+        storage = PostgresTaskStorage(tmp_path / "sessions", "postgresql://unused")
+        task_id = "task-1"
+        run_id = "run-test-001"
+        recorded: list[tuple[str, str, str, dict | None]] = []
+
+        def record_run_artifact(task_id_arg, run_id_arg, artifact_name_arg, *, artifact_ref=None):
+            recorded.append((task_id_arg, run_id_arg, artifact_name_arg, artifact_ref))
+
+        monkeypatch.setattr(storage, "record_run_artifact", record_run_artifact)
+
+        path = storage.write_run_text(task_id, run_id, "analysis-extra.json", '{"ok": true}')
+
+        assert path == (
+            tmp_path
+            / "sessions"
+            / task_id
+            / "artifacts"
+            / "runs"
+            / run_id
+            / "analysis-extra.json"
+        ).resolve()
+        assert path.read_text(encoding="utf-8") == '{"ok": true}'
+        assert len(recorded) == 1
+        recorded_task_id, recorded_run_id, recorded_name, artifact_ref = recorded[0]
+        assert recorded_task_id == task_id
+        assert recorded_run_id == run_id
+        assert recorded_name == "analysis-extra.json"
+        assert artifact_ref is not None
+        assert artifact_ref["id"] == "artifact:task-1:run-test-001:analysis-extra.json"
+        assert artifact_ref["name"] == "analysis-extra.json"
+        assert artifact_ref["type"] == "json"
+        assert artifact_ref["uri"] == (
+            "myagent://sessions/task-1/runs/run-test-001/artifacts/analysis-extra.json"
+        )
+        assert artifact_ref["run_id"] == run_id
+        assert artifact_ref["size_bytes"] == 12
+        assert artifact_ref["digest"] == (
+            "sha256:6bc0da1f42f96fc37b8bd7ed20ba57606d2a0da5cda2b135c7854fbdc985b8a3"
+        )
+        assert artifact_ref["resource_ref"]["kind"] == "artifact"
+        assert artifact_ref["resource_ref"]["name"] == "analysis-extra.json"
+
+    def test_write_run_text_keeps_top_level_mirror_for_fixed_artifacts(self, tmp_path, monkeypatch):
+        storage = PostgresTaskStorage(tmp_path / "sessions", "postgresql://unused")
+        task_id = "task-1"
+        run_id = "run-test-001"
+        recorded: list[str] = []
+
+        def record_run_artifact(_task_id, _run_id, artifact_name, *, artifact_ref=None):
+            recorded.append(artifact_name)
+
+        monkeypatch.setattr(storage, "record_run_artifact", record_run_artifact)
+
+        storage.write_run_text(task_id, run_id, "report.html", "<h1>报告</h1>")
+
+        mirrored = tmp_path / "sessions" / task_id / "artifacts" / "report.html"
+        assert mirrored.read_text(encoding="utf-8") == "<h1>报告</h1>"
+        assert recorded == ["report.html"]
