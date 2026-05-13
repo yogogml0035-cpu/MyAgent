@@ -72,6 +72,25 @@ class TestTaskStorageAppendEvent:
         events = storage.read_events(state.task_id)
         assert any(e.type == "test_event" for e in events)
 
+    def test_read_events_after_known_id_returns_later_events(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        first = storage.append_event(state.task_id, "first_event", "first")
+        second = storage.append_event(state.task_id, "second_event", "second")
+
+        events = storage.read_events(state.task_id, after_id=first.id)
+
+        assert [event.id for event in events] == [second.id]
+
+    def test_read_events_after_unknown_id_recovers_with_full_event_stream(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        storage.append_event(state.task_id, "test_event", "something happened")
+
+        events = storage.read_events(state.task_id, after_id="missing-event-id")
+
+        assert [event.seq for event in events] == [1, 2]
+
     def test_large_event_append_keeps_continuous_seq(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
         state = storage.create_task(message=None, model="deepseek:deepseek-chat")

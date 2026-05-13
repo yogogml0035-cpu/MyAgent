@@ -255,7 +255,7 @@ class InMemoryTaskStorage:
         for index, event in enumerate(events):
             if event.id == after_id:
                 return copy.deepcopy(events[index + 1 :])
-        return []
+        return copy.deepcopy(events)
 
     def get_task_messages(self, task_id: str) -> list[ChatMessage]:
         return self.get_task(task_id, include_events=False).messages

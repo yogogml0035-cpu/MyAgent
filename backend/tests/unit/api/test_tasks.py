@@ -254,6 +254,31 @@ class TestGetEvents:
         assert isinstance(events, list)
         assert any(e["type"] == "task_created" for e in events)
 
+    def test_get_events_after_known_id_returns_later_events(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+        first = storage.append_event(task_id, "first_event", "first")
+        second = storage.append_event(task_id, "second_event", "second")
+
+        response = app_client.get(f"/api/tasks/{task_id}/events?after_id={first.id}")
+
+        assert response.status_code == 200
+        assert [event["id"] for event in response.json()] == [second.id]
+
+    def test_get_events_after_unknown_id_recovers_with_full_event_stream(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        app_client.app.state.storage.append_event(task_id, "test_event", "something happened")
+
+        response = app_client.get(f"/api/tasks/{task_id}/events?after_id=missing-event-id")
+
+        assert response.status_code == 200
+        events = response.json()
+        assert [event["seq"] for event in events] == [1, 2]
+
     def test_get_events_nonexistent_task_404(self, app_client):
         response = app_client.get("/api/tasks/nonexistent-id/events")
         assert response.status_code == 404
