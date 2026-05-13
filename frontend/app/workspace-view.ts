@@ -355,10 +355,16 @@ export function formatLiveLogItemClipboardText(item: LiveLogItem) {
 }
 
 function formatRawLogRecordJson(log: ExecutionLog) {
+  if (log.memoryContext) {
+    return JSON.stringify(fallbackRawLogRecord(log));
+  }
   return JSON.stringify(log.rawRecord ?? fallbackRawLogRecord(log));
 }
 
 function formatPrettyRawLogRecord(log: ExecutionLog) {
+  if (log.memoryContext) {
+    return JSON.stringify(fallbackRawLogRecord(log), null, 2);
+  }
   return JSON.stringify(log.rawRecord ?? fallbackRawLogRecord(log), null, 2);
 }
 
@@ -378,6 +384,7 @@ function fallbackRawLogRecord(log: ExecutionLog) {
       reasoning: log.reasoning,
       search_trace: log.searchTrace,
       orchestration: log.orchestration,
+      memory_context: log.memoryContext,
       answer_stream: log.answerStream,
     },
   });
@@ -423,11 +430,46 @@ function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
   if (live?.resultStatus) {
     rows.push({ label: "结果状态", value: live.resultStatus });
   }
+  if (log.memoryContext) {
+    rows.push(...formatMemoryContextRows(log.memoryContext));
+  }
 
   return {
     rows,
     rawJson: formatPrettyRawLogRecord(log),
   };
+}
+
+function formatMemoryContextRows(memoryContext: NonNullable<ExecutionLog["memoryContext"]>) {
+  const rows: LiveLogDetailRow[] = [];
+  if (memoryContext.kind === "conversation") {
+    rows.push({ label: "上下文类型", value: "同一会话上下文" });
+    if (typeof memoryContext.recentMessageCount === "number") {
+      rows.push({ label: "最近消息", value: String(memoryContext.recentMessageCount) });
+    }
+    if (memoryContext.summaryPreview) {
+      rows.push({ label: "会话摘要", value: memoryContext.summaryPreview });
+    }
+    if (typeof memoryContext.cachedToolResultCount === "number") {
+      rows.push({ label: "工具缓存", value: String(memoryContext.cachedToolResultCount) });
+    }
+    if (memoryContext.memoryPreviews.length > 0) {
+      rows.push({ label: "缓存预览", value: memoryContext.memoryPreviews.join("；") });
+    }
+    return rows;
+  }
+
+  rows.push({ label: "上下文类型", value: "长期记忆" });
+  if (memoryContext.userId) {
+    rows.push({ label: "用户", value: memoryContext.userId });
+  }
+  if (typeof memoryContext.memoryCount === "number") {
+    rows.push({ label: "记忆数", value: String(memoryContext.memoryCount) });
+  }
+  if (memoryContext.memoryPreviews.length > 0) {
+    rows.push({ label: "记忆预览", value: memoryContext.memoryPreviews.join("；") });
+  }
+  return rows;
 }
 
 function buildAnswerStreamDiagnostics(log: ExecutionLog): LiveLogDiagnostics {

@@ -14,12 +14,14 @@ from fastapi.responses import JSONResponse
 from starlette.responses import Response
 from starlette.types import Message
 
+from .agent_store import PostgresAgentStore
 from .api.artifacts import router as artifacts_router
 from .api.files import router as files_router
 from .api.models import router as models_router
 from .api.streaming import router as streaming_router
 from .api.tasks import router as tasks_router
 from .config import Settings, enforce_single_process_runtime, load_settings
+from .conversation_context import ConversationContextBuilder
 from .memory import AgentMemoryService, MemoryServiceError
 from .runner.core import TaskRunner
 from .storage import PostgresTaskStorage
@@ -52,11 +54,19 @@ def create_app(
 
     if external_services_required and memory_service is None:
         try:
-            memory_service = AgentMemoryService(resolved)
+            memory_service = AgentMemoryService(resolved, storage)
         except MemoryServiceError as exc:
             startup_errors.append(str(exc))
 
-    runner = TaskRunner(resolved, storage, memory_service)
+    context_builder = ConversationContextBuilder(resolved, storage) if storage is not None else None
+    agent_store = PostgresAgentStore(storage) if storage is not None else None
+    runner = TaskRunner(
+        resolved,
+        storage,
+        memory_service,
+        context_builder=context_builder,
+        agent_store=agent_store,
+    )
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI) -> AsyncIterator[None]:

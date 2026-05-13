@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import logging
 from collections.abc import Callable
 from typing import Any, Protocol
@@ -11,8 +12,10 @@ from typing import Any, Protocol
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agent.factory import build_agent
+from app.agent_store import PostgresAgentStore
 from app.config import Settings
 from app.contracts import EventLevel
+from app.conversation_context import ConversationContextBuilder
 from app.execution.resources import (
     RESOURCE_TOOL_SYSTEM_PROMPT,
     build_resource_manifest,
@@ -57,7 +60,13 @@ class RunnerStorage(Protocol):
 
 
 class RunnerMemoryService(Protocol):
-    def recall_context(self, user_message: str, *, limit: int = 3) -> str | None: ...
+    def recall_context(
+        self, user_message: str, *, user_id: str | None = None, limit: int = 3
+    ) -> str | None: ...
+
+    def recall_event_payload(
+        self, context: str | None, *, user_id: str | None = None
+    ) -> dict[str, Any] | None: ...
 
     def remember_completed_run(
         self,
@@ -66,6 +75,8 @@ class RunnerMemoryService(Protocol):
         run_id: str,
         user_goal: str,
         final_answer: str,
+        user_id: str | None = None,
+        model: str | None = None,
     ) -> None: ...
 
 
@@ -76,11 +87,15 @@ class TaskRunner:
         self,
         settings: Settings,
         storage: RunnerStorage | None = None,
-        memory_service: RunnerMemoryService | None = None,
+        memory_service: Any | None = None,
+        context_builder: ConversationContextBuilder | None = None,
+        agent_store: PostgresAgentStore | None = None,
     ) -> None:
         self.settings = settings
         self.storage = storage
         self.memory_service = memory_service
+        self.context_builder = context_builder
+        self.agent_store = agent_store
         self._active_runs: dict[str, asyncio.Task[None]] = {}
         self._memory_tasks: set[asyncio.Task[None]] = set()
 
@@ -103,7 +118,7 @@ class TaskRunner:
 
         task_workspace = self.settings.workspace_root / task_id
         task_workspace.mkdir(parents=True, exist_ok=True)
-        tools = get_platform_tools(self.settings, task_id=task_id)
+        tools = get_platform_tools(self.settings, task_id=task_id, storage=self.storage)
 
         agent = build_agent(
             self.settings,
@@ -112,12 +127,45 @@ class TaskRunner:
             system_prompt=RESOURCE_TOOL_SYSTEM_PROMPT,
             skills=list(self.settings.skills_dirs),
             workspace_dir=task_workspace,
+            store=self.agent_store,
         )
 
         messages: list[Any] = []
+        if self.context_builder is not None:
+            context = await asyncio.to_thread(
+                self.context_builder.build,
+                task_id=task_id,
+                current_message=message,
+            )
+            if context.loaded:
+                context_event = _make_runner_event(
+                    task_id,
+                    run_id,
+                    "context_loaded",
+                    "已载入会话上下文。",
+                    context.event_payload(),
+                    level="info",
+                    seq=-2,
+                )
+                if on_event is not None:
+                    on_event(context_event)
+                messages.extend(context.messages)
         memory_context = await self._recall_memory_context(message)
         if memory_context:
             messages.append(SystemMessage(content=memory_context))
+            memory_event_payload = self._memory_recall_event_payload(memory_context)
+            if memory_event_payload and on_event is not None:
+                on_event(
+                    _make_runner_event(
+                        task_id,
+                        run_id,
+                        "memory_recalled",
+                        "已载入长期记忆。",
+                        memory_event_payload,
+                        level="info",
+                        seq=-1,
+                    )
+                )
         resource_message = self._resource_manifest_context(task_id)
         if resource_message:
             messages.append(SystemMessage(content=resource_message))
@@ -232,6 +280,7 @@ class TaskRunner:
                         run_id=run_id,
                         user_goal=message,
                         final_answer=final_answer,
+                        model=model,
                     )
             except TimeoutError:
                 error_message = f"运行超时（{self.settings.agent_timeout_seconds}秒）"
@@ -282,9 +331,27 @@ class TaskRunner:
         if memory_service is None:
             return None
         try:
-            return await asyncio.to_thread(memory_service.recall_context, message)
+            return await asyncio.to_thread(
+                _call_memory_recall,
+                memory_service,
+                message,
+                self.settings.default_user_id,
+            )
         except Exception:
             logger.warning("Long-term memory recall failed; continuing without memory", exc_info=True)
+            return None
+
+    def _memory_recall_event_payload(self, memory_context: str | None) -> dict[str, Any] | None:
+        memory_service = self.memory_service
+        if memory_service is None:
+            return None
+        try:
+            return memory_service.recall_event_payload(
+                memory_context,
+                user_id=self.settings.default_user_id,
+            )
+        except Exception:
+            logger.warning("Long-term memory recall event payload failed", exc_info=True)
             return None
 
     def _resource_manifest_context(self, task_id: str) -> str:
@@ -302,6 +369,7 @@ class TaskRunner:
         run_id: str,
         user_goal: str,
         final_answer: str,
+        model: str | None = None,
     ) -> None:
         memory_service = self.memory_service
         if memory_service is None:
@@ -310,11 +378,14 @@ class TaskRunner:
         async def _remember() -> None:
             try:
                 await asyncio.to_thread(
-                    memory_service.remember_completed_run,
-                    task_id=task_id,
-                    run_id=run_id,
-                    user_goal=user_goal,
-                    final_answer=final_answer,
+                    _call_memory_remember,
+                    memory_service,
+                    task_id,
+                    run_id,
+                    user_goal,
+                    final_answer,
+                    self.settings.default_user_id,
+                    model,
                 )
             except Exception:
                 logger.warning(
@@ -340,3 +411,59 @@ class TaskRunner:
         """Check if a task has an active run."""
         active = self._active_runs.get(task_id)
         return active is not None and not active.done()
+
+
+def _make_runner_event(
+    task_id: str,
+    run_id: str,
+    event_type: str,
+    message: str,
+    payload: dict[str, Any],
+    *,
+    level: EventLevel = "info",
+    seq: int | None = None,
+) -> EventRecord:
+    import uuid
+    from datetime import datetime, timezone
+
+    return EventRecord(
+        id=str(uuid.uuid4()),
+        session_id=task_id,
+        seq=seq,
+        type=event_type,
+        message=message,
+        created_at=datetime.now(timezone.utc).isoformat(),
+        payload=payload,
+        run_id=run_id,
+        level=level,
+    )
+
+
+def _call_memory_recall(memory_service: Any, message: str, user_id: str) -> str | None:
+    signature = inspect.signature(memory_service.recall_context)
+    if "user_id" in signature.parameters:
+        return memory_service.recall_context(message, user_id=user_id)
+    return memory_service.recall_context(message)
+
+
+def _call_memory_remember(
+    memory_service: Any,
+    task_id: str,
+    run_id: str,
+    user_goal: str,
+    final_answer: str,
+    user_id: str,
+    model: str | None,
+) -> Any:
+    signature = inspect.signature(memory_service.remember_completed_run)
+    kwargs: dict[str, Any] = {
+        "task_id": task_id,
+        "run_id": run_id,
+        "user_goal": user_goal,
+        "final_answer": final_answer,
+    }
+    if "user_id" in signature.parameters:
+        kwargs["user_id"] = user_id
+    if "model" in signature.parameters:
+        kwargs["model"] = model
+    return memory_service.remember_completed_run(**kwargs)

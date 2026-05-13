@@ -126,6 +126,10 @@ MYAGENT_EMBEDDING_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
 MYAGENT_EMBEDDING_MODEL=text-embedding-v3
 MYAGENT_EMBEDDING_DIMENSIONS=1024
 MYAGENT_QDRANT_COLLECTION=myagent_memories
+MYAGENT_DEFAULT_USER_ID=local-user
+MYAGENT_FRESH_TOOL_CACHE_SECONDS=600
+MYAGENT_RECENT_MESSAGE_LIMIT=12
+MYAGENT_MEMORY_MIN_SCORE=0.72
 MYAGENT_CORS_ORIGINS=http://localhost:3001,http://127.0.0.1:3001
 MYAGENT_TASK_ROOT=
 MYAGENT_MAX_UPLOAD_FILES=10
@@ -150,7 +154,7 @@ NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
 
 模型提供方、数据库和向量服务凭据必须只放在后端。任何带有 `NEXT_PUBLIC_` 前缀的值都会暴露给浏览器。
 
-后端启动时会强制检查 Postgres、Qdrant collection 和 DashScope embedding 探测。缺少 `MYAGENT_DATABASE_URL`、`MYAGENT_QDRANT_URL` 或 `DASHSCOPE_API_KEY`，或任一外部服务不可用，都会导致后端启动失败。Postgres 表结构由后端幂等创建；Qdrant collection 默认使用 `myagent_memories`，向量维度为 `1024`。
+后端启动时会强制检查 Postgres、Qdrant collection 和 DashScope embedding 探测。缺少 `MYAGENT_DATABASE_URL`、`MYAGENT_QDRANT_URL` 或 `DASHSCOPE_API_KEY`，或任一外部服务不可用，都会导致后端启动失败。Postgres 表结构由后端幂等创建；Qdrant collection 默认使用 `myagent_memories`，向量维度为 `1024`。同一会话的短期上下文由 Postgres 里的消息历史、会话摘要和 10 分钟工具缓存确定性组装，长期记忆按 `MYAGENT_DEFAULT_USER_ID` 默认隔离。
 
 ## 本地开发启动
 
@@ -328,7 +332,8 @@ git diff --check
 - Provider 凭据只能作为后端 `.env` 值保存。
 - 前端只发送安全模型 ID，例如 `deepseek:deepseek-chat`。
 - 任务状态、运行、消息和事件日志写入 Postgres；上传文件、任务计划、证据、摘要和 HTML 报告等文件产物保存在本地任务目录中。
-- Qdrant 只保存成功任务的高层长期记忆摘要，不保存上传原文、完整产物正文、流式 token 或工具原始日志。
+- Qdrant 是长期记忆的语义索引，Postgres 是 canonical store。长期记忆只保留成功运行后抽取出的高层白名单记忆，并按默认用户 ID 隔离；它不保存上传原文、完整产物正文、流式 token、工具原始日志或敏感内容。
+- 可用 `cd backend && uv run python -m app.memory_admin rebuild-qdrant --yes` 显式清空并从 Postgres canonical store 重建当前 Qdrant 记忆 collection。这个命令只影响配置中的记忆 collection，不会动任务 Postgres 或本地文件产物。
 - 文件访问和命令执行辅助能力默认限定在任务工作区内。
 - 上传和 JSON 请求大小限制由后端环境变量控制。
 - 浏览器 CORS origin 由 `MYAGENT_CORS_ORIGINS` 控制；当前默认值允许 `http://localhost:3001` 和 `http://127.0.0.1:3001`。

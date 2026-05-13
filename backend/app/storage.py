@@ -6,7 +6,8 @@ import shutil
 import threading
 import uuid
 from collections.abc import Iterable, Mapping
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from json import JSONDecodeError
 from pathlib import Path
@@ -103,6 +104,39 @@ class UploadConflictError(ValueError):
 
 class UploadLimitError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class AgentStoreItem:
+    namespace: tuple[str, ...]
+    key: str
+    value: dict[str, Any]
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class LongTermMemoryRecord:
+    memory_id: str
+    user_id: str
+    memory_type: str
+    text: str
+    confidence: float
+    source_task_id: str
+    source_run_id: str
+    created_at: str
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class ToolResultCacheRecord:
+    cache_id: str
+    task_id: str
+    tool_name: str
+    query: str
+    result_text: str
+    created_at: str
+    expires_at: str
 
 
 def utc_now() -> str:
@@ -250,6 +284,31 @@ def _json_list(value: Any) -> list[str]:
     return [str(item) for item in value if isinstance(item, str)]
 
 
+def _value_matches_filter(value: Mapping[str, Any], filter_value: Mapping[str, Any]) -> bool:
+    for key, expected in filter_value.items():
+        actual = value.get(key)
+        if isinstance(expected, Mapping):
+            if "$eq" in expected and actual != expected["$eq"]:
+                return False
+            if "$ne" in expected and actual == expected["$ne"]:
+                return False
+            if "$gt" in expected and not (isinstance(actual, (int, float)) and actual > expected["$gt"]):
+                return False
+            if "$gte" in expected and not (
+                isinstance(actual, (int, float)) and actual >= expected["$gte"]
+            ):
+                return False
+            if "$lt" in expected and not (isinstance(actual, (int, float)) and actual < expected["$lt"]):
+                return False
+            if "$lte" in expected and not (
+                isinstance(actual, (int, float)) and actual <= expected["$lte"]
+            ):
+                return False
+        elif actual != expected:
+            return False
+    return True
+
+
 class PostgresTaskStorage:
     """Postgres-backed task state and event log storage.
 
@@ -337,6 +396,66 @@ class PostgresTaskStorage:
             cur.execute("CREATE INDEX IF NOT EXISTS idx_events_task_id ON events(task_id, id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_messages_task ON messages(task_id, id)")
+            cur.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS agent_store_items (
+                        namespace TEXT[] NOT NULL,
+                        key TEXT NOT NULL,
+                        value JSONB NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL,
+                        PRIMARY KEY (namespace, key)
+                    )
+                    """
+            )
+            cur.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS task_context_summaries (
+                        task_id TEXT PRIMARY KEY REFERENCES tasks(task_id) ON DELETE CASCADE,
+                        summary TEXT NOT NULL,
+                        covered_message_count INTEGER NOT NULL DEFAULT 0,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL
+                    )
+                    """
+            )
+            cur.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS tool_result_cache (
+                        cache_id TEXT PRIMARY KEY,
+                        task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                        tool_name TEXT NOT NULL,
+                        query TEXT NOT NULL,
+                        result_text TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        expires_at TIMESTAMPTZ NOT NULL
+                    )
+                    """
+            )
+            cur.execute(
+                """
+                    CREATE TABLE IF NOT EXISTS long_term_memories (
+                        memory_id TEXT PRIMARY KEY,
+                        user_id TEXT NOT NULL,
+                        memory_type TEXT NOT NULL,
+                        text TEXT NOT NULL,
+                        confidence DOUBLE PRECISION NOT NULL,
+                        source_task_id TEXT NOT NULL REFERENCES tasks(task_id) ON DELETE CASCADE,
+                        source_run_id TEXT NOT NULL,
+                        created_at TIMESTAMPTZ NOT NULL,
+                        updated_at TIMESTAMPTZ NOT NULL
+                    )
+                    """
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_store_namespace ON agent_store_items(namespace)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_tool_result_cache_task_tool ON tool_result_cache(task_id, tool_name, created_at DESC)"
+            )
+            cur.execute(
+                "CREATE INDEX IF NOT EXISTS idx_long_term_memories_user ON long_term_memories(user_id, memory_type)"
+            )
 
     def _connect(self):
         return psycopg.connect(self.database_url, row_factory=dict_row)
@@ -882,6 +1001,275 @@ class PostgresTaskStorage:
                 )
             return [self._event_record_from_row(row) for row in cur.fetchall()]
 
+    def get_task_messages(self, task_id: str) -> list[ChatMessage]:
+        return self.get_task(task_id, include_events=False).messages
+
+    def get_context_summary(self, task_id: str) -> str | None:
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=False)
+            cur.execute("SELECT summary FROM task_context_summaries WHERE task_id = %s", (task_id,))
+            row = cur.fetchone()
+            if row is None:
+                return None
+            return str(row["summary"])
+
+    def upsert_context_summary(
+        self, task_id: str, summary: str, *, covered_message_count: int
+    ) -> None:
+        now = utc_now()
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=False)
+            cur.execute(
+                """
+                INSERT INTO task_context_summaries (
+                    task_id, summary, covered_message_count, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (task_id) DO UPDATE
+                SET summary = EXCLUDED.summary,
+                    covered_message_count = EXCLUDED.covered_message_count,
+                    updated_at = EXCLUDED.updated_at
+                """,
+                (task_id, summary, covered_message_count, now, now),
+            )
+
+    def cache_tool_result(
+        self,
+        task_id: str,
+        *,
+        tool_name: str,
+        query: str,
+        result_text: str,
+        ttl_seconds: int,
+    ) -> ToolResultCacheRecord:
+        now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+        expires_dt = now_dt + timedelta(seconds=ttl_seconds)
+        now = now_dt.isoformat().replace("+00:00", "Z")
+        expires_at = expires_dt.isoformat().replace("+00:00", "Z")
+        cache_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"myagent-cache:{task_id}:{tool_name}:{query}"))
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=False)
+            cur.execute(
+                """
+                INSERT INTO tool_result_cache (
+                    cache_id, task_id, tool_name, query, result_text, created_at, expires_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (cache_id) DO UPDATE
+                SET result_text = EXCLUDED.result_text,
+                    created_at = EXCLUDED.created_at,
+                    expires_at = EXCLUDED.expires_at
+                """,
+                (cache_id, task_id, tool_name, query, result_text, now, expires_at),
+            )
+        return ToolResultCacheRecord(
+            cache_id=cache_id,
+            task_id=task_id,
+            tool_name=tool_name,
+            query=query,
+            result_text=result_text,
+            created_at=now,
+            expires_at=expires_at,
+        )
+
+    def get_fresh_tool_cache(
+        self, task_id: str, *, tool_name: str, query: str
+    ) -> ToolResultCacheRecord | None:
+        now = utc_now()
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=False)
+            cur.execute(
+                """
+                SELECT * FROM tool_result_cache
+                WHERE task_id = %s AND tool_name = %s AND query = %s AND expires_at > %s
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (task_id, tool_name, query, now),
+            )
+            row = cur.fetchone()
+        return self._tool_cache_from_row(row) if row is not None else None
+
+    def list_fresh_tool_cache(self, task_id: str, *, limit: int = 5) -> list[ToolResultCacheRecord]:
+        now = utc_now()
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, task_id, lock=False)
+            cur.execute(
+                """
+                SELECT *
+                FROM tool_result_cache
+                WHERE task_id = %s AND expires_at > %s
+                ORDER BY created_at DESC
+                LIMIT %s
+                """,
+                (task_id, now, limit),
+            )
+            rows = cur.fetchall()
+        return [self._tool_cache_from_row(row) for row in rows]
+
+    def put_agent_store_item(
+        self, namespace: tuple[str, ...], key: str, value: dict[str, Any]
+    ) -> AgentStoreItem:
+        now = utc_now()
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                INSERT INTO agent_store_items (namespace, key, value, created_at, updated_at)
+                VALUES (%s, %s, %s, %s, %s)
+                ON CONFLICT (namespace, key) DO UPDATE
+                SET value = EXCLUDED.value,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING *
+                """,
+                (list(namespace), key, Jsonb(value), now, now),
+            )
+            row = cur.fetchone()
+        assert row is not None
+        return self._agent_store_item_from_row(row)
+
+    def delete_agent_store_item(self, namespace: tuple[str, ...], key: str) -> None:
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM agent_store_items WHERE namespace = %s AND key = %s",
+                (list(namespace), key),
+            )
+
+    def get_agent_store_item(self, namespace: tuple[str, ...], key: str) -> AgentStoreItem | None:
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM agent_store_items WHERE namespace = %s AND key = %s",
+                (list(namespace), key),
+            )
+            row = cur.fetchone()
+        return self._agent_store_item_from_row(row) if row is not None else None
+
+    def search_agent_store_items(
+        self,
+        namespace_prefix: tuple[str, ...],
+        *,
+        limit: int = 10,
+        offset: int = 0,
+        filter: dict[str, Any] | None = None,
+    ) -> list[AgentStoreItem]:
+        fetch_limit = max(limit + offset, 1000) if filter else limit
+        fetch_offset = 0 if filter else offset
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT * FROM agent_store_items
+                WHERE namespace[1:%s] = %s
+                ORDER BY namespace ASC, key ASC
+                OFFSET %s LIMIT %s
+                """,
+                (len(namespace_prefix), list(namespace_prefix), fetch_offset, fetch_limit),
+            )
+            rows = cur.fetchall()
+        items = [self._agent_store_item_from_row(row) for row in rows]
+        if filter:
+            items = [item for item in items if _value_matches_filter(item.value, filter)]
+            items = items[offset : offset + limit]
+        return items
+
+    def list_agent_store_namespaces(
+        self,
+        *,
+        prefix: tuple[str, ...] | None = None,
+        suffix: tuple[str, ...] | None = None,
+        max_depth: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[tuple[str, ...]]:
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT namespace FROM agent_store_items ORDER BY namespace ASC")
+            rows = cur.fetchall()
+        namespaces = [tuple(str(part) for part in row["namespace"]) for row in rows]
+        if prefix:
+            namespaces = [ns for ns in namespaces if ns[: len(prefix)] == prefix]
+        if suffix:
+            namespaces = [ns for ns in namespaces if ns[-len(suffix) :] == suffix]
+        if max_depth is not None:
+            namespaces = [ns[:max_depth] for ns in namespaces]
+            namespaces = sorted(set(namespaces))
+        return namespaces[offset : offset + limit]
+
+    def put_long_term_memory(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        memory_type: str,
+        text: str,
+        confidence: float,
+        source_task_id: str,
+        source_run_id: str,
+    ) -> LongTermMemoryRecord:
+        now = utc_now()
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            self._fetch_task_row(cur, source_task_id, lock=False)
+            cur.execute(
+                """
+                INSERT INTO long_term_memories (
+                    memory_id, user_id, memory_type, text, confidence,
+                    source_task_id, source_run_id, created_at, updated_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (memory_id) DO UPDATE
+                SET memory_type = EXCLUDED.memory_type,
+                    text = EXCLUDED.text,
+                    confidence = EXCLUDED.confidence,
+                    updated_at = EXCLUDED.updated_at
+                RETURNING *
+                """,
+                (
+                    memory_id,
+                    user_id,
+                    memory_type,
+                    text,
+                    confidence,
+                    source_task_id,
+                    source_run_id,
+                    now,
+                    now,
+                ),
+            )
+            row = cur.fetchone()
+        assert row is not None
+        return self._long_term_memory_from_row(row)
+
+    def get_long_term_memory(self, memory_id: str) -> LongTermMemoryRecord | None:
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            cur.execute("SELECT * FROM long_term_memories WHERE memory_id = %s", (memory_id,))
+            row = cur.fetchone()
+        return self._long_term_memory_from_row(row) if row is not None else None
+
+    def list_long_term_memories(
+        self, *, limit: int = 1000, offset: int = 0, user_id: str | None = None
+    ) -> list[LongTermMemoryRecord]:
+        limit = max(1, min(limit, 5000))
+        offset = max(0, offset)
+        with self._lock, self._connect() as conn, conn.cursor() as cur:
+            if user_id:
+                cur.execute(
+                    """
+                    SELECT * FROM long_term_memories
+                    WHERE user_id = %s
+                    ORDER BY created_at ASC, memory_id ASC
+                    OFFSET %s LIMIT %s
+                    """,
+                    (user_id, offset, limit),
+                )
+            else:
+                cur.execute(
+                    """
+                    SELECT * FROM long_term_memories
+                    ORDER BY created_at ASC, memory_id ASC
+                    OFFSET %s LIMIT %s
+                    """,
+                    (offset, limit),
+                )
+            rows = cur.fetchall()
+        return [self._long_term_memory_from_row(row) for row in rows]
+
     def list_task_ids(self) -> list[str]:
         with self._lock, self._connect() as conn, conn.cursor() as cur:
             cur.execute("SELECT task_id FROM tasks ORDER BY task_id ASC")
@@ -1157,6 +1545,39 @@ class PostgresTaskStorage:
             run_id=cast("str | None", row["run_id"]),
             level=cast("Literal['info', 'success', 'warning', 'error'] | None", row["level"]),
             idempotency_key=cast("str | None", row["idempotency_key"]),
+        )
+
+    def _agent_store_item_from_row(self, row: Mapping[str, Any]) -> AgentStoreItem:
+        return AgentStoreItem(
+            namespace=tuple(str(part) for part in row["namespace"]),
+            key=str(row["key"]),
+            value=dict(row["value"]) if isinstance(row["value"], Mapping) else {},
+            created_at=format_db_timestamp(row["created_at"]),
+            updated_at=format_db_timestamp(row["updated_at"]),
+        )
+
+    def _long_term_memory_from_row(self, row: Mapping[str, Any]) -> LongTermMemoryRecord:
+        return LongTermMemoryRecord(
+            memory_id=str(row["memory_id"]),
+            user_id=str(row["user_id"]),
+            memory_type=str(row["memory_type"]),
+            text=str(row["text"]),
+            confidence=float(row["confidence"]),
+            source_task_id=str(row["source_task_id"]),
+            source_run_id=str(row["source_run_id"]),
+            created_at=format_db_timestamp(row["created_at"]),
+            updated_at=format_db_timestamp(row["updated_at"]),
+        )
+
+    def _tool_cache_from_row(self, row: Mapping[str, Any]) -> ToolResultCacheRecord:
+        return ToolResultCacheRecord(
+            cache_id=str(row["cache_id"]),
+            task_id=str(row["task_id"]),
+            tool_name=str(row["tool_name"]),
+            query=str(row["query"]),
+            result_text=str(row["result_text"]),
+            created_at=format_db_timestamp(row["created_at"]),
+            expires_at=format_db_timestamp(row["expires_at"]),
         )
 
     def _append_event_with_cursor(

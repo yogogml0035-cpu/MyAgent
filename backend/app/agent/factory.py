@@ -21,7 +21,13 @@ logger = logging.getLogger(__name__)
 
 try:
     from deepagents import create_deep_agent
-    from deepagents.backends.filesystem import FilesystemBackend
+    from deepagents.backends import (
+        BackendProtocol,
+        CompositeBackend,
+        FilesystemBackend,
+        StateBackend,
+        StoreBackend,
+    )
 except ImportError as exc:
     raise ImportError(
         "deepagents is not installed. "
@@ -29,10 +35,16 @@ except ImportError as exc:
     ) from exc
 
 
-def _make_backend(workspace_dir: Path | None) -> FilesystemBackend:
+def _make_backend(workspace_dir: Path | None, *, store=None) -> CompositeBackend:
     root = workspace_dir.resolve() if workspace_dir else Path.cwd()
-    logger.debug("Creating FilesystemBackend with root_dir=%s", root)
-    return FilesystemBackend(root_dir=root, virtual_mode=True)
+    logger.debug("Creating CompositeBackend with workspace root_dir=%s", root)
+    routes: dict[str, BackendProtocol] = {"/scratch/": StateBackend()}
+    if store is not None:
+        routes["/memories/"] = StoreBackend(store=store)
+    return CompositeBackend(
+        default=FilesystemBackend(root_dir=root, virtual_mode=True),
+        routes=routes,
+    )
 
 
 def build_agent(
@@ -49,7 +61,7 @@ def build_agent(
 ) -> CompiledStateGraph:
     model_id = model or settings.default_model
     chat_model = _create_model(model_id, settings)
-    backend = _make_backend(workspace_dir)
+    backend = _make_backend(workspace_dir, store=store)
 
     return create_deep_agent(
         model=chat_model,
@@ -77,7 +89,7 @@ def build_agent_with_middleware(
 ) -> CompiledStateGraph:
     model_id = model or settings.default_model
     chat_model = _create_model(model_id, settings)
-    backend = _make_backend(workspace_dir)
+    backend = _make_backend(workspace_dir, store=store)
 
     extra_middleware = _build_extra_middleware(
         settings,

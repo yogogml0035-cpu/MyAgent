@@ -32,6 +32,7 @@ export type ExecutionLog = {
   reasoning?: ReasoningTrace;
   searchTrace?: SearchTrace;
   orchestration?: OrchestrationTrace;
+  memoryContext?: MemoryContextTrace;
   answerStream?: AssistantAnswerStreamTrace;
   rawRecord?: Record<string, unknown>;
 };
@@ -108,6 +109,17 @@ export type SearchTrace = {
   sources: SearchSourceTrace[];
   usedModel?: boolean;
   warningCode?: string;
+};
+
+export type MemoryContextTrace = {
+  schemaVersion: 1;
+  kind: "conversation" | "long_term";
+  summaryPreview?: string;
+  memoryPreviews: string[];
+  recentMessageCount?: number;
+  cachedToolResultCount?: number;
+  memoryCount?: number;
+  userId?: string;
 };
 
 export type AssistantAnswerStreamTrace = {
@@ -499,6 +511,8 @@ const KNOWN_DISPLAY_TEXT: Record<string, string> = {
   "Model provider configuration warning": "模型服务配置提醒。",
   "Simple chat response completed": "简单对话回复已完成。",
   "Task completed": "任务已完成。",
+  "Context loaded": "已载入会话上下文。",
+  "Memory recalled": "已载入长期记忆。",
   "Task failed": "任务执行失败。",
   "Task cancelled; intermediate artifacts were kept": "任务已取消，已保留中间产物。",
   "Cancellation requested": "已请求取消任务。",
@@ -878,6 +892,45 @@ function normalizeOrchestrationTrace(type: string | undefined, payload: Record<s
   };
 }
 
+function normalizeMemoryContextTrace(type: string | undefined, payload: Record<string, unknown>) {
+  if (type !== "context_loaded" && type !== "memory_recalled") {
+    return undefined;
+  }
+  const schemaVersion = payload.schema_version ?? payload.schemaVersion;
+  if (schemaVersion !== 1) {
+    return undefined;
+  }
+  if (type === "context_loaded") {
+    return {
+      schemaVersion: 1 as const,
+      kind: "conversation" as const,
+      summaryPreview: readBoundedString(payload.summary_preview ?? payload.summaryPreview, 320),
+      memoryPreviews: readBoundedStringList(
+        payload.cached_tool_previews ?? payload.cachedToolPreviews,
+        3,
+        220,
+      ),
+      recentMessageCount: readOptionalBoundedInteger(
+        payload.recent_message_count ?? payload.recentMessageCount,
+        0,
+        200,
+      ),
+      cachedToolResultCount: readOptionalBoundedInteger(
+        payload.cached_tool_result_count ?? payload.cachedToolResultCount,
+        0,
+        20,
+      ),
+    };
+  }
+  return {
+    schemaVersion: 1 as const,
+    kind: "long_term" as const,
+    memoryPreviews: readBoundedStringList(payload.memory_previews ?? payload.memoryPreviews, 5, 240),
+    memoryCount: readOptionalBoundedInteger(payload.memory_count ?? payload.memoryCount, 0, 100),
+    userId: readBoundedString(payload.user_id ?? payload.userId, 120),
+  };
+}
+
 function normalizeAssistantAnswerStream(type: string | undefined, payload: Record<string, unknown>) {
   if (type !== "assistant_answer_delta") {
     return undefined;
@@ -937,6 +990,7 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
     reasoning: normalizeReasoningTrace(type, payload),
     searchTrace: normalizeSearchTrace(type, payload),
     orchestration: normalizeOrchestrationTrace(type, payload),
+    memoryContext: normalizeMemoryContextTrace(type, payload),
     answerStream: normalizeAssistantAnswerStream(type, payload),
   };
   Object.defineProperty(log, "rawRecord", {

@@ -424,6 +424,16 @@ export function TaskConversation({
   function renderLiveLogDiagnostics(details: NonNullable<LiveLogItem["details"]>) {
     return (
       <div className="liveLogDiagnostics">
+        {details.rows.length > 0 ? (
+          <div className="liveLogDiagnosticRows">
+            {details.rows.map((row, index) => (
+              <div className="liveLogDiagnosticRow" key={`${row.label}:${index}`}>
+                <span className="liveLogDiagnosticLabel">{row.label}</span>
+                <span className="liveLogDiagnosticValue">{row.value}</span>
+              </div>
+            ))}
+          </div>
+        ) : null}
         <pre>{details.rawJson}</pre>
       </div>
     );

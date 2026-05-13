@@ -17,6 +17,13 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(mod.calculateSseRetryDelay(4), 30000);
   });
 
+  void it("should merge context and memory diagnostics from SSE", async () => {
+    const mod = await import("../../hooks/use-task-workspace");
+
+    assert.strictEqual(mod.TASK_WORKSPACE_STREAM_EVENT_TYPES.has("context_loaded"), true);
+    assert.strictEqual(mod.TASK_WORKSPACE_STREAM_EVENT_TYPES.has("memory_recalled"), true);
+  });
+
   void it("should extract backend SSE error details", async () => {
     const mod = await import("../../hooks/use-task-workspace");
 

@@ -1478,31 +1478,33 @@ p {
   padding: 0 10px 10px;
 }
 
-.liveLogDiagnostics dl {
+.liveLogDiagnosticRows {
   display: grid;
-  gap: 5px;
+  gap: 6px;
   margin: 0;
 }
 
-.liveLogDiagnostics dl div {
+.liveLogDiagnosticRow {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr);
-  gap: 8px;
+  grid-template-columns: minmax(64px, 92px) minmax(0, 1fr);
+  align-items: start;
+  gap: 9px;
+  color: var(--on-dark-soft);
+  font-size: 12px;
+  line-height: 1.45;
 }
 
-.liveLogDiagnostics dt {
-  color: rgba(160, 157, 150, 0.88);
-  font-size: 11px;
+.liveLogDiagnosticLabel {
+  margin: 0;
+  color: rgba(250, 249, 245, 0.58);
+  white-space: nowrap;
 }
 
-.liveLogDiagnostics dd {
+.liveLogDiagnosticValue {
   min-width: 0;
   margin: 0;
-  color: var(--on-dark-soft);
-  font-family: var(--font-code);
-  font-size: 11px;
-  line-height: 1.5;
   overflow-wrap: anywhere;
+  color: var(--on-dark);
 }
 
 .liveLogDiagnostics pre {

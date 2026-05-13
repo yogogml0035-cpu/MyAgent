@@ -5,7 +5,7 @@ import os
 import pytest
 
 from app.config import Settings
-from app.memory import AgentMemoryService
+from app.memory import AgentMemoryService, ExtractedMemory
 from app.storage import PostgresTaskStorage
 
 
@@ -65,24 +65,43 @@ def _memory_env_ready() -> bool:
     not (_database_url() and _memory_env_ready()),
     reason="Qdrant/DashScope integration env is not configured",
 )
-def test_memory_service_writes_and_recalls_completed_task_summary(tmp_path):
+def test_memory_service_writes_and_recalls_completed_task_memory_v2(tmp_path, monkeypatch):
     settings = Settings(
         task_root=tmp_path / "tasks",
         workspace_root=tmp_path / "tasks",
         database_url=_database_url(),
         qdrant_url=os.getenv("MYAGENT_QDRANT_URL"),
         dashscope_api_key=os.getenv("DASHSCOPE_API_KEY"),
+        default_user_id="integration-user",
     )
-    service = AgentMemoryService(settings)
+    storage = PostgresTaskStorage(settings.task_root, settings.database_url or "")
+    storage.initialize()
+    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+    run = storage.start_run(
+        state.task_id,
+        message="记住我喜欢先做架构边界再写实现",
+        model="deepseek:deepseek-chat",
+        expected_statuses={"idle"},
+    )
+    assert run is not None
+    _, run_id = run
+    service = AgentMemoryService(settings, storage)
     service.startup_check()
+    monkeypatch.setattr(
+        service,
+        "extract_memories",
+        lambda **_: [ExtractedMemory("preference", "用户喜欢先做架构边界再写实现", 0.94)],
+    )
     service.remember_completed_run(
-        task_id="memory-integration-task",
-        run_id="run-memory-integration",
+        task_id=state.task_id,
+        run_id=run_id,
         user_goal="记住我喜欢先做架构边界再写实现",
         final_answer="后续同类任务会先明确存储边界、失败策略和测试入口。",
+        user_id="integration-user",
     )
 
-    context = service.recall_context("下一次存储架构设计应该怎么开始？")
+    context = service.recall_context("我喜欢先做架构边界再写实现", user_id="integration-user")
 
     assert context is not None
     assert "长期记忆" in context
+    assert "架构边界" in context

@@ -18,6 +18,7 @@ class Settings:
     database_url: str | None = None
     qdrant_url: str | None = None
     qdrant_collection: str = "myagent_memories"
+    default_user_id: str = "local-user"
 
     # Model provider keys
     deepseek_api_key: str | None = None
@@ -35,6 +36,9 @@ class Settings:
     skills_dirs: tuple[str, ...] = ("./skills",)
     max_concurrent_subagents: int = 3
     agent_timeout_seconds: float = 300.0
+    fresh_tool_cache_seconds: int = 600
+    recent_message_limit: int = 12
+    memory_min_score: float = 0.72
 
     # Security
     access_token: str | None = None
@@ -110,6 +114,7 @@ def load_settings() -> Settings:
         database_url=env_value("MYAGENT_DATABASE_URL", "DATABASE_URL") or None,
         qdrant_url=os.getenv("MYAGENT_QDRANT_URL") or None,
         qdrant_collection=os.getenv("MYAGENT_QDRANT_COLLECTION", "myagent_memories"),
+        default_user_id=os.getenv("MYAGENT_DEFAULT_USER_ID", "local-user"),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
@@ -126,6 +131,9 @@ def load_settings() -> Settings:
         skills_dirs=skills_dirs,
         max_concurrent_subagents=read_int_env("MYAGENT_MAX_CONCURRENT_SUBAGENTS", 3),
         agent_timeout_seconds=read_float_env("MYAGENT_AGENT_TIMEOUT_SECONDS", 300.0),
+        fresh_tool_cache_seconds=read_int_env("MYAGENT_FRESH_TOOL_CACHE_SECONDS", 600),
+        recent_message_limit=read_int_env("MYAGENT_RECENT_MESSAGE_LIMIT", 12),
+        memory_min_score=read_float_env("MYAGENT_MEMORY_MIN_SCORE", 0.72),
         access_token=env_value("MYAGENT_ACCESS_TOKEN", "AGENT_CHAT_ACCESS_TOKEN") or None,
         cors_origins=read_list_env(
             "MYAGENT_CORS_ORIGINS",

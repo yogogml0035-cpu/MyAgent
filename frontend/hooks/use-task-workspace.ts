@@ -56,6 +56,19 @@ const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
 const DEFAULT_FILE_PROMPT = "请分析已上传文件，先按需读取资源内容，再总结关键差异。";
 export const MAX_SSE_RETRIES = 5;
 export const ARTIFACT_OBJECT_URL_REVOKE_DELAY_MS = 60_000;
+export const TASK_WORKSPACE_STREAM_EVENT_TYPES = new Set([
+  "log",
+  "tool_call",
+  "tool_result",
+  "assistant_answer_delta",
+  "status_update",
+  "context_loaded",
+  "memory_recalled",
+  "final_answer",
+  "task_completed",
+  "task_failed",
+  "task_cancelled",
+]);
 
 export function calculateSseRetryDelay(retryCount: number) {
   return Math.min(3000 * Math.pow(2, retryCount), 30000);
@@ -326,20 +339,11 @@ export function useTaskWorkspace() {
               void refreshTaskSummary();
               return;
             }
-            const recognizedTypes = [
-              "log",
-              "tool_call",
-              "tool_result",
-              "assistant_answer_delta",
-              "status_update",
-              "final_answer",
-              "task_completed",
-              "task_failed",
-              "task_cancelled",
-            ];
             if (
               payload &&
-              (recognizedTypes.includes(payload.type) || Array.isArray(payload))
+              ((typeof payload.type === "string" &&
+                TASK_WORKSPACE_STREAM_EVENT_TYPES.has(payload.type)) ||
+                Array.isArray(payload))
             ) {
               const incoming = normalizeEventRecords(
                 Array.isArray(payload) ? payload : [payload],

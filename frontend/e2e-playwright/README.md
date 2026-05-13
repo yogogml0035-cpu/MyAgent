@@ -40,6 +40,21 @@ npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --repor
 
 The progress-log spec seeds a temporary running task through the same Postgres-backed task/runs/messages/events contract, verifies collapsed row layout in the browser, expands status/tool/generation rows, captures screenshots, marks the temporary task complete, and deletes it through the public API.
 
+Run the session-context and long-term-memory acceptance test from `frontend/` when changing conversation history injection, memory recall, per-user memory isolation, or the visible "已载入会话上下文 / 已载入长期记忆" log rows:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_API_URL=http://127.0.0.1:8001 \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/session-context-memory \
+MYAGENT_E2E_ACCESS_TOKEN=... \
+MYAGENT_E2E_POSTGRES_CONTAINER=PostgreSQL \
+MYAGENT_E2E_POSTGRES_USER=postgres \
+MYAGENT_E2E_POSTGRES_DB=myagent \
+npx playwright test e2e-playwright/test_session_context_memory.spec.mjs --reporter=line
+```
+
+The session-context spec sends one user turn through the real browser UI, seeds a canonical long-term preference memory row in Postgres, rebuilds the Qdrant index from that canonical store, sends a follow-up turn that should recall the previous message and preference, expands the context/memory diagnostics, and captures screenshots for the empty workspace, first prompt, first completion, follow-up draft, expanded memory logs, and recalled answer.
+
 Run the history-menu affordance acceptance test from `frontend/` when changing the history sidebar menu trigger, rename/delete menu, focus state, or compact history layout:
 
 ```bash

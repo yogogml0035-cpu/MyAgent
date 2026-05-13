@@ -1638,6 +1638,46 @@ test("buildLiveLogItems shows cancelled status when cancel event present", () =>
   }
 });
 
+test("buildLiveLogItems exposes redacted memory context diagnostics", () => {
+  const items = buildLiveLogItems([
+    {
+      id: "context-1",
+      type: "context_loaded",
+      title: "已载入会话上下文。",
+      level: "info",
+      createdAt: "2025-01-01T00:00:00Z",
+      live: {
+        schemaVersion: 1,
+        kind: "status",
+        stage: "organizing_state",
+        displayText: "已载入会话上下文",
+        diagnosticLabel: "conversation_context",
+        parameterItems: [],
+      },
+      memoryContext: {
+        schemaVersion: 1,
+        kind: "conversation",
+        summaryPreview: "用户之前问过上海天气。",
+        memoryPreviews: ["tavily_search: 上海天气"],
+        recentMessageCount: 2,
+        cachedToolResultCount: 1,
+      },
+      rawRecord: {
+        type: "context_loaded",
+        payload: { raw_context: "SHOULD_STAY_RAW_ONLY" },
+      },
+    },
+  ]);
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0].kind, "status");
+  assert.equal(items[0].details.rows.some((row) => row.value.includes("上海天气")), true);
+  assert.equal(
+    items[0].details.rows.some((row) => row.value.includes("SHOULD_STAY_RAW_ONLY")),
+    false,
+  );
+});
+
 test("buildConversationStreamItems filters placeholder assistant messages", () => {
   const groups = buildRunActivityGroups([], [], []);
   const items = buildConversationStreamItems(

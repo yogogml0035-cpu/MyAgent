@@ -76,4 +76,5 @@ class TestFullAgentBuild:
         call_kwargs = mock_create.call_args.kwargs
         backend = call_kwargs["backend"]
         assert backend is not None
-        assert str(workspace.resolve()) in str(backend.cwd) or backend.cwd == workspace.resolve()
+        assert backend.default.cwd == workspace.resolve()
+        assert "/scratch/" in backend.routes

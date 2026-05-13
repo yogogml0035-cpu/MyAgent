@@ -11,13 +11,35 @@ from langchain_core.tools import tool
 from tavily import TavilyClient
 
 
-def create_tavily_search_tool(api_key: str):
+def create_tavily_search_tool(api_key: str, *, cache=None, task_id: str | None = None, ttl_seconds: int = 600):
     """Create a Tavily search tool bound to the configured settings key."""
 
     @tool("tavily_search")
     def settings_tavily_search(query: str, *, max_results: int = 5, topic: str = "general") -> str:
         """Search the web for current information using the Tavily search API."""
-        return _run_tavily_search(api_key, query, max_results=max_results, topic=topic)
+        normalized_query = " ".join(query.split())
+        if cache is not None and task_id and not _asks_for_refresh(normalized_query):
+            cached = cache.get_fresh_tool_cache(
+                task_id,
+                tool_name="tavily_search",
+                query=normalized_query,
+            )
+            if cached is not None:
+                return (
+                    f"[Cached within this conversation at {cached.created_at}; "
+                    "ask to refresh for a new search]\n"
+                    f"{cached.result_text}"
+                )
+        result = _run_tavily_search(api_key, normalized_query, max_results=max_results, topic=topic)
+        if cache is not None and task_id and not result.startswith("Error:"):
+            cache.cache_tool_result(
+                task_id,
+                tool_name="tavily_search",
+                query=normalized_query,
+                result_text=result,
+                ttl_seconds=ttl_seconds,
+            )
+        return result
 
     return settings_tavily_search
 
@@ -75,3 +97,20 @@ def _get_api_key() -> str | None:
     import os
 
     return os.getenv("TAVILY_API_KEY") or None
+
+
+def _asks_for_refresh(query: str) -> bool:
+    normalized = query.lower()
+    markers = (
+        "刷新",
+        "重新查",
+        "再查",
+        "最新",
+        "现在",
+        "实时",
+        "latest",
+        "refresh",
+        "current",
+        "now",
+    )
+    return any(marker in normalized for marker in markers)

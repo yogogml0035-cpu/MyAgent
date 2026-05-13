@@ -649,6 +649,67 @@ test("normalizeTaskState preserves raw records for diagnostics without enumerati
   assert.equal(JSON.stringify(state.logs).includes("RAW_DEBUG_VALUE"), false);
 });
 
+test("normalizeTaskState preserves context and memory recall logs", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "running",
+      events: [
+        {
+          id: "context-1",
+          type: "context_loaded",
+          message: "已载入会话上下文。",
+          payload: {
+            schema_version: 1,
+            summary_present: true,
+            recent_message_count: 2,
+            cached_tool_result_count: 1,
+            summary_preview: "用户之前问过上海天气。",
+            cached_tool_previews: ["tavily_search: 上海天气"],
+            raw_context: "SHOULD_NOT_RENDER",
+            live: {
+              schema_version: 1,
+              kind: "status",
+              stage: "organizing_state",
+              display_text: "已载入会话上下文",
+              diagnostic_label: "conversation_context",
+              parameter_items: [{ key: "最近消息", value: 2 }],
+            },
+          },
+        },
+        {
+          id: "memory-1",
+          type: "memory_recalled",
+          message: "已载入长期记忆。",
+          payload: {
+            schema_version: 1,
+            user_id: "local-user",
+            memory_count: 1,
+            memory_previews: ["preference: 用户喜欢先确认边界"],
+            live: {
+              schema_version: 1,
+              kind: "status",
+              stage: "organizing_state",
+              display_text: "已载入长期记忆",
+              diagnostic_label: "long_term_memory",
+              parameter_items: [{ key: "记忆数", value: 1 }],
+            },
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].memoryContext?.kind, "conversation");
+  assert.equal(state.logs[0].memoryContext?.summaryPreview, "用户之前问过上海天气。");
+  assert.equal(state.logs[0].memoryContext?.recentMessageCount, 2);
+  assert.equal(state.logs[1].memoryContext?.kind, "long_term");
+  assert.equal(state.logs[1].memoryContext?.memoryPreviews[0], "preference: 用户喜欢先确认边界");
+  assert.equal(state.logs[1].live?.displayText, "已载入长期记忆");
+  assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
+});
+
 test("normalizeTaskState ignores malformed live metadata", () => {
   const state = normalizeTaskState(
     {

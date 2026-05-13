@@ -61,3 +61,18 @@ class TestBuildAgent:
 
         call_kwargs = mock_create.call_args
         assert call_kwargs.kwargs["system_prompt"] == "Use resource tools."
+
+    @patch("app.agent.factory._create_model", return_value=_mock_model())
+    @patch("app.agent.factory.create_deep_agent")
+    def test_backend_uses_composite_memory_routes(self, mock_create, mock_model_fn, test_settings):
+        fake_graph = MagicMock(spec=CompiledStateGraph)
+        mock_create.return_value = fake_graph
+        store = object()
+
+        build_agent(test_settings, store=store, workspace_dir=test_settings.workspace_root / "task-1")
+
+        backend = mock_create.call_args.kwargs["backend"]
+        assert backend.default.cwd == (test_settings.workspace_root / "task-1").resolve()
+        assert "/scratch/" in backend.routes
+        assert "/memories/" in backend.routes
+        assert mock_create.call_args.kwargs["store"] is store

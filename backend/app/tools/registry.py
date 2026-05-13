@@ -9,7 +9,7 @@ from app.execution.resources import create_resource_tools
 from app.tools.tavily_search import create_tavily_search_tool
 
 
-def get_platform_tools(settings: Settings, *, task_id: str | None = None) -> list[BaseTool]:
+def get_platform_tools(settings: Settings, *, task_id: str | None = None, storage=None) -> list[BaseTool]:
     """Return platform-specific tools beyond the deepagents built-in suite.
 
     deepagents auto-injects ``ls``, ``read_file``, ``write_file``, ``edit_file``,
@@ -26,6 +26,13 @@ def get_platform_tools(settings: Settings, *, task_id: str | None = None) -> lis
         tools.extend(create_resource_tools(task_id=task_id, workspace_root=settings.workspace_root))
 
     if settings.tavily_api_key:
-        tools.append(create_tavily_search_tool(settings.tavily_api_key))
+        tools.append(
+            create_tavily_search_tool(
+                settings.tavily_api_key,
+                cache=storage,
+                task_id=task_id,
+                ttl_seconds=settings.fresh_tool_cache_seconds,
+            )
+        )
 
     return tools

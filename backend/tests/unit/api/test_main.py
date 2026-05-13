@@ -55,6 +55,20 @@ def test_lifespan_interrupts_running_tasks_on_startup(tmp_path, monkeypatch):
     assert calls == ["后端启动或重载时中断了任务。"]
 
 
+def test_create_app_wires_context_builder_and_agent_store(tmp_path):
+    settings = Settings(
+        task_root=tmp_path / "tasks",
+        workspace_root=tmp_path / "tasks",
+    )
+    storage = InMemoryTaskStorage(settings.task_root)
+    app = create_app(settings, storage=storage, memory_service=None)
+
+    assert app.state.runner.context_builder is not None
+    assert app.state.runner.context_builder.storage is storage
+    assert app.state.runner.agent_store is not None
+    assert app.state.runner.agent_store.storage is storage
+
+
 def test_lifespan_requires_external_storage_and_memory_services(tmp_path):
     settings = Settings(
         task_root=tmp_path / "tasks",

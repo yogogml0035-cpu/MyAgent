@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from app.config import Settings
 from app.tools.registry import get_platform_tools
+from tests.fakes import InMemoryTaskStorage
 
 
 class TestGetPlatformTools:
@@ -70,3 +71,33 @@ class TestGetPlatformTools:
 
         assert captured["api_key"] == "settings-tvly-key"
         assert "https://example.test" in result
+
+    def test_tavily_tool_reuses_fresh_cache_until_refresh_requested(
+        self, tmp_path, monkeypatch
+    ):
+        calls: list[str] = []
+
+        def fake_run(api_key: str, query: str, *, max_results: int, topic: str) -> str:
+            calls.append(query)
+            return f"fresh:{query}:{max_results}:{topic}"
+
+        monkeypatch.setattr("app.tools.tavily_search._run_tavily_search", fake_run)
+        monkeypatch.setenv("TAVILY_API_KEY", "runtime-key")
+        storage = InMemoryTaskStorage(tmp_path / "tasks")
+        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            tavily_api_key="settings-tvly-key",
+        )
+
+        [tool] = [t for t in get_platform_tools(settings, task_id=state.task_id, storage=storage) if t.name == "tavily_search"]
+
+        cached = tool.invoke({"query": "上海天气"})
+        repeat = tool.invoke({"query": "上海天气"})
+        refreshed = tool.invoke({"query": "刷新上海天气"})
+
+        assert calls == ["上海天气", "刷新上海天气"]
+        assert "fresh:上海天气" in cached
+        assert "[Cached within this conversation" in repeat
+        assert "fresh:刷新上海天气" in refreshed

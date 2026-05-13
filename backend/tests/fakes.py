@@ -17,6 +17,9 @@ from app.storage import (
     TYPE_MAP,
     UPLOAD_CHUNK_SIZE,
     UPLOAD_FORMATS,
+    AgentStoreItem,
+    LongTermMemoryRecord,
+    ToolResultCacheRecord,
     UploadConflictError,
     UploadLimitError,
     build_upload_resource_ref,
@@ -40,6 +43,10 @@ class InMemoryTaskStorage:
         self.task_root.mkdir(parents=True, exist_ok=True)
         self.states: dict[str, TaskState] = {}
         self.latest_seq: dict[str, int] = {}
+        self.context_summaries: dict[str, str] = {}
+        self.agent_store_items: dict[tuple[tuple[str, ...], str], AgentStoreItem] = {}
+        self.tool_caches: dict[str, ToolResultCacheRecord] = {}
+        self.long_term_memories: dict[str, LongTermMemoryRecord] = {}
 
     def initialize(self) -> None:
         return None
@@ -249,6 +256,150 @@ class InMemoryTaskStorage:
             if event.id == after_id:
                 return copy.deepcopy(events[index + 1 :])
         return []
+
+    def get_task_messages(self, task_id: str) -> list[ChatMessage]:
+        return self.get_task(task_id, include_events=False).messages
+
+    def get_context_summary(self, task_id: str) -> str | None:
+        return self.context_summaries.get(task_id)
+
+    def upsert_context_summary(
+        self, task_id: str, summary: str, *, covered_message_count: int
+    ) -> None:
+        self.context_summaries[task_id] = summary
+
+    def cache_tool_result(
+        self,
+        task_id: str,
+        *,
+        tool_name: str,
+        query: str,
+        result_text: str,
+        ttl_seconds: int,
+    ) -> ToolResultCacheRecord:
+        from datetime import datetime, timedelta, timezone
+
+        now_dt = datetime.now(timezone.utc).replace(microsecond=0)
+        expires_dt = now_dt + timedelta(seconds=ttl_seconds)
+        record = ToolResultCacheRecord(
+            cache_id=f"cache-{uuid.uuid4().hex}",
+            task_id=task_id,
+            tool_name=tool_name,
+            query=query,
+            result_text=result_text,
+            created_at=now_dt.isoformat().replace("+00:00", "Z"),
+            expires_at=expires_dt.isoformat().replace("+00:00", "Z"),
+        )
+        self.tool_caches[f"{task_id}:{tool_name}:{query}"] = record
+        return record
+
+    def get_fresh_tool_cache(
+        self, task_id: str, *, tool_name: str, query: str
+    ) -> ToolResultCacheRecord | None:
+        return self.tool_caches.get(f"{task_id}:{tool_name}:{query}")
+
+    def list_fresh_tool_cache(self, task_id: str, *, limit: int = 5) -> list[ToolResultCacheRecord]:
+        items = [record for record in self.tool_caches.values() if record.task_id == task_id]
+        return copy.deepcopy(sorted(items, key=lambda record: record.created_at, reverse=True)[:limit])
+
+    def put_agent_store_item(
+        self, namespace: tuple[str, ...], key: str, value: dict[str, Any]
+    ) -> AgentStoreItem:
+        now = utc_now()
+        existing = self.agent_store_items.get((namespace, key))
+        item = AgentStoreItem(
+            namespace=namespace,
+            key=key,
+            value=copy.deepcopy(value),
+            created_at=existing.created_at if existing else now,
+            updated_at=now,
+        )
+        self.agent_store_items[(namespace, key)] = item
+        return item
+
+    def delete_agent_store_item(self, namespace: tuple[str, ...], key: str) -> None:
+        self.agent_store_items.pop((namespace, key), None)
+
+    def get_agent_store_item(self, namespace: tuple[str, ...], key: str) -> AgentStoreItem | None:
+        return copy.deepcopy(self.agent_store_items.get((namespace, key)))
+
+    def search_agent_store_items(
+        self,
+        namespace_prefix: tuple[str, ...],
+        *,
+        limit: int = 10,
+        offset: int = 0,
+        filter: dict[str, Any] | None = None,
+    ) -> list[AgentStoreItem]:
+        items = [
+            item
+            for (namespace, _), item in self.agent_store_items.items()
+            if namespace[: len(namespace_prefix)] == namespace_prefix
+        ]
+        if filter:
+            items = [
+                item
+                for item in items
+                if all(item.value.get(key) == value for key, value in filter.items())
+            ]
+        return copy.deepcopy(sorted(items, key=lambda item: (item.namespace, item.key))[offset : offset + limit])
+
+    def list_agent_store_namespaces(
+        self,
+        *,
+        prefix: tuple[str, ...] | None = None,
+        suffix: tuple[str, ...] | None = None,
+        max_depth: int | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[tuple[str, ...]]:
+        namespaces = {namespace for namespace, _ in self.agent_store_items}
+        if prefix:
+            namespaces = {namespace for namespace in namespaces if namespace[: len(prefix)] == prefix}
+        if suffix:
+            namespaces = {namespace for namespace in namespaces if namespace[-len(suffix) :] == suffix}
+        if max_depth is not None:
+            namespaces = {namespace[:max_depth] for namespace in namespaces}
+        return sorted(namespaces)[offset : offset + limit]
+
+    def put_long_term_memory(
+        self,
+        *,
+        memory_id: str,
+        user_id: str,
+        memory_type: str,
+        text: str,
+        confidence: float,
+        source_task_id: str,
+        source_run_id: str,
+    ) -> LongTermMemoryRecord:
+        now = utc_now()
+        existing = self.long_term_memories.get(memory_id)
+        record = LongTermMemoryRecord(
+            memory_id=memory_id,
+            user_id=user_id,
+            memory_type=memory_type,
+            text=text,
+            confidence=confidence,
+            source_task_id=source_task_id,
+            source_run_id=source_run_id,
+            created_at=existing.created_at if existing else now,
+            updated_at=now,
+        )
+        self.long_term_memories[memory_id] = record
+        return record
+
+    def get_long_term_memory(self, memory_id: str) -> LongTermMemoryRecord | None:
+        return copy.deepcopy(self.long_term_memories.get(memory_id))
+
+    def list_long_term_memories(
+        self, *, limit: int = 1000, offset: int = 0, user_id: str | None = None
+    ) -> list[LongTermMemoryRecord]:
+        records = list(self.long_term_memories.values())
+        if user_id:
+            records = [record for record in records if record.user_id == user_id]
+        records = sorted(records, key=lambda record: (record.created_at, record.memory_id))
+        return copy.deepcopy(records[offset : offset + limit])
 
     def list_uploads(self, task_id: str) -> list[Path]:
         upload_dir = self.task_dir(task_id) / "uploads"
