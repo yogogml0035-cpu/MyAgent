@@ -990,7 +990,11 @@ class PostgresTaskStorage:
                 )
                 after_row = cur.fetchone()
                 if after_row is None:
-                    return []
+                    cur.execute(
+                        "SELECT * FROM events WHERE task_id = %s ORDER BY seq ASC",
+                        (task_id,),
+                    )
+                    return [self._event_record_from_row(row) for row in cur.fetchall()]
                 cur.execute(
                     """
                         SELECT * FROM events
