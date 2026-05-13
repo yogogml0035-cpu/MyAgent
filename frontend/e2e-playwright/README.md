@@ -70,3 +70,13 @@ npx playwright test e2e-playwright/test_resource_upload_harness.spec.mjs --repor
 ```
 
 The resource-upload spec uses the real browser file picker path for `.docx`, `.xlsx`, `.json`, and `.txt`, uploads those files through the public API, seeds a completed run with resource-tool progress events, and captures screenshots for selection, uploaded state, tool progress, and completion.
+
+Run the upload-preview design acceptance test from `frontend/` when changing the selected-file preview card, upload affordances, or responsive composer layout:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/upload-preview-design \
+npx playwright test e2e-playwright/test_upload_preview_design.spec.mjs --reporter=line
+```
+
+The upload-preview spec uses the real browser file picker path for supported files, verifies separate selected-file cards, filename-only display, replace control, hover-revealed per-file removal, core design-token colors, and captures desktop plus narrow-screen screenshots of the changed preview card.

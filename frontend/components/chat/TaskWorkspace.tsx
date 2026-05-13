@@ -39,14 +39,12 @@ export function TaskWorkspace() {
           isBusy={workspace.isBusy}
           model={workspace.model}
           modelDisplayOptions={workspace.modelDisplayOptions}
-          onClearFiles={workspace.handleClearFiles}
           onFileSelection={workspace.handleFileSelection}
+          onRemoveFile={workspace.handleRemoveFile}
           onInputChange={workspace.setInput}
           onModelChange={workspace.setModel}
           onStop={workspace.handleStop}
           onSubmit={workspace.handleSubmit}
-          selectedFileNames={workspace.selectedFileNames}
-          selectedFileSize={workspace.selectedFileSize}
           selectedFiles={workspace.selectedFiles}
           selectedModelDisplay={workspace.selectedModelDisplay}
           selectedModelRunnable={workspace.selectedModelRunnable}

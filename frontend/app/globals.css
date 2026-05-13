@@ -1793,65 +1793,76 @@ p {
   margin-left: 0;
 }
 
-.fileCard {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-height: 52px;
-  margin: 0 2px 10px;
-  padding: 8px 9px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius-md);
-  background: var(--surface-card);
-}
-
-.fileIcon {
+.filePreviewShelf {
   position: relative;
-  flex: 0 0 auto;
-  width: 34px;
-  height: 34px;
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin: 0 2px 12px;
+  min-width: 0;
+  padding: 0 2px;
+}
+
+.filePreviewList {
+  display: flex;
+  flex: 1 1 auto;
+  flex-wrap: wrap;
+  align-items: center;
+  min-width: 0;
+  gap: 8px;
+}
+
+.fileChip {
+  position: relative;
+  display: block;
+  width: min(190px, 100%);
+  min-height: 42px;
+  min-width: 0;
+  padding: 11px 30px 11px 12px;
   border: 1px solid var(--hairline);
   border-radius: var(--radius-md);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.36), rgba(250, 249, 245, 0)),
+    rgba(245, 240, 232, 0.86);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.48),
+    0 8px 18px rgba(20, 20, 19, 0.04);
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    transform 0.16s ease;
+}
+
+.fileChip::before {
+  position: absolute;
+  top: 10px;
+  bottom: 10px;
+  left: 0;
+  width: 2px;
+  border-radius: 0 999px 999px 0;
+  background: rgba(204, 120, 92, 0.72);
+  content: "";
+  opacity: 0;
+  transition: opacity 0.16s ease;
+}
+
+.fileChip:hover,
+.fileChip:focus-within {
+  border-color: rgba(204, 120, 92, 0.36);
   background: var(--surface);
+  box-shadow: 0 10px 22px rgba(20, 20, 19, 0.07);
+  transform: translateY(-1px);
 }
 
-.fileIcon::before {
-  position: absolute;
-  content: "";
-  left: 12px;
-  top: 8px;
-  width: 11px;
-  height: 16px;
-  border: 1.8px solid var(--muted);
-  border-radius: 3px;
+.fileChip:hover::before,
+.fileChip:focus-within::before {
+  opacity: 1;
 }
 
-.fileIcon::after {
-  position: absolute;
-  content: "";
-  left: 15px;
-  top: 16px;
-  width: 7px;
-  height: 1.8px;
-  border-radius: 999px;
-  background: var(--muted);
-  box-shadow: 0 5px 0 var(--muted);
-}
-
-.fileInfo {
-  display: grid;
+.fileChip strong {
+  display: block;
   min-width: 0;
-  gap: 2px;
-  flex: 1;
-}
-
-.fileInfo span {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 500;
-}
-
-.fileInfo strong {
   overflow: hidden;
   color: var(--ink);
   font-size: 14px;
@@ -1859,11 +1870,6 @@ p {
   line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.fileInfo small {
-  color: var(--muted);
-  font-size: 12px;
 }
 
 .replaceFileButton,
@@ -1884,22 +1890,72 @@ p {
 }
 
 .replaceFileButton {
-  min-width: 54px;
+  display: inline-flex;
+  gap: 6px;
+  min-width: 70px;
   height: 34px;
-  padding: 0 11px;
+  margin-top: 10px;
+  padding: 0 12px;
   border-radius: 999px;
   color: var(--ink);
   font-size: 13px;
   font-weight: 500;
 }
 
+.replaceFileIcon {
+  width: 15px;
+  height: 15px;
+}
+
 .removeFileButton {
-  width: 34px;
-  height: 34px;
+  position: absolute;
+  top: -7px;
+  right: -7px;
+  width: 22px;
+  height: 22px;
   border-radius: 999px;
-  color: var(--muted);
-  font-size: 20px;
-  line-height: 1;
+  background: var(--surface-dark);
+  color: var(--on-dark);
+  opacity: 0;
+  transform: scale(0.86);
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
+    opacity 0.16s ease,
+    transform 0.16s ease;
+}
+
+.fileChip:hover .removeFileButton,
+.fileChip:focus-within .removeFileButton {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.removeFileGlyph {
+  position: relative;
+  width: 10px;
+  height: 10px;
+}
+
+.removeFileGlyph::before,
+.removeFileGlyph::after {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 10px;
+  height: 1.5px;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+}
+
+.removeFileGlyph::before {
+  transform: translate(-50%, -50%) rotate(45deg);
+}
+
+.removeFileGlyph::after {
+  transform: translate(-50%, -50%) rotate(-45deg);
 }
 
 .promptTextarea {
@@ -2428,9 +2484,24 @@ button:hover:not(:disabled),
     font-size: 15px;
   }
 
-  .fileCard {
+  .filePreviewShelf {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .filePreviewList {
     display: grid;
-    grid-template-columns: 34px minmax(0, 1fr) auto auto;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .fileChip {
+    width: 100%;
+  }
+
+  .replaceFileButton {
+    justify-self: start;
+    margin-top: 0;
   }
 
   .traceHeader {

@@ -7,6 +7,7 @@
 - 后端：`backend/`，FastAPI + `uv`，入口为 `backend/app/main.py`。
 - 前端：`frontend/`，Next.js app router，主界面由 `frontend/app/page.tsx` 挂载，聊天工作区组件在 `frontend/components/chat/`，任务状态编排在 `frontend/hooks/use-task-workspace.ts`，API 封装在 `frontend/lib/task-api.ts`。
 - 前端 E2E 验收目录：`frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`，用于浏览器端严格 E2E 验收、Playwright 相关资产和网页端截图证据，其中 `YYYYMMDDHHMMSS` 为验收时间戳。该目录下由验收运行生成的截图证据只需本地留存和在交付说明中引用路径，不需要提交到 git。
+- 前端视觉风格参考：`DESIGN.md`。任何前端设计、样式、布局、视觉状态、组件外观或动效调整，都必须先读取并对齐该文件，保证整体风格统一。
 - 浏览器端 E2E 分层方式：开发期可用 Chrome DevTools MCP 探路和诊断页面、console、network、截图、性能等现场信号；稳定回归与 CI 准入只认 Playwright spec、trace、截图和退出码。
 - 默认结构化任务存储：Postgres（任务、运行、消息、事件日志）；默认文件存储：`backend/storage/sessions/`（上传和产物文件）。
 - 后端测试：`backend/tests/`，按 `unit/`（agent、models、tools、skills、streaming、runner、api、security、storage、session）、`integration/`、`e2e/`（预留）分目录，文件名必须以 `test_` 开头。
@@ -18,6 +19,7 @@
 
 - 涉及后端任务生命周期、API、存储、权限、模型或分析流程时，先读相关 `backend/app/` 代码和 `backend/tests/`。
 - 涉及前端表单、任务状态、URL 映射、产物打开或轮询时，先读 `frontend/app/page.tsx`、`frontend/hooks/use-task-workspace.ts`、`frontend/lib/task-api.ts`、`frontend/app/task-state.ts` 和 `frontend/tests/`。
+- 涉及任何前端视觉设计、样式优化、布局调整、交互动效、颜色、圆角、阴影、图标、菜单、弹窗、日志面板、按钮或表单外观时，必须先读 `DESIGN.md`，再读相关组件和 `frontend/app/globals.css`；实现时优先复用 `DESIGN.md` 中的暖色画布、珊瑚色主色、字体、圆角、间距和现有 CSS 变量，不得凭空引入与整体不搭的蓝色系统控件、亮红破坏性大色块或孤立的新视觉体系。
 - 涉及 bug 修复、功能新增、交互改动或其他行为变更时，必须计划进行 E2E 测试，并在 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 增加 E2E 场景和截图约定；涉及新的或不稳定的浏览器流程时，先用 Chrome DevTools MCP 探路，再固化为 Playwright。
 - 涉及长期规则或已形成稳定主题边界时，直接读取 `asset/` 下与当前主题最相关的知识包。
 - 搜索优先用 `rg` 或 `rg --files`。
@@ -46,6 +48,7 @@
 - E2E 验收必须基于实际启动的前后端服务，在网页端完成，并保留截图作为验收依据；截图证据属于本地验收产物，不纳入 git 提交。
 - 截图是判断 E2E 验收合格的必要证据：必须在关键状态变化后尽快截图，不能只在最后补一张终态图；截图数量必须足够覆盖受影响路径的起点、操作后状态、运行中/加载中状态、完成或失败状态、关键局部细节和容易误判的边界。
 - 对 UI、流式输出、滚动、弹窗、下载、产物打开、错误提示、移动端/窄屏或异步状态类改动，必须增加对应局部截图或多时刻截图；如果截图不足以证明细节正确，应继续补截，不能据此下验收通过结论。
+- 对前端样式或视觉设计改动，E2E 截图必须能证明改动后的状态与 `DESIGN.md` 风格一致；重点覆盖默认态、hover/focus/展开态、错误或危险操作态、移动端/窄屏中的受影响区域，不能只凭“代码看起来用了变量”下结论。
 - 验收截图统一存放在 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 下，按需求或场景建立子目录；交付说明引用这些本地路径即可，不要为了提交截图而放开 `.gitignore`。
 - 若当前仓库尚未存在可覆盖本次需求的浏览器端 E2E 用例或执行入口，必须在同次需求中补齐后再交付。
 - 只有在智能体客观上无法自行完成时，才允许暂停并向用户说明阻塞；阻塞说明必须具体到缺少的前置条件，例如登录验证码、必须由用户提供的真实文件、缺失密钥、外部服务不可用或机器权限限制，不能用泛泛的“是否继续”“你要不要自己测”代替执行。
@@ -234,6 +237,7 @@ git diff --check
 ## 交付说明要求
 
 - 说明改了哪些文件和为什么。
+- 涉及前端样式、视觉设计或组件外观时，说明已参考 `DESIGN.md`，并概述如何保持色彩、字体、间距、圆角、状态反馈和整体风格一致。
 - 说明运行了哪些验证命令。
 - 说明执行了哪些 E2E 场景、访问了哪些页面或 URL、截图证据本地保存到了哪些 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` 路径；截图证据不需要提交。
 - 若使用了 Chrome DevTools MCP，说明它用于探路还是失败诊断，并概述检查过的 console、network、页面状态或截图；同时明确最终准入依据仍是 Playwright 或其他可重复测试。

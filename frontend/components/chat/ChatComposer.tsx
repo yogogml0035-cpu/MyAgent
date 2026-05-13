@@ -10,7 +10,7 @@ import {
 } from "react";
 import type { ModelDisplayOption } from "../../app/model-ui";
 import { FILE_INPUT_ACCEPT, SUPPORTED_UPLOAD_LABEL } from "../../app/file-upload";
-import { formatFileSize, shouldSubmitComposerKey } from "../../app/workspace-view";
+import { shouldSubmitComposerKey } from "../../app/workspace-view";
 
 const FILE_INPUT_ID = "document-files";
 
@@ -21,14 +21,12 @@ type ChatComposerProps = {
   isBusy: boolean;
   model: string;
   modelDisplayOptions: ModelDisplayOption[];
-  selectedFileNames: string;
-  selectedFileSize: number;
   selectedFiles: File[];
   selectedModelDisplay: ModelDisplayOption;
   selectedModelRunnable: boolean;
   uploadCount: number;
-  onClearFiles: () => void;
   onFileSelection: (files: File[]) => void;
+  onRemoveFile: (index: number) => void;
   onInputChange: (value: string) => void;
   onModelChange: (model: string) => void;
   onStop: () => Promise<void>;
@@ -42,14 +40,12 @@ export function ChatComposer({
   isBusy,
   model,
   modelDisplayOptions,
-  selectedFileNames,
-  selectedFileSize,
   selectedFiles,
   selectedModelDisplay,
   selectedModelRunnable,
   uploadCount,
-  onClearFiles,
   onFileSelection,
+  onRemoveFile,
   onInputChange,
   onModelChange,
   onStop,
@@ -128,24 +124,44 @@ export function ChatComposer({
 
       <div className="composerPanel">
         {selectedFiles.length > 0 ? (
-          <div className="fileCard">
-            <span className="fileIcon" aria-hidden="true" />
-            <div className="fileInfo">
-              <span>通用文件资源</span>
-              <strong>{selectedFileNames}</strong>
-              <small>{formatFileSize(selectedFileSize)}</small>
+          <div className="filePreviewShelf" data-testid="selected-file-card">
+            <div className="filePreviewList" aria-label="已选文件">
+              {selectedFiles.map((file, index) => (
+                <div
+                  className="fileChip"
+                  data-testid="selected-file-item"
+                  key={`${file.name}-${file.size}-${index}`}
+                >
+                  <strong title={file.name}>{file.name}</strong>
+                  <button
+                    aria-label={`移除 ${file.name}`}
+                    className="removeFileButton"
+                    onClick={() => onRemoveFile(index)}
+                    title={`移除 ${file.name}`}
+                    type="button"
+                  >
+                    <span className="removeFileGlyph" aria-hidden="true" />
+                  </button>
+                </div>
+              ))}
             </div>
-            <label className="replaceFileButton" htmlFor={FILE_INPUT_ID}>
-              更换
-            </label>
-            <button
-              aria-label="移除文件"
-              className="removeFileButton"
-              onClick={onClearFiles}
-              type="button"
+            <label
+              aria-label="更换已选文件"
+              className="replaceFileButton"
+              htmlFor={FILE_INPUT_ID}
+              title="更换已选文件"
             >
-              ×
-            </button>
+              <svg aria-hidden="true" className="replaceFileIcon" fill="none" viewBox="0 0 24 24">
+                <path
+                  d="M6.4 9.2A6.7 6.7 0 0 1 18 6.8l1.4 1.4M17.6 14.8A6.7 6.7 0 0 1 6 17.2l-1.4-1.4M18.7 3.8v4.7h-4.7M5.3 20.2v-4.7h4.7"
+                  stroke="currentColor"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="1.8"
+                />
+              </svg>
+              <span>更换</span>
+            </label>
           </div>
         ) : null}
 

@@ -163,8 +163,6 @@ export function useTaskWorkspace() {
 
   const canSend = input.trim().length > 0 || selectedFiles.length > 0;
   const activeTask = isTaskActive(status);
-  const selectedFileNames = selectedFiles.map((file) => file.name).join("、");
-  const selectedFileSize = selectedFiles.reduce((total, file) => total + file.size, 0);
   const needsInputMessage = needsInput ? formatNeedsInput(needsInput) : "";
   const stateNoticeMessages = useMemo(
     () => buildStateNoticeMessages(backendError, needsInputMessage),
@@ -483,8 +481,8 @@ export function useTaskWorkspace() {
     );
   }, []);
 
-  const handleClearFiles = useCallback(() => {
-    setSelectedFiles([]);
+  const handleRemoveFile = useCallback((removedIndex: number) => {
+    setSelectedFiles((current) => current.filter((_, index) => index !== removedIndex));
   }, []);
 
   const handleNewConversation = useCallback(() => {
@@ -679,7 +677,6 @@ export function useTaskWorkspace() {
     canSend,
     copiedCopyKey,
     conversationStreamItems,
-    handleClearFiles,
     handleCopyLogs,
     handleCopyText,
     handleDownloadArtifact,
@@ -688,6 +685,7 @@ export function useTaskWorkspace() {
     handleOpenArtifact,
     handleDeleteConversation,
     handleRenameConversation,
+    handleRemoveFile,
     handleSelectConversation,
     handleStop,
     handleSubmit,
@@ -699,8 +697,6 @@ export function useTaskWorkspace() {
     modelDisplayOptions,
     noticeMessages,
     selectedModelRunnable,
-    selectedFileNames,
-    selectedFileSize,
     selectedFiles,
     selectedModelDisplay,
     setInput,

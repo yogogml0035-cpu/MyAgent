@@ -51,6 +51,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Any bug fix, feature, or other behavior change must pass live browser E2E acceptance against a running frontend and backend, and screenshot evidence must be stored under `frontend/e2e-playwright/`. Unit, integration, API, lint, or build checks do not replace this requirement.
 - Browser E2E follows a layered workflow: Chrome DevTools MCP may be used during development to explore local pages, console, network, DOM state, screenshots, and performance signals; once the flow is understood, stable expectations must be encoded as Playwright specs. CI and delivery gates only trust repeatable Playwright/test command results, not one-off DevTools observations.
 - `frontend/e2e-playwright/` must keep a `README.md` comment file that explains the directory purpose, screenshot evidence role, and redaction expectations. If the repo lacks an E2E entrypoint for the changed scenario, add it in the same change before considering the work complete.
+- Selected-file preview changes in the chat composer must preserve the `DESIGN.md` warm-canvas visual system: `--surface*`, `--hairline`, `--primary`, and compact neutral action controls. Multiple selected files render as separate filename-only cards, with per-file removal revealed on hover/focus. Browser acceptance for this path lives in `frontend/e2e-playwright/test_upload_preview_design.spec.mjs` and should verify desktop and narrow-screen card screenshots.
 - Repository-wide line-ending normalization is enforced with a root `.gitattributes`: text files default to LF, while PowerShell scripts use CRLF on checkout.
 - If the work includes pushing a branch, opening/updating a PR, or merging a PR, completion requires the GitHub remote checks to finish successfully. Local green runs are necessary but not sufficient while remote Actions are still pending or failing.
 
@@ -133,9 +134,11 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Frontend type generation and ignore rules: `frontend/package.json`, `frontend/.gitignore`, `frontend/tsconfig.json`
 - Frontend artifact state/API/security: `frontend/app/task-state.ts`, `frontend/lib/task-api.ts`, `frontend/hooks/use-task-workspace.ts`
 - Frontend model availability UI: `frontend/app/model-ui.ts`, `frontend/components/chat/ChatComposer.tsx`, `frontend/hooks/use-task-workspace.ts`
+- Frontend selected upload preview UI: `frontend/components/chat/ChatComposer.tsx`, `frontend/app/globals.css`
 - Local dev scripts: `scripts/start-dev-wsl.ps1`, `scripts/dev-terminal-runner.sh`, `scripts/stop-dev-ports.sh`
 - Browser E2E acceptance evidence: `frontend/e2e-playwright/README.md`
 - Resource upload harness E2E: `frontend/e2e-playwright/test_resource_upload_harness.spec.mjs`
+- Upload preview design E2E: `frontend/e2e-playwright/test_upload_preview_design.spec.mjs`
 - Repository line-ending policy: `.gitattributes`
 
 ## Related Test Paths
@@ -155,6 +158,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
   - `backend/tests/unit/session/`
 - Runtime contract tests: `backend/tests/unit/api/test_artifacts.py`, `backend/tests/unit/api/test_models.py`, `backend/tests/unit/api/test_tasks.py`, `backend/tests/unit/runner/test_core.py`, `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`
 - Resource execution tests: `backend/tests/unit/tools/test_resource_execution.py`, `backend/tests/unit/tools/test_registry.py`, `backend/tests/unit/runner/test_core.py`, `frontend/tests/upload/test_file_upload.test.ts`
+- Upload preview design tests: `frontend/tests/upload/test_upload_preview_design.test.ts`, `frontend/e2e-playwright/test_upload_preview_design.spec.mjs`
 - Integration tests: `backend/tests/integration/`
 - E2E tests: `backend/tests/e2e/test_streaming_e2e.py`
 - Real-service integration tests: `backend/tests/integration/test_postgres_memory_storage.py` (runs when Postgres/Qdrant/DashScope env is configured)
