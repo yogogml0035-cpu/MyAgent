@@ -243,6 +243,7 @@ export type TaskState = {
   status: TaskStatus;
   statusLabel: string;
   model?: string;
+  activeRunId?: string | null;
   runs: TaskRunRecord[];
   messages: ChatMessage[];
   logs: ExecutionLog[];
@@ -1169,6 +1170,7 @@ export function normalizeTaskState(value: unknown, fallbackTaskId: string): Task
     status,
     statusLabel: statusLabel(status, rawStatus),
     model: readOptionalString(record.model),
+    activeRunId: readOptionalString(record.active_run_id ?? record.activeRunId),
     runs: rawRuns.map(normalizeTaskRun),
     messages: rawMessages.map(normalizeMessage),
     logs: rawLogs.map(normalizeLog),

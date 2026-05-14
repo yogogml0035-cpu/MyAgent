@@ -9,7 +9,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 ## Business Rules
 
 - The platform uses `create_deep_agent()` from the `deepagents` SDK as the sole execution engine. It returns a `CompiledStateGraph` ready for `.invoke()` or `.stream()`.
-- `build_agent()` (in `agent/factory.py`) is the default builder; it passes `checkpointer`, `store`, and `max_concurrent_subagents` directly to `create_deep_agent()`.
+- `build_agent()` (in `agent/factory.py`) is the default builder; it passes supported runtime options such as `checkpointer` and `store` directly to `create_deep_agent()`. Do not document or expose config fields as runtime boundaries unless the current SDK call path consumes them.
 - `build_agent_with_middleware()` is an alternative builder that also assembles extra middleware (SkillsMiddleware, SubAgentMiddleware) via `agent/middleware.py` before calling `create_deep_agent()`. **Do NOT use `build_agent_with_middleware()` to add `SummarizationMiddleware`** — it is already auto-injected by `create_deep_agent()`.
 - `create_deep_agent()` auto-injects `TodoListMiddleware`, `FilesystemMiddleware`, `SummarizationMiddleware`, and `PatchToolCallsMiddleware`. Do NOT pass these via the `middleware` parameter — it causes duplicate middleware assertion errors.
 - Skills and SubAgents are passed via `create_deep_agent(skills=..., subagents=...)` keyword arguments, not via the middleware parameter.
@@ -121,6 +121,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - **Single-process runtime**: The platform uses an in-process runner even though task state is in Postgres. Multi-worker deployment will break cancellation and active-run ownership until a lease/queue design is added.
 - **Timeout enforcement**: `TaskRunner.start()` enforces `settings.agent_timeout_seconds` via `asyncio.timeout()`. If the deepagents SDK or LLM call hangs, the run is terminated after the configured timeout and a warning is logged.
 - **checkpointer/store passthrough**: `build_agent()` passes `checkpointer` and `store` to `create_deep_agent()`, but the current deployment does not use LangGraph-native persistence. Task lifecycle state is managed by Postgres TaskStorage; enabling LangGraph-native persistence would be a separate design.
+- **Configuration drift**: Do not add environment variables or README settings for DeepAgents runtime behavior unless a production call path reads and applies them. Unsupported SDK kwargs, such as a hypothetical subagent concurrency option, should not be presented as active safety boundaries.
 - **LangGraph checkpoint source pin**: `backend/pyproject.toml` pins `langgraph-checkpoint` through `tool.uv.sources` to the `langchain-ai/langgraph` Git commit `2e5025ec1ac8d435840ed4a972097de87aaa2eab` (`libs/checkpoint`). This is intentional: the latest PyPI stable release still emits the startup `LangChainPendingDeprecationWarning`, while that upstream commit already switched `jsonplus.py` to `Reviver(allowed_objects="core")`.
 - **LangGraph v2 stream format**: `agent.astream(..., version="v2")` returns chunks as dicts `{type, ns, data}`, NOT tuples `(namespace, mode, payload)`. Unpacking as a 3-tuple silently iterates dict keys (`"type"`, `"ns"`, `"data"`), causing `mode = "ns"` to be logged and all events dropped. The v2_adapter must check `isinstance(chunk, dict)` and extract `chunk["type"]` / `chunk["data"]`.
 - **Generated Next type files**: `next-env.d.ts` and route types are generated artifacts. Do not review or commit them as source changes; rerun `npm run typecheck` if they are missing locally.
@@ -178,7 +179,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
   - `backend/tests/unit/runner/test_memory.py`
   - `backend/tests/unit/security/test_scanner.py`
   - `backend/tests/unit/session/`
-- Runtime contract tests: `backend/tests/unit/api/test_artifacts.py`, `backend/tests/unit/api/test_models.py`, `backend/tests/unit/api/test_tasks.py`, `backend/tests/unit/runner/test_core.py`, `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`
+- Runtime contract tests: `backend/tests/unit/api/test_artifacts.py`, `backend/tests/unit/api/test_models.py`, `backend/tests/unit/api/test_tasks.py`, `backend/tests/unit/models/test_config_contract.py`, `backend/tests/unit/runner/test_core.py`, `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`
 - Conversation context/store tests: `backend/tests/unit/runner/test_conversation_context.py`, `backend/tests/unit/storage/test_agent_store.py`
 - Automatic title tests: `backend/tests/unit/models/test_task_titles.py`, `backend/tests/unit/api/test_tasks.py`, `backend/tests/unit/storage/test_storage.py`, `frontend/e2e-playwright/test_auto_title_generation.spec.mjs`
 - Resource execution tests: `backend/tests/unit/tools/test_resource_execution.py`, `backend/tests/unit/tools/test_registry.py`, `backend/tests/unit/runner/test_core.py`, `frontend/tests/upload/test_file_upload.test.ts`
@@ -280,7 +281,7 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 - SSE resilience regression if frontend reconnect loops become unbounded or backend SSE error payloads are ignored.
 - SSE auth bypass if EventSource query param support is removed without alternative auth.
 - Timeout breakage if `asyncio.timeout()` is removed without an alternative mechanism to prevent runaway agent runs.
-- Concurrency risk if `max_concurrent_subagents` is changed without testing subagent parallel execution limits.
+- Configuration drift risk if README, `Settings`, or knowledge packs expose a runtime knob that is not consumed by the current production call path or accepted by the upstream SDK.
 - SSE event loss if `last_event_id` in `streaming.py` is reverted to `""` — the empty string causes `read_events(after_id="")` to return nothing because `after_id is None` is `False` and no event matches `id == ""`. E2E test `test_sse_drains_remaining_events_before_done` guards this.
 - Event recovery regression if unknown `after_id` values return `[]`. Cursor misses must replay the full ordered stream so frontend deduplication can recover safely without losing terminal events.
 - Stream accumulation regression if `accumulateStreamedAnswer` is reverted to taking only the last delta — this would re-introduce the isolated punctuation card bug.

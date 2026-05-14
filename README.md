@@ -1,11 +1,11 @@
 # MyAgent
 
-MyAgent 是一个本地优先的 AI 智能体工作区，用于基于 Markdown 的招投标文档分析。项目由 FastAPI 后端和 Next.js 前端组成：后端负责管理任务、运行分析 worker、持久化证据并生成报告；前端负责文件上传、任务消息、用户友好的任务直播日志、AI 回复和产物查看。
+MyAgent 是一个本地优先的 AI 智能体工作区，用于上传 Markdown、JSON、TXT、Word 和 Excel 资源并执行招投标文档分析。项目由 FastAPI 后端和 Next.js 前端组成：后端负责管理任务、运行分析 worker、持久化证据并生成报告；前端负责文件上传、任务消息、用户友好的任务直播日志、AI 回复和产物查看。
 
 当前 V1 工作流聚焦于围标、串标类文档检查：
 
 1. 在本地启动后端和前端。
-2. 上传 Markdown 或 JSON 格式的招标、投标文档。
+2. 上传 Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 格式的招标、投标文档。
 3. 发送类似 `帮我检查是否有串标围标嫌疑` 的任务消息。
 4. 后端创建任务计划，运行分类 sub-agent，保存证据和结构化事件，并写入报告产物。
 5. 任务完成后，在前端打开 `report.html` 查看结果。
@@ -276,12 +276,12 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
 ## 使用流程
 
 1. 在前端创建或复用一个任务。
-2. 上传文件名为 `.md` 或 `.json` 的文档文件。
+2. 上传文件名为 `.md`、`.json`、`.txt`、`.docx`、`.xlsx` 或 `.xlsm` 的文档文件。
 3. 发送描述所需分析的用户消息。
 4. 查看任务直播中的工具调用、结果摘要、回答生成状态和产物创建过程。
 5. 任务完成后打开生成的产物，尤其是 `report.html`。
 
-如果没有上传文件，且消息看起来不像招投标文档分析请求，后端支持简单聊天。文档分析请求必须上传 Markdown 或 JSON 文件。
+如果没有上传文件，且消息看起来不像招投标文档分析请求，后端支持简单聊天。文档分析请求必须上传 Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件。
 
 ## API 概览
 
@@ -293,7 +293,7 @@ uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
 - `PATCH /api/tasks/{task_id}` 重命名历史会话标题。
 - `DELETE /api/tasks/{task_id}` 删除非运行中的历史会话及其本地任务文件。
 - `GET /api/tasks/{task_id}/events` 读取增量事件记录。
-- `POST /api/tasks/{task_id}/files` 上传 Markdown 或 JSON 文件。
+- `POST /api/tasks/{task_id}/files` 上传 Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件。
 - `POST /api/tasks/{task_id}/messages` 为任务启动或恢复工作。
 - `POST /api/tasks/{task_id}/cancel` 请求取消任务。
 - `GET /api/tasks/{task_id}/artifacts/{artifact_name}` 下载产物。
@@ -342,5 +342,5 @@ git diff --check
 
 - `403 任务 API 默认只允许本机访问。`：当前 README 只覆盖本机部署；请确认你访问的是 `http://localhost:3001` 或 `http://127.0.0.1:3001`，并且后端监听在本机 `8001` 端口。
 - `409 任务运行中不能上传文件`：停止当前任务或等待任务结束后再上传更多文件。
-- `开始文档分析任务前，请先上传 Markdown 或 JSON 文件。`：任务消息需要文档分析，但尚未上传 Markdown 或 JSON 文件。
-- `至少需要上传两份投标人文档才能进行对比。`：至少上传两个投标方 Markdown 或 JSON 文件以便进行比较。
+- `开始文档分析任务前，请先上传 Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件。`：任务消息需要文档分析，但尚未上传受支持的资源文件。
+- `至少需要上传两份投标人文档才能进行对比。`：至少上传两个投标方 Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件以便进行比较。

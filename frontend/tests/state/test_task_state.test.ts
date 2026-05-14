@@ -26,6 +26,7 @@ function baseState(overrides: Partial<TaskState> = {}): TaskState {
     id: "task-1",
     status: "running",
     statusLabel: "running",
+    activeRunId: null,
     runs: [],
     messages: [],
     logs: [],
@@ -50,6 +51,15 @@ test("normalizeTaskState preserves interrupted as an inactive known status", () 
   assert.equal(state.status, "interrupted");
   assert.equal(state.statusLabel, "interrupted");
   assert.equal(isTaskActive(state.status), false);
+});
+
+test("normalizeTaskState maps active run id from backend state", () => {
+  const state = normalizeTaskState(
+    { task_id: "task-1", status: "running", active_run_id: "run-1" },
+    "fallback",
+  );
+
+  assert.equal(state.activeRunId, "run-1");
 });
 
 test("mergeExecutionLogs appends only new events by id", () => {

@@ -36,6 +36,7 @@
 
 - 后端行为变化至少补或更新 API、任务生命周期、存储、权限、模型路由或分析服务测试。
 - 前端行为变化至少补或更新表单、状态转换器、URL 映射、产物请求或注册表测试。
+- 上传格式属于跨后端校验、前端提示、E2E、README 和知识包共享的公开契约；新增、删除或重命名受支持扩展名时，必须同步后端允许列表、前端文案/测试、`README.md`、`backend/README.md`、`frontend/README.md` 和相关 `asset/` 知识包，不能只改其中一处。
 - 测试替身不能弱化生产公开契约；`backend/tests/fakes.py` 中的 `InMemoryTaskStorage` 必须与生产 `PostgresTaskStorage` 的任务状态、run artifact、latest/legacy 产物解析、事件游标和上传资源边界保持一致，新增公开存储契约时必须同步 fake 和生产测试。
 - 本地或远程 CI 中任何会导致非零退出码的 warning 都按失败处理，不能以“只是告警”为由交付；当前前端 lint 明确使用 `eslint . --max-warnings=0`，因此 ESLint warning 与 error 一样会阻塞 CI。
 - 新增、重构或修复浏览器关键流程时，优先用 Chrome DevTools MCP 打开本地页面做探索性检查：确认页面路径、登录或任务流程、控制台错误、关键 network 请求/响应、截图和必要的性能信号；探路结果只用于理解和定位，不算可交付验收。
@@ -102,8 +103,8 @@
 
 ### 需求修改后的知识回写路由
 
-- 改后端任务 API、状态机、任务 runner、取消/中断、事件日志、产物下载、本地存储、前端任务创建、文件上传、消息提交、状态轮询、日志合并、产物 URL、模型提供方、环境变量、访问令牌、CORS、本地优先安全边界、上传/JSON 限制或测试布局：优先沉淀到 `asset/deepagents_platform_knowledge_pack.md`。
-- 改 Markdown/JSON 招投标文档分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：默认先更新 `asset/deepagents_platform_knowledge_pack.md` 中的相关稳定边界；若形成独立长期主题，再新增或更新 `asset/bid_analysis_workflow_knowledge_pack.md`。
+- 改后端任务 API、状态机、任务 runner、取消/中断、事件日志、产物下载、本地存储、前端任务创建、文件上传、消息提交、状态轮询、日志合并、产物 URL、模型提供方、环境变量、访问令牌、CORS、本地优先安全边界、上传格式/JSON 限制或测试布局：优先沉淀到 `asset/deepagents_platform_knowledge_pack.md`。
+- 改招投标资源分类、围串标分析类别、sub-agent 分派、证据归一化、报告生成：默认先更新 `asset/deepagents_platform_knowledge_pack.md` 中的相关稳定边界；若形成独立长期主题，再新增或更新 `asset/bid_analysis_workflow_knowledge_pack.md`。
 - 改本地启动脚本、WSL 端口清理或开发终端启动方式：通常只更新 `README.md` 和本文件的本地开发建议；只有脚本演进为跨需求复用的稳定子系统时，才单独新增知识包。
 - 上述文件名是建议路由；若已有更合适的知识包，以实际主题边界为准。
 - 若新规则会影响未来多数需求，再把它从知识包提升写回 `AGENTS.md`。

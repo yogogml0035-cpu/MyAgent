@@ -5,7 +5,7 @@ Local FastAPI backend for the v1 MyAgent workspace.
 ## Scope
 
 - Stores every substantive task in a local task directory.
-- Accepts Markdown and JSON uploads for the v1 document-analysis workflow.
+- Accepts Markdown, JSON, TXT, DOCX, XLSX, and XLSM uploads for the v1 document-analysis workflow.
 - Generates an execution plan before acting.
 - Runs category sub-agents concurrently with retry-on-failure behavior.
 - Persists tool-style events, sub-agent reports, evidence records, final Markdown summary, and an interactive HTML report.
@@ -55,11 +55,22 @@ Copy `.env.example` to `.env` and configure:
 - `DEEPSEEK_API_KEY`
 - `DEEPSEEK_BASE_URL`
 - `TAVILY_API_KEY`
+- `MYAGENT_DATABASE_URL`
+- `MYAGENT_QDRANT_URL`
+- `MYAGENT_QDRANT_COLLECTION`
+- `MYAGENT_DEFAULT_USER_ID`
+- `DASHSCOPE_API_KEY`
+- `MYAGENT_EMBEDDING_BASE_URL`
+- `MYAGENT_EMBEDDING_MODEL`
+- `MYAGENT_EMBEDDING_DIMENSIONS`
 - `MYAGENT_CORS_ORIGINS`
 - `MYAGENT_TASK_ROOT`
 
 The default model registry exposes `deepseek:deepseek-chat`.
 The backend loads `backend/.env` on startup before reading process environment values.
+Startup requires Postgres, Qdrant, and DashScope-compatible embedding configuration:
+missing `MYAGENT_DATABASE_URL`, `MYAGENT_QDRANT_URL`, or `DASHSCOPE_API_KEY`, or an
+unreachable external service, fails startup before the API serves requests.
 Current documentation assumes local same-machine access over `localhost` or `127.0.0.1`.
 Browser callers must use an origin listed in `MYAGENT_CORS_ORIGINS`, which defaults to
 `http://localhost:3001,http://127.0.0.1:3001`. The frontend can use

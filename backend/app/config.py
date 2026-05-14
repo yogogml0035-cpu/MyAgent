@@ -34,7 +34,6 @@ class Settings:
     # Agent defaults
     default_model: str = "deepseek:deepseek-chat"
     skills_dirs: tuple[str, ...] = ("./skills",)
-    max_concurrent_subagents: int = 3
     agent_timeout_seconds: float = 300.0
     fresh_tool_cache_seconds: int = 600
     recent_message_limit: int = 12
@@ -129,7 +128,6 @@ def load_settings() -> Settings:
         embedding_dimensions=read_int_env("MYAGENT_EMBEDDING_DIMENSIONS", 1024),
         default_model=os.getenv("MYAGENT_DEFAULT_MODEL", "deepseek:deepseek-chat"),
         skills_dirs=skills_dirs,
-        max_concurrent_subagents=read_int_env("MYAGENT_MAX_CONCURRENT_SUBAGENTS", 3),
         agent_timeout_seconds=read_float_env("MYAGENT_AGENT_TIMEOUT_SECONDS", 300.0),
         fresh_tool_cache_seconds=read_int_env("MYAGENT_FRESH_TOOL_CACHE_SECONDS", 600),
         recent_message_limit=read_int_env("MYAGENT_RECENT_MESSAGE_LIMIT", 12),
