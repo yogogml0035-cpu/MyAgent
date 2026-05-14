@@ -514,23 +514,25 @@ def _inspect_excel(path: Path) -> dict[str, Any]:
     from openpyxl import load_workbook
 
     workbook = load_workbook(path, data_only=True, read_only=False)
-    sheets = []
-    for sheet in workbook.worksheets:
-        sheets.append(
-            {
-                "name": sheet.title,
-                "max_row": sheet.max_row,
-                "max_column": sheet.max_column,
-                "merged_ranges": [str(item) for item in list(sheet.merged_cells.ranges)[:50]],
-                "header_guess": _guess_header(sheet),
-            }
-        )
-    workbook.close()
-    return {
-        "kind": "excel",
-        "sheet_count": len(sheets),
-        "sheets": sheets,
-    }
+    try:
+        sheets = []
+        for sheet in workbook.worksheets:
+            sheets.append(
+                {
+                    "name": sheet.title,
+                    "max_row": sheet.max_row,
+                    "max_column": sheet.max_column,
+                    "merged_ranges": [str(item) for item in list(sheet.merged_cells.ranges)[:50]],
+                    "header_guess": _guess_header(sheet),
+                }
+            )
+        return {
+            "kind": "excel",
+            "sheet_count": len(sheets),
+            "sheets": sheets,
+        }
+    finally:
+        workbook.close()
 
 
 def _read_excel_table(
