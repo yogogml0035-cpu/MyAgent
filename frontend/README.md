@@ -48,7 +48,7 @@ For every bug fix, feature, or other behavior change, run browser-side E2E again
 Expected backend endpoints:
 
 - `POST /api/tasks` creates a task.
-- `POST /api/tasks/{task_id}/files` uploads Markdown or JSON files as multipart form data.
+- `POST /api/tasks/{task_id}/files` uploads Markdown, JSON, TXT, DOCX, XLSX, or XLSM files as multipart form data.
 - `POST /api/tasks/{task_id}/messages` sends a user message.
 - `POST /api/tasks/{task_id}/cancel` stops a task.
 - `GET /api/tasks/{task_id}` fetches task state, messages, logs, and artifacts.

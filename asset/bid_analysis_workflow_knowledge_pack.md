@@ -18,7 +18,7 @@
 
 - 参考网页的核心不是“一次聊天生成答案”，而是一个可追踪的阶段流水线。每个 run 记录输入、阶段状态、事件、产物、模型配置、skill 引用和最终 compare 结果。
 - 创建分析时需要收集：一份招标文件、一份或多份投标文件、招标评审模型、投标评审模型、图像核验策略，以及 `tender-review`、`bid-review`、`pdf-image-check` 三类 skill 版本引用。
-- MyAgent 当前上传面只支持 `.md` 和 `.json`。引入 PDF 招投标比较时，应新增明确的 PDF ingest 子系统，不能把 PDF 字节静默塞进现有 Markdown/JSON 工作流。
+- MyAgent 当前通用资源上传面支持 `.md`、`.json`、`.txt`、`.docx`、`.xlsx` 和 `.xlsm`。引入 PDF 招投标比较时，应新增明确的 PDF ingest 子系统，不能把 PDF 字节静默塞进现有资源工具工作流。
 - PDF ingest 阶段应为每份文件生成安全中间产物：原始 layout JSON、canonical document JSON、页级 Markdown、可选页面图片、ingest manifest。公开 API 中只暴露 task/run 相对虚拟路径或 artifact ID。
 - 招标文件评审阶段应使用招标 canonical/page Markdown 和后端托管的 skill prompt，生成固定结构的招标评审骨架，覆盖资格、符合性、价格、技术、商务、响应/偏离和特殊规则等章节。
 - 投标文件评审阶段应一次只处理一个投标人，并以招标评审骨架为基线。它必须保持招标侧定义的条目顺序和边界，证据不足时保守标记，并输出固定结构 Markdown。
@@ -97,7 +97,7 @@ skill 引用建议结构：
 
 ## 边界条件
 
-- PDF 支持不能削弱现有 `.md`/`.json` 原子上传校验。PDF 应有独立的文件数量、单文件大小、总请求大小、页数和文件名限制。
+- PDF 支持不能削弱现有 `.md`、`.json`、`.txt`、`.docx`、`.xlsx` 和 `.xlsm` 原子上传校验。PDF 应有独立的文件数量、单文件大小、总请求大小、页数和文件名限制。
 - OCR/VLM/PDF 解析服务属于外部工具。原始响应、签名上传 URL、provider 凭据、绝对路径、全文正文不得进入 task API payload、前端 DOM、复制日志、知识包或测试夹具。
 - 公开产物可以包含 task/run 相对虚拟路径、artifact ID、文件名、页码、短摘录和 hash，不得包含本地私有根路径或第三方签名 URL。
 - Compare HTML 可以嵌入 evidence anchor ID 和短标签，但证据预览 JSON/图片必须通过 MyAgent 自己的鉴权 artifact endpoint 获取。
@@ -191,7 +191,7 @@ npm run build
 
 ## 回归风险
 
-- PDF ingest 会引入大文件、长耗时和外部 provider 失败模式，风险高于当前 Markdown/JSON 流程。
+- PDF ingest 会引入大文件、长耗时和外部 provider 失败模式，风险高于当前通用资源上传流程。
 - 证据预览图片即使不暴露文本，也可能展示敏感文档内容；preview endpoint 必须鉴权、run-scoped。
 - ingest manifest 容易泄漏第三方签名 URL 和本地路径，必须在事件和 API 输出前脱敏。
 - OCR/layout bbox 坐标会受缩放、旋转、裁剪和 DPI 影响，canonical JSON、渲染图片和 preview endpoint 必须使用一致坐标系。
