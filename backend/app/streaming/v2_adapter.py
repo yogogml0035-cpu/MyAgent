@@ -295,7 +295,11 @@ def _pop_accumulated_tool_call_events(
         return []
     events: list[StreamEvent] = []
     for key, accumulated in list(accumulators.items()):
-        event_data = _tool_call_event_data(accumulated, is_subgraph=is_subgraph)
+        event_data = _tool_call_event_data(
+            accumulated,
+            is_subgraph=is_subgraph,
+            allow_empty_args=True,
+        )
         if event_data is not None and event_data.get("id") == tool_call_id:
             signature = _tool_call_event_signature(event_data)
             if emitted_signatures.get(key) != signature:
@@ -336,12 +340,15 @@ def _tool_call_event_data(
     accumulated: AIMessageChunk,
     *,
     is_subgraph: bool,
+    allow_empty_args: bool = False,
 ) -> dict[str, Any] | None:
     chunk = dict(accumulated.tool_call_chunks[0]) if accumulated.tool_call_chunks else {}
     parsed_args, partial = _parse_tool_call_args(chunk.get("args"))
     parsed_call = dict(accumulated.tool_calls[0]) if accumulated.tool_calls else {}
     name = parsed_call.get("name") or chunk.get("name")
     if not isinstance(name, str) or not name:
+        return None
+    if _is_empty_tool_args_chunk(chunk.get("args")) and not allow_empty_args:
         return None
 
     index = chunk.get("index")
@@ -368,6 +375,10 @@ def _parse_tool_call_args(raw_args: Any) -> tuple[Any, bool]:
         except json.JSONDecodeError:
             return text, True
     return raw_args, False
+
+
+def _is_empty_tool_args_chunk(raw_args: Any) -> bool:
+    return isinstance(raw_args, str) and not raw_args.strip()
 
 
 def _extract_reasoning_content(chunk: AIMessageChunk) -> str:

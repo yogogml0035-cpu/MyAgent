@@ -45,12 +45,14 @@ export type VisibleLogPartition = {
 export type LiveLogDiagnostics = {
   records: unknown[];
   rawJson: string;
+  displayJson: string;
 };
 
 export type LiveToolLogItem = {
   id: string;
   kind: "tool";
   createdAt?: string;
+  completedAt?: string;
   level?: ExecutionLog["level"];
   title: string;
   toolName?: string;
@@ -174,6 +176,17 @@ export function formatTime(value?: string, variant: TimeVariant = "default") {
   }).format(date);
 }
 
+export function formatLiveLogItemTime(item: LiveLogItem) {
+  if (item.kind === "tool" && item.completedAt && item.completedAt !== item.createdAt) {
+    const start = formatTime(item.createdAt);
+    const end = formatTime(item.completedAt);
+    if (start && end && start !== "--:--:--" && end !== "--:--:--") {
+      return `${start}-${end}`;
+    }
+  }
+  return formatTime(item.createdAt);
+}
+
 export function buildLogClipboardText(logs: ExecutionLog[]) {
   return logs.map(formatRawLogRecordJson).join("\n") || "暂无日志";
 }
@@ -185,6 +198,7 @@ export function buildLiveLogItems(
   const items: LiveLogItem[] = [];
   const toolItemsById = new Map<string, LiveToolLogItem>();
   const pendingToolItemsByName = new Map<string, LiveToolLogItem[]>();
+  let hiddenDiagnosticLogs: ExecutionLog[] = [];
   let activeText = "";
   let activeCreatedAt: string | undefined;
   let activeDetails: LiveLogDiagnostics | undefined;
@@ -197,14 +211,42 @@ export function buildLiveLogItems(
   const answerStreamLogs: ExecutionLog[] = [];
   let thinkingStreamItem: LiveStatusLogItem | undefined;
   let thinkingStreamBaseDetails: LiveLogDiagnostics | undefined;
-  const thinkingStreamLogs: ExecutionLog[] = [];
+  let thinkingStreamLogs: ExecutionLog[] = [];
+
+  function consumeHiddenDiagnostics() {
+    if (hiddenDiagnosticLogs.length === 0) {
+      return undefined;
+    }
+    const details = buildLiveLogDiagnosticsFromRecords(
+      hiddenDiagnosticLogs.map(rawLogRecordForDiagnostics),
+    );
+    hiddenDiagnosticLogs = [];
+    return details;
+  }
+
+  function mergeHiddenDiagnostics(details: LiveLogDiagnostics) {
+    const hiddenDetails = consumeHiddenDiagnostics();
+    return hiddenDetails ? mergeLiveLogDiagnostics(hiddenDetails, details) : details;
+  }
+
+  function resetThinkingStreamSegment() {
+    thinkingStreamItem = undefined;
+    thinkingStreamBaseDetails = undefined;
+    thinkingStreamLogs = [];
+  }
+
+  function resetAnswerStreamSegment() {
+    answerStreamItem = undefined;
+    answerStreamBaseDetails = undefined;
+    answerStreamLogs.length = 0;
+  }
 
   function pushStatusItem(log: ExecutionLog, text: string) {
     const previous = items.at(-1);
-    const details = buildLogDiagnostics(log);
+    const details = mergeHiddenDiagnostics(buildLogDiagnostics(log));
     if (previous?.kind === "status" && previous.text === text && !previous.active) {
       previous.details = mergeLiveLogDiagnostics(previous.details, details);
-      previous.createdAt = log.createdAt || previous.createdAt;
+      previous.createdAt = previous.createdAt || log.createdAt;
       previous.level = log.level || previous.level;
       return previous;
     }
@@ -232,6 +274,7 @@ export function buildLiveLogItems(
         thinkingStreamItem = previous;
         thinkingStreamBaseDetails = previous.details;
       } else {
+        thinkingStreamBaseDetails = consumeHiddenDiagnostics();
         thinkingStreamItem = {
           id: `thinking:${log.id}`,
           kind: "status",
@@ -243,7 +286,7 @@ export function buildLiveLogItems(
         items.push(thinkingStreamItem);
       }
     }
-    thinkingStreamItem.createdAt = log.createdAt || thinkingStreamItem.createdAt;
+    thinkingStreamItem.createdAt = thinkingStreamItem.createdAt || log.createdAt;
     thinkingStreamItem.level = log.level || thinkingStreamItem.level;
     thinkingStreamItem.details = thinkingStreamBaseDetails
       ? mergeLiveLogDiagnostics(thinkingStreamBaseDetails, streamDetails)
@@ -267,6 +310,7 @@ export function buildLiveLogItems(
         answerStreamItem = previous;
         answerStreamBaseDetails = previous.details;
       } else {
+        answerStreamBaseDetails = consumeHiddenDiagnostics();
         answerStreamItem = {
           id: `answer:${log.id}`,
           kind: "status",
@@ -278,7 +322,7 @@ export function buildLiveLogItems(
         items.push(answerStreamItem);
       }
     }
-    answerStreamItem.createdAt = log.createdAt || answerStreamItem.createdAt;
+    answerStreamItem.createdAt = answerStreamItem.createdAt || log.createdAt;
     answerStreamItem.level = log.level || answerStreamItem.level;
     answerStreamItem.details = answerStreamBaseDetails
       ? mergeLiveLogDiagnostics(answerStreamBaseDetails, lastAnswerDetails)
@@ -294,6 +338,7 @@ export function buildLiveLogItems(
       existing.toolName = live.toolName || existing.toolName;
       existing.parameterText = formatLiveToolParameterSummary(live.parameterItems) || existing.parameterText;
       existing.details = mergeLiveLogDiagnostics(existing.details, buildLogDiagnostics(log));
+      refreshToolLogDisplayJson(existing);
       return;
     }
 
@@ -308,21 +353,32 @@ export function buildLiveLogItems(
       resultText: formatLiveToolPendingText(live.toolName),
       details: buildLogDiagnostics(log),
     };
+    refreshToolLogDisplayJson(toolItem);
     items.push(toolItem);
     rememberPendingToolItem(toolItemsById, pendingToolItemsByName, toolItem, live);
   }
 
   const orderedLogs = [...logs].sort(byLogOrder);
   orderedLogs.forEach((log, index) => {
+    if (log.type === "values_snapshot") {
+      hiddenDiagnosticLogs.push(log);
+      return;
+    }
+
     if (log.type === "assistant_answer_delta") {
+      resetThinkingStreamSegment();
       upsertAnswerStreamItem(log);
       return;
     }
 
     if (log.type === "assistant_thinking_delta") {
+      resetAnswerStreamSegment();
       upsertThinkingStreamItem(log);
       return;
     }
+
+    resetThinkingStreamSegment();
+    resetAnswerStreamSegment();
 
     // Detect cancel events to handle them specially
     if (log.type === "task_cancelled" || log.live?.resultStatus === "cancelled") {
@@ -351,21 +407,24 @@ export function buildLiveLogItems(
     }
 
     if (live.kind === "tool_result") {
-      const toolItem = takePendingToolItem(toolItemsById, pendingToolItemsByName, live);
-      if (toolItem) {
-        toolItem.createdAt = log.createdAt || toolItem.createdAt;
-        toolItem.level = log.level;
-        toolItem.title = formatLiveToolResultTitle(live);
-        toolItem.toolName = live.toolName || toolItem.toolName;
-        toolItem.resultStatus = live.resultStatus;
-        toolItem.resultText = formatLiveToolResultText(live);
-        toolItem.details = mergeLiveLogDiagnostics(toolItem.details, buildLogDiagnostics(log));
+      const existingToolItem = takePendingToolItem(toolItemsById, pendingToolItemsByName, live);
+      if (existingToolItem) {
+        existingToolItem.createdAt = existingToolItem.createdAt || log.createdAt;
+        existingToolItem.completedAt = log.createdAt || existingToolItem.completedAt;
+        existingToolItem.level = log.level;
+        existingToolItem.title = formatLiveToolResultTitle(live);
+        existingToolItem.toolName = live.toolName || existingToolItem.toolName;
+        existingToolItem.resultStatus = live.resultStatus;
+        existingToolItem.resultText = formatLiveToolResultText(live);
+        existingToolItem.details = mergeLiveLogDiagnostics(existingToolItem.details, buildLogDiagnostics(log));
+        refreshToolLogDisplayJson(existingToolItem);
         return;
       }
-      items.push({
+      const toolItem: LiveToolLogItem = {
         id: `tool-result:${live.toolCallId ?? log.id ?? index}`,
         kind: "tool",
         createdAt: log.createdAt,
+        completedAt: log.createdAt,
         level: log.level,
         title: formatLiveToolResultTitle(live),
         toolName: live.toolName,
@@ -373,7 +432,9 @@ export function buildLiveLogItems(
         resultStatus: live.resultStatus,
         resultText: formatLiveToolResultText(live),
         details: buildLogDiagnostics(log),
-      });
+      };
+      refreshToolLogDisplayJson(toolItem);
+      items.push(toolItem);
       return;
     }
 
@@ -393,24 +454,41 @@ export function buildLiveLogItems(
       pushStatusItem(log, text);
       return;
     }
-    pushStatusItem(log, text);
+    const statusItem = pushStatusItem(log, text);
     activeText = text;
     activeCreatedAt = log.createdAt;
-    activeDetails = buildLogDiagnostics(log);
+    activeDetails = statusItem.details;
   });
+
+  if (hiddenDiagnosticLogs.length > 0) {
+    const target = [...items].reverse().find((item) => item.kind === "status");
+    const hiddenDetails = consumeHiddenDiagnostics();
+    if (target && hiddenDetails) {
+      target.details = mergeLiveLogDiagnostics(target.details, hiddenDetails);
+    }
+  }
 
   if (isTaskActive(status)) {
     // If there's a cancel event, show cancelled status instead of active thinking
     if (hasCancelEvent) {
-      items.push({
-        id: "status:cancelled",
-        kind: "status",
-        createdAt: activeCreatedAt,
-        level: "warning",
-        text: "任务已取消",
-        active: false,
-        details: activeDetails ?? buildSyntheticLogDiagnostics("task_cancelled", "任务已取消"),
-      });
+      const lastItem = items.at(-1);
+      if (
+        lastItem?.kind === "status" &&
+        lastItem.text === "任务已取消" &&
+        lastItem.id.startsWith("status:")
+      ) {
+        lastItem.active = false;
+      } else {
+        items.push({
+          id: "status:cancelled",
+          kind: "status",
+          createdAt: activeCreatedAt,
+          level: "warning",
+          text: "任务已取消",
+          active: false,
+          details: activeDetails ?? buildSyntheticLogDiagnostics("task_cancelled", "任务已取消"),
+        });
+      }
     } else {
       const displayText = hasAnswerStream ? "AI正在生成结果" : activeText || "AI正在思考...";
       const lastItem = items.at(-1);
@@ -439,7 +517,7 @@ export function buildLiveLogItems(
 }
 
 export function formatLiveLogItemClipboardText(item: LiveLogItem) {
-  const time = formatTime(item.createdAt);
+  const time = formatLiveLogItemTime(item);
   if (item.kind === "tool") {
     return `${time} ${item.title} -> ${item.resultText}`;
   }
@@ -497,60 +575,46 @@ function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
 }
 
 function buildAnswerStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
-  const chunks = sortStreamLogs(logs, "answerStream")
-    .map((log) => ({
-      event_id: log.id,
-      stream_index: log.answerStream?.streamIndex ?? 0,
-      content: log.answerStream?.content ?? "",
-      created_at: log.createdAt,
-      is_subgraph: log.answerStream?.isSubgraph ?? false,
-    }))
-    .filter((chunk) => chunk.content);
-  const content = chunks.map((chunk) => chunk.content).join("");
+  const streamLogs = sortStreamLogs(logs, "answerStream")
+    .filter((log) => log.answerStream?.content);
+  const content = streamLogs.map((log) => log.answerStream?.content ?? "").join("");
+  const lastLog = streamLogs.at(-1);
   const payload = stripUndefinedValues({
     answer_stream: stripUndefinedValues({
-      schema_version: 1,
-      chunk_count: chunks.length,
-      accumulated_content: content,
-      chunks,
+      schema_version: lastLog?.answerStream?.schemaVersion ?? 1,
+      content,
     }),
   });
-  return buildLiveLogDiagnosticsFromRecord(
+  return buildLiveLogDiagnosticsFromRecords(
+    streamLogs.map(rawLogRecordForDiagnostics),
     stripUndefinedValues({
       type: "assistant_answer_delta",
       message: "AI正在生成结果",
-      created_at: chunks.at(-1)?.created_at,
-      run_id: logs.at(-1)?.runId,
+      created_at: lastLog?.createdAt,
+      run_id: lastLog?.runId,
       payload,
     }),
   );
 }
 
 function buildThinkingStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
-  const chunks = sortStreamLogs(logs, "thinkingStream")
-    .map((log) => ({
-      event_id: log.id,
-      stream_index: log.thinkingStream?.streamIndex ?? 0,
-      content: log.thinkingStream?.content ?? "",
-      created_at: log.createdAt,
-      is_subgraph: log.thinkingStream?.isSubgraph ?? false,
-    }))
-    .filter((chunk) => chunk.content);
-  const content = chunks.map((chunk) => chunk.content).join("");
+  const streamLogs = sortStreamLogs(logs, "thinkingStream")
+    .filter((log) => log.thinkingStream?.content);
+  const content = streamLogs.map((log) => log.thinkingStream?.content ?? "").join("");
+  const lastLog = streamLogs.at(-1);
   const payload = stripUndefinedValues({
     thinking_stream: stripUndefinedValues({
-      schema_version: 1,
-      chunk_count: chunks.length,
-      accumulated_content: content,
-      chunks,
+      schema_version: lastLog?.thinkingStream?.schemaVersion ?? 1,
+      content,
     }),
   });
-  return buildLiveLogDiagnosticsFromRecord(
+  return buildLiveLogDiagnosticsFromRecords(
+    streamLogs.map(rawLogRecordForDiagnostics),
     stripUndefinedValues({
       type: "assistant_thinking_delta",
       message: "AI正在思考...",
-      created_at: chunks.at(-1)?.created_at,
-      run_id: logs.at(-1)?.runId,
+      created_at: lastLog?.createdAt,
+      run_id: lastLog?.runId,
       payload,
     }),
   );
@@ -579,7 +643,14 @@ function mergeLiveLogDiagnostics(
   if (!first) {
     return second;
   }
-  return buildLiveLogDiagnosticsFromRecords([...first.records, ...second.records]);
+  const merged = buildLiveLogDiagnosticsFromRecords([...first.records, ...second.records]);
+  if (second.displayJson !== second.rawJson) {
+    return {
+      ...merged,
+      displayJson: second.displayJson,
+    };
+  }
+  return merged;
 }
 
 function rawLogRecordForDiagnostics(log: ExecutionLog) {
@@ -589,23 +660,304 @@ function rawLogRecordForDiagnostics(log: ExecutionLog) {
   return log.rawRecord ?? fallbackRawLogRecord(log);
 }
 
-function buildLiveLogDiagnosticsFromRecord(record: unknown): LiveLogDiagnostics {
-  return buildLiveLogDiagnosticsFromRecords([record]);
+function buildLiveLogDiagnosticsFromRecord(
+  record: unknown,
+  displayRecord?: unknown,
+): LiveLogDiagnostics {
+  return buildLiveLogDiagnosticsFromRecords([record], displayRecord);
 }
 
-function buildLiveLogDiagnosticsFromRecords(records: unknown[]): LiveLogDiagnostics {
+function buildLiveLogDiagnosticsFromRecords(
+  records: unknown[],
+  displayRecord?: unknown,
+): LiveLogDiagnostics {
   const normalizedRecords = records.map(normalizeDiagnosticRecord);
-  const displayRecord = normalizedRecords.length === 1
+  const rawDisplayRecord = normalizedRecords.length === 1
     ? normalizedRecords[0]
     : { records: normalizedRecords };
+  const normalizedDisplayRecord =
+    displayRecord === undefined ? rawDisplayRecord : normalizeDiagnosticRecord(displayRecord);
   return {
     records: normalizedRecords,
-    rawJson: JSON.stringify(displayRecord, null, 2) ?? "null",
+    rawJson: formatDiagnosticJson(rawDisplayRecord),
+    displayJson: formatDiagnosticJson(normalizedDisplayRecord),
   };
 }
 
 function normalizeDiagnosticRecord(record: unknown): unknown {
   return isPlainRecord(record) ? stripUndefinedValues(record) : record;
+}
+
+function formatDiagnosticJson(record: unknown) {
+  return JSON.stringify(record, null, 2) ?? "null";
+}
+
+function withLiveLogDisplayRecord(
+  details: LiveLogDiagnostics,
+  displayRecord: unknown,
+): LiveLogDiagnostics {
+  return {
+    ...details,
+    displayJson: formatDiagnosticJson(normalizeDiagnosticRecord(displayRecord)),
+  };
+}
+
+const TOOL_RESULT_DISPLAY_JSON_MAX_BYTES = 100 * 1024;
+const TOOL_RESULT_DISPLAY_PREVIEW_CHARS = 4096;
+
+function refreshToolLogDisplayJson(item: LiveToolLogItem) {
+  item.details = withLiveLogDisplayRecord(item.details, buildToolLifecycleDisplayRecord(item));
+}
+
+function buildToolLifecycleDisplayRecord(item: LiveToolLogItem) {
+  const toolCalls = item.details.records
+    .map(readToolCallDiagnostic)
+    .filter((call): call is NonNullable<ReturnType<typeof readToolCallDiagnostic>> => Boolean(call));
+  const toolResults = item.details.records
+    .map(readToolResultDiagnostic)
+    .filter((result): result is NonNullable<ReturnType<typeof readToolResultDiagnostic>> => Boolean(result));
+
+  const finalToolCall =
+    [...toolCalls].reverse().find((call) => call.partial !== true) ?? toolCalls.at(-1);
+  const finalToolResult = toolResults.at(-1);
+  const toolName = finalToolCall?.toolName ?? finalToolResult?.toolName ?? item.toolName;
+  const displayRecord = stripUndefinedValues({
+    type: "tool_lifecycle",
+    tool_name: toolName,
+    tool_label:
+      finalToolCall?.toolLabel ??
+      finalToolResult?.toolLabel ??
+      (toolName ? formatLiveToolLabel({ toolName } as NonNullable<ExecutionLog["live"]>) : undefined),
+    tool_call_id: finalToolCall?.toolCallId ?? finalToolResult?.toolCallId,
+    created_at: item.createdAt ?? finalToolCall?.createdAt,
+    completed_at: item.completedAt ?? finalToolResult?.createdAt,
+    tool_call: finalToolCall
+      ? stripUndefinedValues({
+          args: finalToolCall.args,
+        })
+      : undefined,
+    tool_result: finalToolResult
+      ? stripUndefinedValues({
+          status: finalToolResult.status,
+          content: finalToolResult.content,
+        })
+      : undefined,
+  });
+
+  return capToolLifecycleDisplayRecord(displayRecord);
+}
+
+function readToolCallDiagnostic(record: unknown) {
+  if (!isPlainRecord(record)) {
+    return undefined;
+  }
+  const payload = readDiagnosticPayload(record);
+  const live = readDiagnosticLive(record, payload);
+  const type = readDiagnosticString(record.type, payload.type);
+  const liveKind = readDiagnosticString(live?.kind);
+  if (type !== "tool_call" && liveKind !== "tool_call") {
+    return undefined;
+  }
+
+  const argsValue =
+    payload.args ??
+    payload.arguments ??
+    payload.raw_args ??
+    payload.rawArgs ??
+    payload.input ??
+    readDiagnosticParameterItems(live);
+
+  return {
+    createdAt: readDiagnosticString(record.created_at, record.createdAt),
+    toolName: readDiagnosticString(
+      payload.name,
+      payload.tool_name,
+      payload.toolName,
+      live?.tool_name,
+      live?.toolName,
+    ),
+    toolLabel: readDiagnosticString(payload.tool_label, payload.toolLabel, live?.tool_label, live?.toolLabel),
+    toolCallId: readDiagnosticString(
+      payload.id,
+      payload.tool_call_id,
+      payload.toolCallId,
+      live?.tool_call_id,
+      live?.toolCallId,
+    ),
+    partial: readDiagnosticBoolean(payload.partial, payload.is_partial, payload.isPartial),
+    args: normalizeToolArguments(argsValue),
+  };
+}
+
+function readToolResultDiagnostic(record: unknown) {
+  if (!isPlainRecord(record)) {
+    return undefined;
+  }
+  const payload = readDiagnosticPayload(record);
+  const live = readDiagnosticLive(record, payload);
+  const type = readDiagnosticString(record.type, payload.type);
+  const liveKind = readDiagnosticString(live?.kind);
+  if (type !== "tool_result" && liveKind !== "tool_result") {
+    return undefined;
+  }
+
+  const content = readDiagnosticPayloadValue(payload, ["content", "result", "output"]);
+
+  return {
+    createdAt: readDiagnosticString(record.created_at, record.createdAt),
+    toolName: readDiagnosticString(
+      payload.name,
+      payload.tool_name,
+      payload.toolName,
+      live?.tool_name,
+      live?.toolName,
+    ),
+    toolLabel: readDiagnosticString(payload.tool_label, payload.toolLabel, live?.tool_label, live?.toolLabel),
+    toolCallId: readDiagnosticString(
+      payload.id,
+      payload.tool_call_id,
+      payload.toolCallId,
+      live?.tool_call_id,
+      live?.toolCallId,
+    ),
+    status: readDiagnosticString(
+      payload.status,
+      payload.result_status,
+      payload.resultStatus,
+      live?.result_status,
+      live?.resultStatus,
+    ),
+    content: normalizeToolResultContent(content),
+  };
+}
+
+function readDiagnosticPayload(record: Record<string, unknown>) {
+  return isPlainRecord(record.payload) ? record.payload : {};
+}
+
+function readDiagnosticLive(
+  record: Record<string, unknown>,
+  payload: Record<string, unknown>,
+) {
+  if (isPlainRecord(payload.live)) {
+    return payload.live;
+  }
+  return isPlainRecord(record.live) ? record.live : undefined;
+}
+
+function readDiagnosticString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readDiagnosticBoolean(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "boolean") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readDiagnosticPayloadValue(
+  payload: Record<string, unknown>,
+  keys: string[],
+) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(payload, key)) {
+      return payload[key];
+    }
+  }
+  return undefined;
+}
+
+function readDiagnosticParameterItems(live: Record<string, unknown> | undefined) {
+  const parameterItems = live?.parameter_items ?? live?.parameterItems;
+  if (!Array.isArray(parameterItems)) {
+    return undefined;
+  }
+  const entries = parameterItems.flatMap((item) => {
+    if (!isPlainRecord(item) || typeof item.key !== "string") {
+      return [];
+    }
+    return [[item.key, item.value]] as const;
+  });
+  return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+}
+
+function normalizeToolArguments(value: unknown) {
+  if (typeof value === "string") {
+    return parseJsonStringIfPossible(value);
+  }
+  return value;
+}
+
+function normalizeToolResultContent(value: unknown) {
+  if (typeof value === "string") {
+    const parsed = parseJsonStringIfPossible(value);
+    return isPlainRecord(parsed) || Array.isArray(parsed) ? parsed : value;
+  }
+  return value;
+}
+
+function parseJsonStringIfPossible(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return value;
+  }
+  try {
+    return JSON.parse(trimmed) as unknown;
+  } catch {
+    return value;
+  }
+}
+
+function capToolLifecycleDisplayRecord(displayRecord: Record<string, unknown>) {
+  const serialized = formatDiagnosticJson(displayRecord);
+  if (getSerializedSizeBytes(serialized) <= TOOL_RESULT_DISPLAY_JSON_MAX_BYTES) {
+    return displayRecord;
+  }
+
+  const toolResult = isPlainRecord(displayRecord.tool_result) ? displayRecord.tool_result : undefined;
+  if (!toolResult || !Object.prototype.hasOwnProperty.call(toolResult, "content")) {
+    return {
+      ...displayRecord,
+      display_truncated: true,
+      display_truncation: {
+        original_serialized_size_bytes: getSerializedSizeBytes(serialized),
+        max_serialized_size_bytes: TOOL_RESULT_DISPLAY_JSON_MAX_BYTES,
+      },
+    };
+  }
+
+  const content = toolResult.content;
+  const contentSerialized =
+    typeof content === "string" ? content : formatDiagnosticJson(content);
+  const truncatedResult = stripUndefinedValues({
+    ...toolResult,
+    content: {
+      truncated: true,
+      preview: contentSerialized.slice(0, TOOL_RESULT_DISPLAY_PREVIEW_CHARS),
+    },
+    content_truncated: true,
+    content_truncation: {
+      original_serialized_size_bytes: getSerializedSizeBytes(contentSerialized),
+      max_serialized_size_bytes: TOOL_RESULT_DISPLAY_JSON_MAX_BYTES,
+    },
+  });
+
+  return stripUndefinedValues({
+    ...displayRecord,
+    tool_result: truncatedResult,
+  });
+}
+
+function getSerializedSizeBytes(value: string) {
+  return new TextEncoder().encode(value).length;
 }
 
 function rememberPendingToolItem(

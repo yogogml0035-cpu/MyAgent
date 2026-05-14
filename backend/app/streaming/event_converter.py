@@ -261,10 +261,12 @@ def _parameter_value(value: Any) -> dict[str, Any] | None:
 
 def _status_update_stage(node: str) -> tuple[str, str]:
     normalized = node.lower()
+    if "after_model" in normalized:
+        return "organizing_state", "模型输出已完成"
+    if normalized == "model" or normalized.endswith(":model"):
+        return "thinking", "AI正在思考..."
     if "before_agent" in normalized or "middleware" in normalized:
         return "preparing", "正在准备任务..."
-    if normalized == "model" or normalized.endswith(":model") or "after_model" in normalized:
-        return "thinking", "AI正在思考..."
     if normalized in {"tools", "tool"} or "tool" in normalized:
         return "organizing_state", "正在整理工具结果..."
     if "final" in normalized or "answer" in normalized:

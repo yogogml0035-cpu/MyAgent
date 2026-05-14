@@ -14,6 +14,7 @@ import {
   formatAgentActivityPhase,
   formatFileSize,
   formatLogLevelLabel,
+  formatLiveLogItemTime,
   formatMessagePanelStatus,
   formatMessagePanelTitle,
   formatReasoningPhaseLabel,
@@ -387,6 +388,457 @@ test("buildLiveLogItems keeps event seq order and merges tool call argument delt
     JSON.parse(toolItem.details.rawJson).records.map((record: { type: string }) => record.type),
     ["tool_call", "tool_call", "tool_result"],
   );
+  const toolDisplay = JSON.parse(toolItem.details.displayJson);
+  assert.equal(toolDisplay.type, "tool_lifecycle");
+  assert.equal(toolDisplay.tool_name, "tavily_search");
+  assert.equal(toolDisplay.tool_call_id, "tool-1");
+  assert.deepEqual(toolDisplay.tool_call.args, { query: "progress log" });
+  assert.equal(JSON.stringify(toolDisplay).includes("call-partial"), false);
+  assert.equal(toolItem.completedAt, "2026-04-27T08:01:00.000Z");
+});
+
+test("buildLiveLogItems projects tool rows as one lifecycle display JSON", () => {
+  const logs: Parameters<typeof buildLiveLogItems>[0] = [
+    {
+      id: "call-partial",
+      type: "tool_call",
+      title: "partial",
+      createdAt: "2026-05-14T08:00:00.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "selecting_tool",
+        toolName: "tavily_search",
+        toolLabel: "联网搜索",
+        toolCallId: "tool-json",
+        parameterItems: [{ key: "args", value: "{\"query\"" }],
+      },
+      rawRecord: {
+        type: "tool_call",
+        created_at: "2026-05-14T08:00:00.000Z",
+        payload: {
+          id: "tool-json",
+          name: "tavily_search",
+          args: "{\"query\"",
+          partial: true,
+          live: {
+            kind: "tool_call",
+            tool_name: "tavily_search",
+            tool_label: "联网搜索",
+            tool_call_id: "tool-json",
+          },
+        },
+      },
+    },
+    {
+      id: "call-final",
+      type: "tool_call",
+      title: "final",
+      createdAt: "2026-05-14T08:00:01.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "using_tool",
+        toolName: "tavily_search",
+        toolLabel: "联网搜索",
+        toolCallId: "tool-json",
+        parameterItems: [
+          { key: "query", value: "progress log" },
+          { key: "max_results", value: 2 },
+        ],
+      },
+      rawRecord: {
+        type: "tool_call",
+        created_at: "2026-05-14T08:00:01.000Z",
+        payload: {
+          id: "tool-json",
+          name: "tavily_search",
+          args: "{\"query\":\"progress log\",\"max_results\":2}",
+          partial: false,
+          live: {
+            kind: "tool_call",
+            tool_name: "tavily_search",
+            tool_label: "联网搜索",
+            tool_call_id: "tool-json",
+          },
+        },
+      },
+    },
+    {
+      id: "result",
+      type: "tool_result",
+      title: "result",
+      createdAt: "2026-05-14T08:00:02.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_result",
+        stage: "completed",
+        toolName: "tavily_search",
+        toolLabel: "联网搜索",
+        toolCallId: "tool-json",
+        resultStatus: "success",
+        parameterItems: [],
+      },
+      rawRecord: {
+        type: "tool_result",
+        created_at: "2026-05-14T08:00:02.000Z",
+        payload: {
+          id: "tool-json",
+          name: "tavily_search",
+          status: "success",
+          content: "{\"ok\":true,\"items\":[{\"title\":\"A\"}]}",
+          live: {
+            kind: "tool_result",
+            tool_name: "tavily_search",
+            tool_label: "联网搜索",
+            tool_call_id: "tool-json",
+            result_status: "success",
+          },
+        },
+      },
+    },
+  ];
+
+  const [toolItem] = buildLiveLogItems(logs, "complete");
+  assert.equal(toolItem?.kind, "tool");
+  if (toolItem?.kind !== "tool") {
+    throw new Error("expected a tool row");
+  }
+
+  const display = JSON.parse(toolItem.details.displayJson);
+  assert.equal(display.type, "tool_lifecycle");
+  assert.equal(display.tool_name, "tavily_search");
+  assert.equal(display.tool_label, "联网搜索");
+  assert.equal(display.tool_call_id, "tool-json");
+  assert.deepEqual(display.tool_call.args, { query: "progress log", max_results: 2 });
+  assert.equal(display.tool_result.status, "success");
+  assert.deepEqual(display.tool_result.content, { ok: true, items: [{ title: "A" }] });
+  assert.equal("records" in display, false);
+  assert.equal(toolItem.details.displayJson.includes("call-partial"), false);
+  assert.deepEqual(
+    JSON.parse(toolItem.details.rawJson).records.map((record: { type: string }) => record.type),
+    ["tool_call", "tool_call", "tool_result"],
+  );
+
+  const rawLines = buildLogClipboardText(logs).split("\n").map((line) => JSON.parse(line));
+  assert.equal(rawLines.length, 3);
+  assert.equal(rawLines[0].payload.partial, true);
+  assert.equal(rawLines[2].payload.content, "{\"ok\":true,\"items\":[{\"title\":\"A\"}]}");
+});
+
+test("buildLiveLogItems truncates oversized tool result display JSON only", () => {
+  const oversizedContent = `${"x".repeat(105 * 1024)}TAIL_MARKER`;
+  const [toolItem] = buildLiveLogItems([
+    {
+      id: "call",
+      type: "tool_call",
+      title: "call",
+      createdAt: "2026-05-14T08:01:00.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "using_tool",
+        toolName: "read_file",
+        toolCallId: "tool-large",
+        parameterItems: [{ key: "relative_path", value: "uploads/large.json" }],
+      },
+      rawRecord: {
+        type: "tool_call",
+        payload: {
+          id: "tool-large",
+          name: "read_file",
+          args: { relative_path: "uploads/large.json" },
+          partial: false,
+        },
+      },
+    },
+    {
+      id: "result",
+      type: "tool_result",
+      title: "result",
+      createdAt: "2026-05-14T08:01:01.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_result",
+        stage: "completed",
+        toolName: "read_file",
+        toolCallId: "tool-large",
+        resultStatus: "success",
+        parameterItems: [],
+      },
+      rawRecord: {
+        type: "tool_result",
+        payload: {
+          id: "tool-large",
+          name: "read_file",
+          status: "success",
+          content: oversizedContent,
+        },
+      },
+    },
+  ], "complete");
+
+  assert.equal(toolItem?.kind, "tool");
+  if (toolItem?.kind !== "tool") {
+    throw new Error("expected a tool row");
+  }
+  const display = JSON.parse(toolItem.details.displayJson);
+  assert.equal(display.type, "tool_lifecycle");
+  assert.equal(display.tool_result.content_truncated, true);
+  assert.equal(display.tool_result.content.truncated, true);
+  assert.equal(display.tool_result.content.preview.length, 4096);
+  assert.equal(display.tool_result.content_truncation.max_serialized_size_bytes, 100 * 1024);
+  assert.equal(toolItem.details.rawJson.includes("TAIL_MARKER"), true);
+  assert.equal(toolItem.details.displayJson.includes("TAIL_MARKER"), false);
+});
+
+test("buildLiveLogItems renders DeepAgents stream order with segmented thinking and terminal rows", () => {
+  const logs: Parameters<typeof buildLiveLogItems>[0] = [
+    {
+      id: "snapshot-before",
+      seq: 0,
+      type: "values_snapshot",
+      title: "State snapshot",
+      createdAt: "2026-05-14T05:15:23.000Z",
+      rawRecord: { id: "snapshot-before", type: "values_snapshot" },
+    },
+    {
+      id: "think-1",
+      seq: 1,
+      type: "assistant_thinking_delta",
+      title: "Need search.",
+      createdAt: "2026-05-14T05:15:25.000Z",
+      thinkingStream: {
+        schemaVersion: 1,
+        streamIndex: 1,
+        content: "Need search.",
+      },
+      rawRecord: { id: "think-1", type: "assistant_thinking_delta" },
+    },
+    {
+      id: "call-1-partial",
+      seq: 2,
+      type: "tool_call",
+      title: "Calling tool: tavily_search",
+      createdAt: "2026-05-14T05:15:25.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "selecting_tool",
+        toolName: "tavily_search",
+        toolCallId: "call-1",
+        parameterItems: [{ key: "args", value: "{\"query\"" }],
+      },
+      rawRecord: { id: "call-1-partial", type: "tool_call" },
+    },
+    {
+      id: "call-1-full",
+      seq: 3,
+      type: "tool_call",
+      title: "Calling tool: tavily_search",
+      createdAt: "2026-05-14T05:15:25.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "using_tool",
+        toolName: "tavily_search",
+        toolCallId: "call-1",
+        parameterItems: [{ key: "query", value: "特朗普 访华" }],
+      },
+      rawRecord: { id: "call-1-full", type: "tool_call" },
+    },
+    {
+      id: "result-1",
+      seq: 4,
+      type: "tool_result",
+      title: "Tool result (tavily_search): success",
+      createdAt: "2026-05-14T05:15:28.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_result",
+        stage: "completed",
+        toolName: "tavily_search",
+        toolCallId: "call-1",
+        parameterItems: [],
+        resultStatus: "success",
+        resultCount: 5,
+      },
+      rawRecord: { id: "result-1", type: "tool_result" },
+    },
+    {
+      id: "snapshot-after-tool",
+      seq: 5,
+      type: "values_snapshot",
+      title: "State snapshot",
+      createdAt: "2026-05-14T05:15:28.000Z",
+      rawRecord: { id: "snapshot-after-tool", type: "values_snapshot" },
+    },
+    {
+      id: "tools-status",
+      seq: 6,
+      type: "status_update",
+      title: "State update: tools",
+      createdAt: "2026-05-14T05:15:28.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "status",
+        stage: "organizing_state",
+        displayText: "正在整理工具结果...",
+        parameterItems: [],
+      },
+      rawRecord: { id: "tools-status", type: "status_update" },
+    },
+    {
+      id: "think-2",
+      seq: 7,
+      type: "assistant_thinking_delta",
+      title: "Need verify.",
+      createdAt: "2026-05-14T05:15:29.000Z",
+      thinkingStream: {
+        schemaVersion: 1,
+        streamIndex: 7,
+        content: "Need verify.",
+      },
+      rawRecord: { id: "think-2", type: "assistant_thinking_delta" },
+    },
+    {
+      id: "call-2",
+      seq: 8,
+      type: "tool_call",
+      title: "Calling tool: tavily_search",
+      createdAt: "2026-05-14T05:15:30.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_call",
+        stage: "using_tool",
+        toolName: "tavily_search",
+        toolCallId: "call-2",
+        parameterItems: [{ key: "query", value: "BBC 特朗普 访华" }],
+      },
+      rawRecord: { id: "call-2", type: "tool_call" },
+    },
+    {
+      id: "result-2",
+      seq: 9,
+      type: "tool_result",
+      title: "Tool result (tavily_search): success",
+      createdAt: "2026-05-14T05:15:33.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "tool_result",
+        stage: "completed",
+        toolName: "tavily_search",
+        toolCallId: "call-2",
+        parameterItems: [],
+        resultStatus: "success",
+        resultCount: 3,
+      },
+      rawRecord: { id: "result-2", type: "tool_result" },
+    },
+    {
+      id: "answer-1",
+      seq: 10,
+      type: "assistant_answer_delta",
+      title: "是的",
+      createdAt: "2026-05-14T05:15:38.000Z",
+      answerStream: {
+        schemaVersion: 1,
+        streamIndex: 10,
+        content: "是的",
+      },
+      rawRecord: { id: "answer-1", type: "assistant_answer_delta" },
+    },
+    {
+      id: "after-model",
+      seq: 11,
+      type: "status_update",
+      title: "State update: TodoListMiddleware.after_model",
+      createdAt: "2026-05-14T05:15:39.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "status",
+        stage: "organizing_state",
+        displayText: "模型输出已完成",
+        diagnosticLabel: "TodoListMiddleware.after_model",
+        parameterItems: [],
+      },
+      rawRecord: { id: "after-model", type: "status_update" },
+    },
+    {
+      id: "completed",
+      seq: 12,
+      type: "task_completed",
+      title: "任务已完成。",
+      createdAt: "2026-05-14T05:15:39.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "status",
+        stage: "completed",
+        displayText: "任务已完成",
+        parameterItems: [],
+      },
+      rawRecord: { id: "completed", type: "task_completed" },
+    },
+    {
+      id: "final",
+      seq: 13,
+      type: "final_answer",
+      title: "Final answer generated",
+      createdAt: "2026-05-14T05:15:39.000Z",
+      live: {
+        schemaVersion: 1,
+        kind: "answer_status",
+        stage: "completed",
+        displayText: "回答已完成",
+        parameterItems: [],
+      },
+      rawRecord: { id: "final", type: "final_answer" },
+    },
+  ];
+
+  const items = buildLiveLogItems([...logs].reverse(), "complete");
+  const labels = items.map((item) => (item.kind === "status" ? item.text : item.title));
+
+  assert.deepEqual(labels, [
+    "AI正在思考...",
+    "联网搜索已返回结果",
+    "正在整理工具结果...",
+    "AI正在思考...",
+    "联网搜索已返回结果",
+    "AI正在生成结果",
+    "模型输出已完成",
+    "任务已完成",
+    "回答已完成",
+  ]);
+  assert.equal(labels.includes("正在准备任务..."), false);
+  assert.equal(labels.includes("State snapshot"), false);
+  assert.equal(labels.at(-1), "回答已完成");
+
+  const firstTool = items[1];
+  assert.equal(firstTool?.kind, "tool");
+  if (firstTool?.kind !== "tool") {
+    throw new Error("expected first tool row");
+  }
+  assert.equal(firstTool.createdAt, "2026-05-14T05:15:25.000Z");
+  assert.equal(firstTool.completedAt, "2026-05-14T05:15:28.000Z");
+  assert.match(formatLiveLogItemTime(firstTool), /-/);
+  assert.deepEqual(
+    JSON.parse(firstTool.details.rawJson).records.map((record: { type: string }) => record.type),
+    ["tool_call", "tool_call", "tool_result"],
+  );
+
+  const firstThinking = items[0];
+  const secondThinking = items[3];
+  assert.equal(firstThinking?.kind, "status");
+  assert.equal(secondThinking?.kind, "status");
+  assert.equal(firstThinking?.details.rawJson.includes("Need verify."), false);
+  assert.equal(secondThinking?.details.displayJson.includes("Need verify."), true);
+  assert.equal(items[2]?.details.rawJson.includes("values_snapshot"), true);
+  assert.equal(firstThinking?.details.displayJson.includes("values_snapshot"), false);
+  assert.equal(
+    JSON.parse(firstThinking?.details.displayJson ?? "{}").payload.thinking_stream.content,
+    "Need search.",
+  );
 });
 
 test("buildLiveLogItems folds internal state updates into Chinese progress stages", () => {
@@ -561,9 +1013,13 @@ test("buildLiveLogItems aggregates assistant stream chunks into a generation row
     items.map((item) => (item.kind === "status" ? item.text : item.title)),
     ["AI正在生成结果", "回答已完成"],
   );
-  assert.equal(items[0]?.details.rawJson.includes('"accumulated_content"'), true);
-  assert.equal(items[0]?.details.rawJson.includes("第一段"), true);
-  assert.equal(items[0]?.details.rawJson.includes("第二段"), true);
+  const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
+  assert.equal(display.type, "assistant_answer_delta");
+  assert.equal(display.payload.answer_stream.content.includes("第一段"), true);
+  assert.equal(display.payload.answer_stream.content.includes("第二段"), true);
+  assert.equal("chunks" in display.payload.answer_stream, false);
+  assert.equal("chunk_count" in display.payload.answer_stream, false);
+  assert.equal("accumulated_content" in display.payload.answer_stream, false);
 });
 
 test("buildLiveLogItems shows answer stream deltas only inside generation diagnostics", () => {
@@ -616,8 +1072,12 @@ test("buildLiveLogItems shows answer stream deltas only inside generation diagno
   assert.equal("rows" in (items[0]?.details ?? {}), false);
   assert.equal(items[0]?.details.rawJson.includes("stream-punctuation"), true);
   assert.equal(items[0]?.details.rawJson.includes("stream-content"), true);
-  assert.equal(items[0]?.details.rawJson.includes('"accumulated_content": "。第一段"'), true);
-  assert.equal(items[0]?.details.rawJson.includes('"content_hidden": true'), false);
+  const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
+  assert.equal(display.payload.answer_stream.content, "。第一段");
+  assert.equal("chunks" in display.payload.answer_stream, false);
+  assert.equal("chunk_count" in display.payload.answer_stream, false);
+  assert.equal("accumulated_content" in display.payload.answer_stream, false);
+  assert.equal(items[0]?.details.displayJson.includes('"content_hidden": true'), false);
 });
 
 test("buildLiveLogItems shows thinking stream content inside thinking diagnostics", () => {
@@ -669,8 +1129,13 @@ test("buildLiveLogItems shows thinking stream content inside thinking diagnostic
   );
   assert.equal("rows" in (items[0]?.details ?? {}), false);
   assert.equal(items[0]?.details.rawJson.includes('"assistant_thinking_delta"'), true);
-  assert.equal(items[0]?.details.rawJson.includes('"accumulated_content": "先判断是否需要联网。再选择搜索工具。"'), true);
-  assert.equal(items[0]?.details.rawJson.includes("再选择搜索工具"), true);
+  const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
+  assert.equal(display.type, "assistant_thinking_delta");
+  assert.equal(display.payload.thinking_stream.content, "先判断是否需要联网。再选择搜索工具。");
+  assert.equal("chunks" in display.payload.thinking_stream, false);
+  assert.equal("chunk_count" in display.payload.thinking_stream, false);
+  assert.equal("accumulated_content" in display.payload.thinking_stream, false);
+  assert.equal(items[0]?.details.displayJson.includes("再选择搜索工具"), true);
 });
 
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
@@ -898,11 +1363,11 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
 
   assert.match(
     cssSource,
-    /\.liveToolCard strong\s*\{[\s\S]*?width: 100%;[\s\S]*?justify-self: stretch;[\s\S]*?word-break: break-all;/,
+    /\.liveToolCard strong\s*\{[\s\S]*?width: 100%;[\s\S]*?justify-self: stretch;[\s\S]*?text-overflow: ellipsis;[\s\S]*?white-space: nowrap;/,
   );
   assert.match(
     cssSource,
-    /\.liveStatusRow summary,\s*\n\.liveToolCard summary\s*\{[\s\S]*?grid-template-columns: 56px minmax\(0, 1fr\) auto auto 10px;/,
+    /\.liveStatusRow summary,\s*\n\.liveToolCard summary\s*\{[\s\S]*?grid-template-columns: 116px minmax\(0, 1fr\) auto auto 10px;/,
   );
   assert.match(
     cssSource,
@@ -918,10 +1383,11 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   );
   assert.match(
     conversationSource,
-    /<time>\{formatTime\(item\.createdAt\)\}<\/time>\s*<strong className="liveToolSummaryText">\s*<span>\{item\.title\}<\/span>/,
+    /<time>\{formatLiveLogItemTime\(item\)\}<\/time>\s*<strong className="liveToolSummaryText" title=\{toolSummaryLine\}>\s*\{toolSummaryLine\}\s*<\/strong>/,
   );
-  assert.equal(conversationSource.includes('className="liveToolSummaryMeta"'), true);
-  assert.equal(conversationSource.includes('className="liveToolPayload"'), true);
+  assert.equal(conversationSource.includes("formatToolSummaryLine"), true);
+  assert.equal(conversationSource.includes('className="liveToolSummaryMeta"'), false);
+  assert.equal(conversationSource.includes('className="liveToolPayload"'), false);
   assert.equal(conversationSource.includes("<article className={statusClassName}"), false);
   assert.match(
     conversationSource,
@@ -932,7 +1398,8 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("<dd>{row.value}</dd>"), false);
   assert.equal(conversationSource.includes("details.rows"), false);
   assert.equal(conversationSource.includes("<p>{item.resultText}</p>"), false);
-  assert.equal(conversationSource.includes("<pre>{details.rawJson}</pre>"), true);
+  assert.equal(conversationSource.includes("<pre>{details.displayJson}</pre>"), true);
+  assert.equal(conversationSource.includes("details.rawJson"), false);
   assert.equal(conversationSource.includes("liveLogCopyButton"), true);
   assert.equal(conversationSource.includes("event.preventDefault();"), true);
   assert.equal(conversationSource.includes("event.stopPropagation();"), true);
@@ -942,7 +1409,7 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   );
   assert.match(
     conversationSource,
-    /<strong className="liveToolSummaryText">[\s\S]*?<span>\{item\.title\}<\/span>[\s\S]*?\{renderLiveLogCopyButton\(item\.details, copyKey\)\}/,
+    /<strong className="liveToolSummaryText" title=\{toolSummaryLine\}>[\s\S]*?\{toolSummaryLine\}[\s\S]*?<\/strong>[\s\S]*?\{renderLiveLogCopyButton\(item\.details, copyKey\)\}/,
   );
   assert.equal(cssSource.includes(".liveLogDiagnosticRows"), false);
   assert.match(

@@ -144,6 +144,25 @@ class TestConvertStreamEvent:
         assert record.payload["live"]["stage"] == "thinking"
         assert record.payload["live"]["display_text"] == "AI正在思考..."
 
+    def test_after_model_middleware_status_is_not_preparing(self):
+        record = convert_stream_event(
+            {
+                "type": "state_update",
+                "data": {
+                    "node": "TodoListMiddleware.after_model",
+                    "state_keys": [],
+                    "is_subgraph": False,
+                },
+            },
+            "task-1",
+            "run-1",
+            seq=6,
+        )
+
+        assert record is not None
+        assert record.payload["live"]["stage"] == "organizing_state"
+        assert record.payload["live"]["display_text"] == "模型输出已完成"
+
     def test_answer_delta_behavior_is_unchanged(self):
         record = convert_stream_event(
             {"type": "message_chunk", "data": {"content": "。", "is_subgraph": False}},

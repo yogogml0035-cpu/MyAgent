@@ -9,6 +9,7 @@ import {
   type ConversationStreamItem,
   type LiveLogItem,
   buildLiveLogItems,
+  formatLiveLogItemTime,
   formatMessagePanelStatus,
   formatMessagePanelTitle,
   formatRunLogStatus,
@@ -376,6 +377,7 @@ export function TaskConversation({
   function renderLiveLogItem(item: LiveLogItem) {
     const copyKey = `log-detail:${item.id}`;
     if (item.kind === "tool") {
+      const toolSummaryLine = formatToolSummaryLine(item);
       const toolClassName = [
         "liveToolCard",
         item.resultStatus ? `liveToolCard-${item.resultStatus}` : "",
@@ -385,36 +387,12 @@ export function TaskConversation({
       return (
         <details className={toolClassName} key={item.id}>
           <summary>
-            <time>{formatTime(item.createdAt)}</time>
-            <strong className="liveToolSummaryText">
-              <span>{item.title}</span>
-              {item.toolName || item.parameterText ? (
-                <span className="liveToolSummaryMeta">
-                  {item.toolName ? <code>{item.toolName}</code> : null}
-                  {item.parameterText ? <code>{item.parameterText}</code> : null}
-                </span>
-              ) : null}
+            <time>{formatLiveLogItemTime(item)}</time>
+            <strong className="liveToolSummaryText" title={toolSummaryLine}>
+              {toolSummaryLine}
             </strong>
             {renderLiveLogCopyButton(item.details, copyKey)}
           </summary>
-          <div className="liveToolPayload" aria-label="工具调用摘要">
-            {item.toolName ? (
-              <div className="liveToolPayloadRow">
-                <span>工具</span>
-                <code>{item.toolName}</code>
-              </div>
-            ) : null}
-            {item.parameterText ? (
-              <div className="liveToolPayloadRow">
-                <span>参数</span>
-                <code>{item.parameterText}</code>
-              </div>
-            ) : null}
-            <div className="liveToolPayloadRow">
-              <span>结果</span>
-              <strong>{item.resultText}</strong>
-            </div>
-          </div>
           {renderLiveLogDiagnostics(item.details)}
         </details>
       );
@@ -466,11 +444,11 @@ export function TaskConversation({
       <button
         aria-label={isCopied ? "已复制此行日志JSON" : "复制此行日志JSON"}
         className={copyButtonClassName}
-        disabled={!details.rawJson}
+        disabled={!details.displayJson}
         onClick={(event: MouseEvent<HTMLButtonElement>) => {
           event.preventDefault();
           event.stopPropagation();
-          void onCopyText(details.rawJson, "复制此行日志失败，请检查浏览器权限。", copyKey);
+          void onCopyText(details.displayJson, "复制此行日志失败，请检查浏览器权限。", copyKey);
         }}
         title={isCopied ? "已复制" : "复制此行日志JSON"}
         type="button"
@@ -483,9 +461,13 @@ export function TaskConversation({
   function renderLiveLogDiagnostics(details: NonNullable<LiveLogItem["details"]>) {
     return (
       <div className="liveLogDiagnostics">
-        <pre>{details.rawJson}</pre>
+        <pre>{details.displayJson}</pre>
       </div>
     );
+  }
+
+  function formatToolSummaryLine(item: Extract<LiveLogItem, { kind: "tool" }>) {
+    return [item.title, item.toolName, item.parameterText].filter(Boolean).join(" · ");
   }
 
   return (

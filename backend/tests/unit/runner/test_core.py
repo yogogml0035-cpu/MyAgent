@@ -247,8 +247,13 @@ class TestTaskRunnerTerminalEvents:
         assert len(completed) == 1
         assert completed[0].run_id == run_id
         assert completed[0].level == "success"
+        assert completed[0].payload["live"]["display_text"] == "任务已完成"
+        assert completed[0].payload["live"]["stage"] == "completed"
         assert len(final_answers) == 1
         assert final_answers[0].run_id == run_id
+        assert final_answers[0].payload["content"] == "done"
+        assert final_answers[0].payload["live"]["kind"] == "answer_status"
+        assert final_answers[0].payload["live"]["display_text"] == "回答已完成"
 
     @pytest.mark.asyncio
     async def test_failed_background_run_writes_task_failed_event(
@@ -279,6 +284,8 @@ class TestTaskRunnerTerminalEvents:
         assert len(failed) == 1
         assert failed[0].run_id == run_id
         assert failed[0].payload["error"] == "boom"
+        assert failed[0].payload["live"]["stage"] == "failed"
+        assert failed[0].payload["live"]["display_text"] == "任务失败"
         assert storage.get_task(state.task_id).status == "failed"
 
     @pytest.mark.asyncio
@@ -418,4 +425,6 @@ class TestTaskRunnerTerminalEvents:
 
         assert len(cancelled) == 1
         assert cancelled[0].run_id == run_id
+        assert cancelled[0].payload["live"]["display_text"] == "任务已取消"
+        assert cancelled[0].payload["live"]["result_status"] == "cancelled"
         assert storage.get_task(state.task_id).status == "cancelled"

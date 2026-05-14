@@ -1333,7 +1333,7 @@ p {
 .liveStatusRow summary,
 .liveToolCard summary {
   display: grid;
-  grid-template-columns: 56px minmax(0, 1fr) auto auto 10px;
+  grid-template-columns: 116px minmax(0, 1fr) auto auto 10px;
   align-items: center;
   gap: 9px;
   cursor: pointer;
@@ -1453,35 +1453,14 @@ p {
   font-size: 12px;
   font-weight: 500;
   line-height: 1.45;
-  overflow-wrap: anywhere;
-  word-break: break-all;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  word-break: normal;
 }
 
 .liveToolCard .liveToolSummaryText {
-  display: grid;
-  gap: 3px;
-}
-
-.liveToolSummaryMeta {
-  display: flex;
-  min-width: 0;
-  flex-wrap: wrap;
-  gap: 5px;
-  color: var(--on-dark-soft);
-  font-family: var(--font-code);
-  font-size: 11px;
-  font-weight: 400;
-}
-
-.liveToolSummaryMeta code {
-  max-width: 100%;
-  overflow: hidden;
-  border: 1px solid rgba(250, 249, 245, 0.08);
-  border-radius: var(--radius-xs);
-  background: rgba(250, 249, 245, 0.05);
-  padding: 1px 5px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  display: block;
 }
 
 .liveToolCard time {
@@ -1489,37 +1468,6 @@ p {
   font-family: var(--font-code);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-}
-
-.liveToolPayload {
-  display: grid;
-  gap: 6px;
-  padding: 0 10px 10px 75px;
-}
-
-.liveToolPayloadRow {
-  display: grid;
-  grid-template-columns: 42px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-  color: var(--on-dark-soft);
-  font-size: 12px;
-  line-height: 1.45;
-}
-
-.liveToolPayloadRow > span {
-  color: rgba(160, 157, 150, 0.86);
-}
-
-.liveToolPayloadRow code,
-.liveToolPayloadRow strong {
-  min-width: 0;
-  margin: 0;
-  color: var(--on-dark);
-  font-family: var(--font-code);
-  font-size: 12px;
-  font-weight: 500;
-  overflow-wrap: anywhere;
 }
 
 .liveLogDiagnostics {

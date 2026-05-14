@@ -259,7 +259,11 @@ class TaskRunner:
                     append_message=append_message,
                     event_type="task_completed",
                     event_message="任务已完成。",
-                    event_payload={"previous_status": "running"},
+                    event_payload=_terminal_event_payload(
+                        "任务已完成",
+                        stage="completed",
+                        previous_status="running",
+                    ),
                     event_level="success",
                 )
 
@@ -271,7 +275,10 @@ class TaskRunner:
                         task_id,
                         "final_answer",
                         "Final answer generated",
-                        payload={"content": final_answer},
+                        payload={
+                            "content": final_answer,
+                            "live": _answer_completed_live_metadata(),
+                        },
                         run_id=run_id,
                         level="success",
                     )
@@ -292,7 +299,12 @@ class TaskRunner:
                     run_id=run_id,
                     event_type="task_failed",
                     event_message=error_message,
-                    event_payload={"error": error_message, "reason": "timeout"},
+                    event_payload=_terminal_event_payload(
+                        "任务失败",
+                        stage="failed",
+                        error=error_message,
+                        reason="timeout",
+                    ),
                     event_level="error",
                 )
             except asyncio.CancelledError:
@@ -303,7 +315,12 @@ class TaskRunner:
                     run_id=run_id,
                     event_type="task_cancelled",
                     event_message="任务已取消。",
-                    event_payload={"previous_status": "running"},
+                    event_payload=_terminal_event_payload(
+                        "任务已取消",
+                        stage="completed",
+                        result_status="cancelled",
+                        previous_status="running",
+                    ),
                     event_level="warning",
                 )
                 raise
@@ -317,7 +334,11 @@ class TaskRunner:
                     run_id=run_id,
                     event_type="task_failed",
                     event_message=error_message,
-                    event_payload={"error": error_message},
+                    event_payload=_terminal_event_payload(
+                        "任务失败",
+                        stage="failed",
+                        error=error_message,
+                    ),
                     event_level="error",
                 )
                 raise
@@ -437,6 +458,49 @@ def _make_runner_event(
         run_id=run_id,
         level=level,
     )
+
+
+def _terminal_event_payload(
+    display_text: str,
+    *,
+    stage: str,
+    result_status: str | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    payload = {**extra}
+    live = {
+        "schema_version": 1,
+        "kind": "status",
+        "stage": stage,
+        "display_text": display_text,
+        "diagnostic_label": "runner.terminal",
+        "parameter_items": _terminal_parameter_items(extra),
+    }
+    if result_status:
+        live["result_status"] = result_status
+    payload["live"] = live
+    return payload
+
+
+def _answer_completed_live_metadata() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "kind": "answer_status",
+        "stage": "completed",
+        "display_text": "回答已完成",
+        "diagnostic_label": "runner.final_answer",
+        "parameter_items": [],
+        "result_status": "success",
+    }
+
+
+def _terminal_parameter_items(extra: dict[str, Any]) -> list[dict[str, Any]]:
+    items: list[dict[str, Any]] = []
+    for key in ("previous_status", "reason"):
+        value = extra.get(key)
+        if isinstance(value, (str, int, float, bool)):
+            items.append({"key": key, "value": value})
+    return items
 
 
 def _call_memory_recall(memory_service: Any, message: str, user_id: str) -> str | None:

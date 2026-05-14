@@ -679,6 +679,60 @@ test("normalizeTaskState preserves bounded live metadata for user-facing logs", 
   assert.equal(JSON.stringify(state.logs).includes("SHOULD_NOT_RENDER"), false);
 });
 
+test("normalizeTaskState preserves terminal live metadata for task and answer completion", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      events: [
+        {
+          id: "completed",
+          type: "task_completed",
+          message: "任务已完成。",
+          payload: {
+            previous_status: "running",
+            live: {
+              schema_version: 1,
+              kind: "status",
+              stage: "completed",
+              display_text: "任务已完成",
+              diagnostic_label: "runner.terminal",
+              parameter_items: [{ key: "previous_status", value: "running" }],
+            },
+          },
+        },
+        {
+          id: "final",
+          type: "final_answer",
+          message: "Final answer generated",
+          payload: {
+            content: "最终回答",
+            live: {
+              schema_version: 1,
+              kind: "answer_status",
+              stage: "completed",
+              display_text: "回答已完成",
+              diagnostic_label: "runner.final_answer",
+              parameter_items: [],
+              result_status: "success",
+            },
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0].live?.kind, "status");
+  assert.equal(state.logs[0].live?.stage, "completed");
+  assert.equal(state.logs[0].live?.displayText, "任务已完成");
+  assert.equal(state.logs[0].live?.parameterItems[0]?.value, "running");
+  assert.equal(state.logs[1].live?.kind, "answer_status");
+  assert.equal(state.logs[1].live?.stage, "completed");
+  assert.equal(state.logs[1].live?.displayText, "回答已完成");
+  assert.equal(state.logs[1].live?.resultStatus, "success");
+});
+
 test("normalizeTaskState preserves raw records for diagnostics without enumerating them", () => {
   const state = normalizeTaskState(
     {

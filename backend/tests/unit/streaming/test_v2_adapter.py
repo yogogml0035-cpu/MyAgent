@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from typing import Any, cast
 
 import pytest
-from langchain_core.messages import AIMessageChunk
+from langchain_core.messages import AIMessageChunk, ToolMessage
 
 from app.streaming.v2_adapter import stream_agent
 
@@ -183,6 +183,68 @@ class TestStreamAgentSubgraphFiltering:
                     "args": {"query": "progress log"},
                     "raw_args": '{"query": "progress log"}',
                     "partial": False,
+                    "is_subgraph": False,
+                },
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_empty_tool_call_args_chunk_waits_for_final_call_before_result(self):
+        events = await _collect_stream_events(
+            [
+                {
+                    "type": "messages",
+                    "ns": [],
+                    "data": (
+                        AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "name": "list_files",
+                                    "args": "",
+                                    "id": "call-empty",
+                                    "index": 0,
+                                }
+                            ],
+                        ),
+                        {},
+                    ),
+                },
+                {
+                    "type": "messages",
+                    "ns": [],
+                    "data": (
+                        ToolMessage(
+                            content="[]",
+                            name="list_files",
+                            tool_call_id="call-empty",
+                            status="success",
+                        ),
+                        {},
+                    ),
+                },
+            ]
+        )
+
+        assert events == [
+            {
+                "type": "tool_call",
+                "data": {
+                    "id": "call-empty",
+                    "name": "list_files",
+                    "args": {},
+                    "raw_args": "",
+                    "partial": False,
+                    "is_subgraph": False,
+                },
+            },
+            {
+                "type": "tool_result",
+                "data": {
+                    "tool_call_id": "call-empty",
+                    "name": "list_files",
+                    "content": "[]",
+                    "status": "success",
                     "is_subgraph": False,
                 },
             },
