@@ -111,6 +111,44 @@ class TestLocalResourceExecutionAdapter:
         assert table["ok"] is True
         assert table["data"]["rows"] == [["名称", "金额"], ["A", 10]]
 
+    def test_inspect_xlsx_closes_workbook_when_structure_probe_fails(
+        self, tmp_path, monkeypatch
+    ):
+        task_id = "task-1"
+        upload_dir = _task_upload_dir(tmp_path, task_id)
+        (upload_dir / "data.xlsx").write_bytes(b"placeholder")
+        closed = {"value": False}
+
+        class FakeWorksheet:
+            title = "明细"
+            max_row = 2
+            max_column = 2
+
+            class merged_cells:
+                ranges = []
+
+        class FakeWorkbook:
+            worksheets = [FakeWorksheet()]
+
+            def close(self):
+                closed["value"] = True
+
+        def fail_header_guess(sheet):
+            assert sheet.title == "明细"
+            raise RuntimeError("header probe failed")
+
+        monkeypatch.setattr("openpyxl.load_workbook", lambda *args, **kwargs: FakeWorkbook())
+        monkeypatch.setattr("app.execution.resources._guess_header", fail_header_guess)
+        adapter = LocalResourceExecutionAdapter(task_id=task_id, workspace_root=tmp_path)
+
+        result = adapter.execute(
+            ExecutionRequest("inspect_resource", {"resource": "data.xlsx"})
+        ).to_payload()
+
+        assert result["ok"] is False
+        assert result["error"]["code"] == "execution_error"
+        assert closed["value"] is True
+
     def test_read_xlsx_invalid_range_is_non_retryable_and_closes_workbook(
         self, tmp_path, monkeypatch
     ):
