@@ -223,6 +223,7 @@ git diff --check
 - 文件系统工具（`read_file`、`write_file`、`list_files`）必须限定在当前任务工作区（`workspace_root / task_id`）内，不允许访问全局 sessions 根或其他任务目录。
 - `get_platform_tools(settings)` 接收全局 settings，但在 runner 调用时必须用 per-task workspace 覆盖默认的 `workspace_root`。
 - 任何新增文件系统工具都必须遵守同样的 per-task 作用域限制。
+- 资源读取工具打开 Word、Excel、文件流等外部句柄后，必须用 `finally` 或等价结构覆盖成功、输入错误和异常路径的关闭；用户输入错误（如非法 Excel range）必须返回结构化、不可重试的 tool error，不能落入通用 `execution_error` 并标成 retryable。
 
 ### SSE 防御性处理
 

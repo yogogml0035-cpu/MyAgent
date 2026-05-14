@@ -356,14 +356,12 @@ def _read_resource_table(unit: ProvisionedResourceUnit, input_data: dict[str, An
     limit = min(_positive_int(input_data.get("limit"), DEFAULT_TABLE_LIMIT), MAX_TABLE_LIMIT)
 
     if resource.format == "excel":
-        return ExecutionResult.success(
-            _read_excel_table(
-                resource,
-                sheet=input_data.get("sheet"),
-                range_ref=input_data.get("range_ref"),
-                start_row=_positive_int(input_data.get("start_row"), 1),
-                limit=limit,
-            )
+        return _read_excel_table(
+            resource,
+            sheet=input_data.get("sheet"),
+            range_ref=input_data.get("range_ref"),
+            start_row=_positive_int(input_data.get("start_row"), 1),
+            limit=limit,
         )
     if resource.format == "word":
         table_index = _positive_int(input_data.get("table_index"), 0, allow_zero=True)
@@ -542,52 +540,77 @@ def _read_excel_table(
     range_ref: Any,
     start_row: int,
     limit: int,
-) -> dict[str, Any]:
+) -> ExecutionResult:
     from openpyxl import load_workbook
     from openpyxl.utils import get_column_letter, range_boundaries
 
     workbook = load_workbook(resource.path, data_only=True, read_only=False)
-    sheet_name = str(sheet).strip() if sheet else workbook.sheetnames[0]
-    if sheet_name not in workbook.sheetnames:
+    try:
+        sheet_name = str(sheet).strip() if sheet else workbook.sheetnames[0]
+        if sheet_name not in workbook.sheetnames:
+            return ExecutionResult.success(
+                {
+                    "schema_version": 1,
+                    "resource": resource.to_manifest_item(),
+                    "sheet": sheet_name,
+                    "rows": [],
+                    "error": {"code": "sheet_not_found", "message": "Excel sheet 不存在"},
+                }
+            )
+        worksheet = workbook[sheet_name]
+        if range_ref:
+            try:
+                min_col, min_row, max_col, max_row = range_boundaries(str(range_ref))
+            except ValueError:
+                return ExecutionResult.failure(
+                    "invalid_range",
+                    "Excel range_ref 无效，请使用类似 A1:D20 的单元格范围",
+                )
+            if (
+                min_col is None
+                or min_row is None
+                or max_col is None
+                or max_row is None
+                or min_col < 1
+                or min_row < 1
+                or max_col < min_col
+                or max_row < min_row
+            ):
+                return ExecutionResult.failure(
+                    "invalid_range",
+                    "Excel range_ref 无效，请使用类似 A1:D20 的单元格范围",
+                )
+            max_row = min(max_row, min_row + limit - 1)
+        else:
+            min_row = start_row
+            max_row = min(worksheet.max_row, start_row + limit - 1)
+            min_col = 1
+            max_col = min(worksheet.max_column, MAX_TABLE_COLUMNS)
+        worksheet_max_row = worksheet.max_row
+        rows = []
+        for row in worksheet.iter_rows(
+            min_row=min_row,
+            max_row=max_row,
+            min_col=min_col,
+            max_col=max_col,
+            values_only=True,
+        ):
+            rows.append([_cell_value(value) for value in row])
+        return ExecutionResult.success(
+            {
+                "schema_version": 1,
+                "resource": resource.to_manifest_item(),
+                "sheet": sheet_name,
+                "range": f"{get_column_letter(min_col)}{min_row}:{get_column_letter(max_col)}{max_row}",
+                "start_row": min_row,
+                "row_count": len(rows),
+                "column_count": max_col - min_col + 1,
+                "rows": rows,
+                "truncated": max_row < worksheet_max_row if not range_ref else False,
+            }
+        )
+    finally:
         workbook.close()
-        return {
-            "schema_version": 1,
-            "resource": resource.to_manifest_item(),
-            "sheet": sheet_name,
-            "rows": [],
-            "error": {"code": "sheet_not_found", "message": "Excel sheet 不存在"},
-        }
-    worksheet = workbook[sheet_name]
-    if range_ref:
-        min_col, min_row, max_col, max_row = range_boundaries(str(range_ref))
-        max_row = min(max_row, min_row + limit - 1)
-    else:
-        min_row = start_row
-        max_row = min(worksheet.max_row, start_row + limit - 1)
-        min_col = 1
-        max_col = min(worksheet.max_column, MAX_TABLE_COLUMNS)
-    worksheet_max_row = worksheet.max_row
-    rows = []
-    for row in worksheet.iter_rows(
-        min_row=min_row,
-        max_row=max_row,
-        min_col=min_col,
-        max_col=max_col,
-        values_only=True,
-    ):
-        rows.append([_cell_value(value) for value in row])
-    workbook.close()
-    return {
-        "schema_version": 1,
-        "resource": resource.to_manifest_item(),
-        "sheet": sheet_name,
-        "range": f"{get_column_letter(min_col)}{min_row}:{get_column_letter(max_col)}{max_row}",
-        "start_row": min_row,
-        "row_count": len(rows),
-        "column_count": max_col - min_col + 1,
-        "rows": rows,
-        "truncated": max_row < worksheet_max_row if not range_ref else False,
-    }
 
 
 def _guess_header(sheet: Any) -> dict[str, Any] | None:

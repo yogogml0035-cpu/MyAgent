@@ -277,8 +277,10 @@ test("browser upload accepts document resources and renders harness tool progres
     path.join(fixtureDir, "config.json"),
     path.join(fixtureDir, "notes.txt"),
   ]);
-  await expect(page.getByText("通用文件资源")).toBeVisible();
-  await expect(page.getByText(/brief\.docx/)).toBeVisible();
+  const fileCard = page.getByTestId("selected-file-card");
+  await expect(fileCard).toBeVisible();
+  await expect(page.getByTestId("selected-file-item")).toHaveCount(4);
+  await expect(fileCard.getByText(/brief\.docx/)).toBeVisible();
   await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "02-files-selected.png") });
 
   await page.getByPlaceholder("尽管问...").fill("总结这些文件并指出关键差异");

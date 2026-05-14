@@ -111,6 +111,73 @@ class TestLocalResourceExecutionAdapter:
         assert table["ok"] is True
         assert table["data"]["rows"] == [["名称", "金额"], ["A", 10]]
 
+    def test_read_xlsx_invalid_range_is_non_retryable_and_closes_workbook(
+        self, tmp_path, monkeypatch
+    ):
+        task_id = "task-1"
+        upload_dir = _task_upload_dir(tmp_path, task_id)
+        (upload_dir / "data.xlsx").write_bytes(b"placeholder")
+        closed = {"value": False}
+
+        class FakeWorksheet:
+            max_row = 2
+            max_column = 2
+
+            def iter_rows(self, **kwargs):
+                raise AssertionError("invalid range should stop before reading rows")
+
+        class FakeWorkbook:
+            sheetnames = ["明细"]
+
+            def __getitem__(self, sheet_name):
+                assert sheet_name == "明细"
+                return FakeWorksheet()
+
+            def close(self):
+                closed["value"] = True
+
+        def fake_range_boundaries(range_ref):
+            assert range_ref == "not-a-range"
+            raise ValueError("invalid range")
+
+        monkeypatch.setattr("openpyxl.load_workbook", lambda *args, **kwargs: FakeWorkbook())
+        monkeypatch.setattr("openpyxl.utils.range_boundaries", fake_range_boundaries)
+        adapter = LocalResourceExecutionAdapter(task_id=task_id, workspace_root=tmp_path)
+
+        result = adapter.execute(
+            ExecutionRequest(
+                "read_resource_table",
+                {"resource": "data.xlsx", "sheet": "明细", "range_ref": "not-a-range"},
+            )
+        ).to_payload()
+
+        assert result == {
+            "ok": False,
+            "error": {
+                "code": "invalid_range",
+                "message": "Excel range_ref 无效，请使用类似 A1:D20 的单元格范围",
+                "retryable": False,
+            },
+        }
+        assert closed["value"] is True
+
+    def test_read_xlsx_incomplete_range_is_non_retryable(self, tmp_path):
+        task_id = "task-1"
+        upload_dir = _task_upload_dir(tmp_path, task_id)
+        _write_xlsx(upload_dir / "data.xlsx")
+        adapter = LocalResourceExecutionAdapter(task_id=task_id, workspace_root=tmp_path)
+
+        result = adapter.execute(
+            ExecutionRequest(
+                "read_resource_table",
+                {"resource": "data.xlsx", "sheet": "明细", "range_ref": "A:B"},
+            )
+        ).to_payload()
+
+        assert result["ok"] is False
+        assert result["error"]["code"] == "invalid_range"
+        assert result["error"]["retryable"] is False
+
     def test_missing_resource_returns_tool_call_error_payload(self, tmp_path):
         adapter = LocalResourceExecutionAdapter(task_id="task-1", workspace_root=tmp_path)
 
