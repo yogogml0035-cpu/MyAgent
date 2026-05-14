@@ -146,6 +146,60 @@ class TestCreateTask:
             "model": "deepseek:deepseek-chat",
         }
 
+    def test_create_task_with_message_starts_runner_when_auto_title_fails(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            deepseek_api_key="sk-test",
+        )
+
+        async def title_generator(message: str, model: str, settings: Settings) -> str:
+            raise RuntimeError("title provider failed")
+
+        client = TestClient(
+            create_app(
+                settings,
+                storage=InMemoryTaskStorage(settings.task_root),
+                title_generator=title_generator,
+            )
+        )
+        runner = cast(Any, client.app).state.runner
+        original_start = runner.start_background
+        started: dict[str, str] = {}
+
+        def mock_start_background(task_id: str, message: str, *, model: str, run_id: str) -> None:
+            started.update(
+                {
+                    "task_id": task_id,
+                    "message": message,
+                    "model": model,
+                    "run_id": run_id,
+                }
+            )
+
+        runner.start_background = mock_start_background
+        try:
+            response = client.post(
+                "/api/tasks",
+                json={
+                    "message": "标题生成失败也必须启动任务",
+                    "model": "deepseek:deepseek-chat",
+                },
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert response.status_code == 201
+        data = response.json()
+        assert data["status"] == "running"
+        assert data["title"] is None
+        assert started == {
+            "task_id": data["task_id"],
+            "message": "标题生成失败也必须启动任务",
+            "model": "deepseek:deepseek-chat",
+            "run_id": data["active_run_id"],
+        }
+
 
 class TestGetTask:
     def test_get_idle_task_returns_state(self, create_idle_task, app_client):
@@ -354,6 +408,52 @@ class TestSendMessage:
         assert response.json()["title"] == "模型会话名"
         summaries = app_client.get("/api/tasks").json()
         assert summaries[0]["title"] == "模型会话名"
+
+    def test_send_message_starts_runner_when_auto_title_write_fails(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+        runner = app_client.app.state.runner
+        original_set_title = storage.set_task_title_if_empty
+        original_start = runner.start_background
+        started: dict[str, str] = {}
+
+        def fail_set_task_title_if_empty(task_id: str, title: str):
+            raise RuntimeError("title storage failed")
+
+        def mock_start_background(task_id: str, message: str, *, model: str, run_id: str) -> None:
+            started.update(
+                {
+                    "task_id": task_id,
+                    "message": message,
+                    "model": model,
+                    "run_id": run_id,
+                }
+            )
+
+        storage.set_task_title_if_empty = fail_set_task_title_if_empty
+        runner.start_background = mock_start_background
+        try:
+            response = app_client.post(
+                f"/api/tasks/{task_id}/messages",
+                json={"message": "标题写入失败也必须启动任务", "model": "deepseek:deepseek-chat"},
+            )
+        finally:
+            storage.set_task_title_if_empty = original_set_title
+            runner.start_background = original_start
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "running"
+        assert data["title"] is None
+        assert started == {
+            "task_id": task_id,
+            "message": "标题写入失败也必须启动任务",
+            "model": "deepseek:deepseek-chat",
+            "run_id": data["active_run_id"],
+        }
 
     def test_send_message_keeps_manual_history_title(self, create_idle_task, app_client):
         created = create_idle_task()

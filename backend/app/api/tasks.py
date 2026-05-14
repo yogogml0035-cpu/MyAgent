@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, Request
 
 from app.config import Settings
@@ -16,6 +18,7 @@ from app.schemas import (
 )
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
+logger = logging.getLogger(__name__)
 
 
 def _storage(request: Request):
@@ -67,8 +70,11 @@ async def _set_auto_title_if_empty(
     settings: Settings,
 ) -> None:
     storage = _storage(request)
-    title = await _title_generator(request)(message, model, settings)
-    storage.set_task_title_if_empty(task_id, title)
+    try:
+        title = await _title_generator(request)(message, model, settings)
+        storage.set_task_title_if_empty(task_id, title)
+    except Exception:
+        logger.warning("Failed to set automatic task title for task %s", task_id, exc_info=True)
 
 
 @router.post("", response_model=TaskState, status_code=201)
