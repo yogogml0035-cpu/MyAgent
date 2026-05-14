@@ -36,6 +36,7 @@
 
 - 后端行为变化至少补或更新 API、任务生命周期、存储、权限、模型路由或分析服务测试。
 - 前端行为变化至少补或更新表单、状态转换器、URL 映射、产物请求或注册表测试。
+- 测试替身不能弱化生产公开契约；`backend/tests/fakes.py` 中的 `InMemoryTaskStorage` 必须与生产 `PostgresTaskStorage` 的任务状态、run artifact、latest/legacy 产物解析、事件游标和上传资源边界保持一致，新增公开存储契约时必须同步 fake 和生产测试。
 - 本地或远程 CI 中任何会导致非零退出码的 warning 都按失败处理，不能以“只是告警”为由交付；当前前端 lint 明确使用 `eslint . --max-warnings=0`，因此 ESLint warning 与 error 一样会阻塞 CI。
 - 新增、重构或修复浏览器关键流程时，优先用 Chrome DevTools MCP 打开本地页面做探索性检查：确认页面路径、登录或任务流程、控制台错误、关键 network 请求/响应、截图和必要的性能信号；探路结果只用于理解和定位，不算可交付验收。
 - 流程确认稳定后，必须把可重复判断写入 Playwright spec：包括成功后跳转 URL、关键角色/操作按钮、接口返回后的 UI 状态变化、错误提示、加载态、产物打开/下载和受影响的异步状态；Playwright 断言应表达用户可感知结果和必要的网络契约。
