@@ -9,9 +9,18 @@ from typing import Any, Literal
 
 from fastapi import UploadFile
 
-from app.schemas import ChatMessage, EventRecord, TaskRunRecord, TaskState, TaskStatus, TaskSummary
+from app.schemas import (
+    ArtifactRecord,
+    ChatMessage,
+    EventRecord,
+    TaskRunRecord,
+    TaskState,
+    TaskStatus,
+    TaskSummary,
+)
 from app.storage import (
     LEGACY_RUN_ID,
+    RUN_ARTIFACT_NAMES,
     SUPPORTED_UPLOAD_LABEL,
     TASK_FILE_WORKSPACE_DIRS,
     TYPE_MAP,
@@ -28,7 +37,6 @@ from app.storage import (
     generate_run_id,
     normalize_artifact_name,
     resource_ref_payload,
-    safe_filename,
     source_format_for_upload,
     summary_title,
     utc_now,
@@ -520,6 +528,8 @@ class InMemoryTaskStorage:
         path = self.run_artifact_dir(task_id, run_id) / name
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
+        if name in RUN_ARTIFACT_NAMES:
+            self.write_text(task_id, f"artifacts/{name}", text)
         self.record_run_artifact(task_id, run_id, name)
         return path
 
@@ -530,25 +540,99 @@ class InMemoryTaskStorage:
         return (self.task_dir(task_id) / "artifacts" / "runs" / run_id).resolve()
 
     def record_run_artifact(self, task_id: str, run_id: str, artifact_name: str, **_kwargs) -> None:
+        name = normalize_artifact_name(artifact_name)
+        validate_run_id(run_id)
         state = self.states[task_id]
         for run in state.runs:
-            if run.id == run_id and artifact_name not in run.artifact_names:
-                run.artifact_names.append(artifact_name)
-                run.artifact_names.sort()
+            if run.id == run_id:
+                if name not in run.artifact_names:
+                    run.artifact_names.append(name)
+                    run.artifact_names.sort()
+                return
+        raise ValueError("未找到运行记录")
+
+    def _top_level_artifact_names(self, task_id: str) -> list[str]:
+        artifact_dir = self.task_dir(task_id) / "artifacts"
+        if not artifact_dir.exists():
+            return []
+        return sorted(path.name for path in artifact_dir.iterdir() if path.is_file())
+
+    def _resolve_top_level_artifact_path(self, task_id: str, name: str) -> Path:
+        artifact_root = (self.task_dir(task_id) / "artifacts").resolve()
+        path = (artifact_root / name).resolve()
+        if artifact_root not in path.parents:
+            raise ValueError("产物路径超出任务根目录")
+        return path
+
+    def _resolve_run_artifact_path(
+        self, task_id: str, run: TaskRunRecord, artifact_name: str
+    ) -> Path:
+        if run.id == LEGACY_RUN_ID:
+            return self._resolve_top_level_artifact_path(task_id, artifact_name)
+        base = (self.task_dir(task_id) / run.artifact_base_path).resolve()
+        expected_base = self.run_artifact_dir(task_id, run.id)
+        if base != expected_base:
+            raise ValueError("运行产物路径超出任务根目录")
+        path = (base / artifact_name).resolve()
+        if base not in path.parents:
+            raise ValueError("产物路径超出本轮运行目录")
+        return path
+
+    @staticmethod
+    def _find_run(state: TaskState, run_id: str | None) -> TaskRunRecord | None:
+        if run_id is None:
+            return None
+        return next((run for run in state.runs if run.id == run_id), None)
 
     def resolve_artifact(self, task_id: str, artifact_name: str) -> Path:
         name = normalize_artifact_name(artifact_name)
-        path = self.task_dir(task_id) / "artifacts" / name
-        if path.exists():
-            return path
+        state = self.get_task(task_id, include_events=False)
+        for run in reversed(state.runs):
+            if run.status == "complete" and name in run.artifact_names:
+                return self._resolve_run_artifact_path(task_id, run, name)
+        legacy_path = self._resolve_top_level_artifact_path(task_id, name)
+        if legacy_path.exists():
+            return legacy_path
         raise FileNotFoundError(name)
 
     def resolve_run_artifact(self, task_id: str, run_id: str, artifact_name: str) -> Path:
         name = normalize_artifact_name(artifact_name)
-        path = self.run_artifact_dir(task_id, run_id) / name
-        if path.exists():
-            return path
-        raise FileNotFoundError(name)
+        validate_run_id(run_id)
+        state = self.get_task(task_id, include_events=False)
+        run = self._find_run(state, run_id)
+        if run is None or name not in run.artifact_names:
+            raise FileNotFoundError(name)
+        return self._resolve_run_artifact_path(task_id, run, name)
+
+    def _artifact_records_for_state(self, task_id: str, state: TaskState) -> list[ArtifactRecord]:
+        records: list[ArtifactRecord] = []
+        for run in state.runs:
+            for name in run.artifact_names:
+                url = (
+                    f"/api/tasks/{task_id}/artifacts/{name}"
+                    if run.id == LEGACY_RUN_ID
+                    else f"/api/tasks/{task_id}/runs/{run.id}/artifacts/{name}"
+                )
+                records.append(
+                    ArtifactRecord(
+                        id=f"{run.id}:{name}",
+                        name=name,
+                        type=TYPE_MAP.get(Path(name).suffix.lower(), "text"),
+                        url=url,
+                        run_id=run.id,
+                    )
+                )
+        if records:
+            return sorted(records, key=lambda record: (record.run_id or "", record.name))
+        return [
+            ArtifactRecord(
+                id=name,
+                name=name,
+                type=TYPE_MAP.get(Path(name).suffix.lower(), "text"),
+                url=f"/api/tasks/{task_id}/artifacts/{name}",
+            )
+            for name in self._top_level_artifact_names(task_id)
+        ]
 
     def _apply_update(
         self,
@@ -586,7 +670,7 @@ class InMemoryTaskStorage:
             run.needs_input = needs_input
             if artifact_names:
                 merged = set(run.artifact_names)
-                merged.update(safe_filename(name) for name in artifact_names)
+                merged.update(normalize_artifact_name(name) for name in artifact_names)
                 run.artifact_names = sorted(merged)
 
     def _task_relative_path(self, task_id: str, relative_path: str) -> Path:
@@ -594,18 +678,3 @@ class InMemoryTaskStorage:
         if self.task_dir(task_id) not in path.parents:
             raise ValueError("任务相对路径超出任务目录")
         return path
-
-    def _artifact_records_for_state(self, task_id: str, state: TaskState):
-        records = []
-        for run in state.runs:
-            for name in run.artifact_names:
-                records.append(
-                    {
-                        "id": f"{run.id}:{name}",
-                        "name": name,
-                        "type": TYPE_MAP.get(Path(name).suffix.lower(), "text"),
-                        "url": f"/api/tasks/{task_id}/runs/{run.id}/artifacts/{name}",
-                        "run_id": run.id,
-                    }
-                )
-        return records
