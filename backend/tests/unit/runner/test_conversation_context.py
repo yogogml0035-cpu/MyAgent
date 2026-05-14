@@ -125,3 +125,28 @@ def test_context_builder_injects_fresh_tool_cache_unless_refresh_requested(tmp_p
     )
 
     assert refresh_context.cached_tool_results == []
+
+
+def test_context_builder_omits_expired_tool_cache(tmp_path):
+    settings = Settings(
+        task_root=tmp_path / "tasks",
+        workspace_root=tmp_path / "tasks",
+        recent_message_limit=12,
+    )
+    storage = InMemoryTaskStorage(settings.task_root)
+    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+    storage.cache_tool_result(
+        state.task_id,
+        tool_name="tavily_search",
+        query="上海天气",
+        result_text="过期天气。",
+        ttl_seconds=-1,
+    )
+
+    context = ConversationContextBuilder(settings, storage).build(
+        task_id=state.task_id,
+        current_message="刚才查到的天气是什么？",
+    )
+
+    assert context.cached_tool_results == []
+    assert all("过期天气" not in str(message.content) for message in context.messages)

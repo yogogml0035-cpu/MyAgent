@@ -4,6 +4,7 @@ import copy
 import json
 import shutil
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Literal
 
@@ -285,12 +286,11 @@ class InMemoryTaskStorage:
         result_text: str,
         ttl_seconds: int,
     ) -> ToolResultCacheRecord:
-        from datetime import datetime, timedelta, timezone
-
         now_dt = datetime.now(timezone.utc).replace(microsecond=0)
         expires_dt = now_dt + timedelta(seconds=ttl_seconds)
+        cache_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"myagent-cache:{task_id}:{tool_name}:{query}"))
         record = ToolResultCacheRecord(
-            cache_id=f"cache-{uuid.uuid4().hex}",
+            cache_id=cache_id,
             task_id=task_id,
             tool_name=tool_name,
             query=query,
@@ -304,10 +304,17 @@ class InMemoryTaskStorage:
     def get_fresh_tool_cache(
         self, task_id: str, *, tool_name: str, query: str
     ) -> ToolResultCacheRecord | None:
-        return self.tool_caches.get(f"{task_id}:{tool_name}:{query}")
+        record = self.tool_caches.get(f"{task_id}:{tool_name}:{query}")
+        if record is None or not _is_fresh_tool_cache(record):
+            return None
+        return copy.deepcopy(record)
 
     def list_fresh_tool_cache(self, task_id: str, *, limit: int = 5) -> list[ToolResultCacheRecord]:
-        items = [record for record in self.tool_caches.values() if record.task_id == task_id]
+        items = [
+            record
+            for record in self.tool_caches.values()
+            if record.task_id == task_id and _is_fresh_tool_cache(record)
+        ]
         return copy.deepcopy(sorted(items, key=lambda record: record.created_at, reverse=True)[:limit])
 
     def put_agent_store_item(
@@ -413,7 +420,11 @@ class InMemoryTaskStorage:
         upload_dir = self.task_dir(task_id) / "uploads"
         if not upload_dir.exists():
             return []
-        return sorted(path for path in upload_dir.iterdir() if path.suffix.lower() in UPLOAD_FORMATS)
+        return sorted(
+            path
+            for path in upload_dir.iterdir()
+            if path.is_file() and path.suffix.lower() in UPLOAD_FORMATS
+        )
 
     def save_uploads(
         self,
@@ -678,3 +689,11 @@ class InMemoryTaskStorage:
         if self.task_dir(task_id) not in path.parents:
             raise ValueError("任务相对路径超出任务目录")
         return path
+
+
+def _is_fresh_tool_cache(record: ToolResultCacheRecord) -> bool:
+    return _parse_utc_timestamp(record.expires_at) > datetime.now(timezone.utc)
+
+
+def _parse_utc_timestamp(value: str) -> datetime:
+    return datetime.fromisoformat(value.replace("Z", "+00:00"))

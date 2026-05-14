@@ -109,6 +109,78 @@ class TestTaskStorageGetTask:
         assert fetched.status == "idle"
 
 
+class TestTaskStorageUploads:
+    def test_fake_list_uploads_ignores_supported_suffix_directories(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        upload_dir = storage.task_dir(state.task_id) / "uploads"
+        (upload_dir / "real.md").write_text("hello", encoding="utf-8")
+        (upload_dir / "directory.md").mkdir()
+
+        uploads = storage.list_uploads(state.task_id)
+
+        assert [path.name for path in uploads] == ["real.md"]
+
+
+class TestTaskStorageToolCache:
+    def test_fake_tool_cache_filters_expired_entries(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+
+        expired = storage.cache_tool_result(
+            state.task_id,
+            tool_name="tavily_search",
+            query="过期",
+            result_text="old",
+            ttl_seconds=-1,
+        )
+        fresh = storage.cache_tool_result(
+            state.task_id,
+            tool_name="tavily_search",
+            query="新鲜",
+            result_text="new",
+            ttl_seconds=600,
+        )
+
+        assert storage.get_fresh_tool_cache(
+            state.task_id, tool_name="tavily_search", query="过期"
+        ) is None
+        assert (
+            storage.get_fresh_tool_cache(
+                state.task_id, tool_name="tavily_search", query="新鲜"
+            )
+            == fresh
+        )
+        assert storage.list_fresh_tool_cache(state.task_id) == [fresh]
+        assert expired.cache_id != fresh.cache_id
+
+    def test_fake_tool_cache_id_matches_production_key(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+
+        first = storage.cache_tool_result(
+            state.task_id,
+            tool_name="tavily_search",
+            query="上海天气",
+            result_text="old",
+            ttl_seconds=600,
+        )
+        second = storage.cache_tool_result(
+            state.task_id,
+            tool_name="tavily_search",
+            query="上海天气",
+            result_text="new",
+            ttl_seconds=600,
+        )
+
+        assert first.cache_id == second.cache_id
+        cached = storage.get_fresh_tool_cache(
+            state.task_id, tool_name="tavily_search", query="上海天气"
+        )
+        assert cached is not None
+        assert cached.result_text == "new"
+
+
 class TestTaskStorageHistoryActions:
     def test_rename_task_sets_custom_title(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
