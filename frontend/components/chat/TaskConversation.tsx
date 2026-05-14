@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact, ChatMessage, ExecutionLog } from "../../app/task-state";
@@ -374,6 +374,7 @@ export function TaskConversation({
   }
 
   function renderLiveLogItem(item: LiveLogItem) {
+    const copyKey = `log-detail:${item.id}`;
     if (item.kind === "tool") {
       const toolClassName = [
         "liveToolCard",
@@ -385,9 +386,35 @@ export function TaskConversation({
         <details className={toolClassName} key={item.id}>
           <summary>
             <time>{formatTime(item.createdAt)}</time>
-            <strong>{item.title}</strong>
+            <strong className="liveToolSummaryText">
+              <span>{item.title}</span>
+              {item.toolName || item.parameterText ? (
+                <span className="liveToolSummaryMeta">
+                  {item.toolName ? <code>{item.toolName}</code> : null}
+                  {item.parameterText ? <code>{item.parameterText}</code> : null}
+                </span>
+              ) : null}
+            </strong>
+            {renderLiveLogCopyButton(item.details, copyKey)}
           </summary>
-          <p>{item.resultText}</p>
+          <div className="liveToolPayload" aria-label="工具调用摘要">
+            {item.toolName ? (
+              <div className="liveToolPayloadRow">
+                <span>工具</span>
+                <code>{item.toolName}</code>
+              </div>
+            ) : null}
+            {item.parameterText ? (
+              <div className="liveToolPayloadRow">
+                <span>参数</span>
+                <code>{item.parameterText}</code>
+              </div>
+            ) : null}
+            <div className="liveToolPayloadRow">
+              <span>结果</span>
+              <strong>{item.resultText}</strong>
+            </div>
+          </div>
           {renderLiveLogDiagnostics(item.details)}
         </details>
       );
@@ -411,6 +438,7 @@ export function TaskConversation({
             <span />
           </span>
         ) : null}
+        {renderLiveLogCopyButton(item.details, copyKey)}
       </>
     );
     return (
@@ -421,19 +449,40 @@ export function TaskConversation({
     );
   }
 
+  function renderLiveLogCopyButton(
+    details: NonNullable<LiveLogItem["details"]>,
+    copyKey: string,
+  ) {
+    const isCopied = copiedCopyKey === copyKey;
+    const copyButtonClassName = [
+      "copyButton",
+      "liveLogCopyButton",
+      isCopied ? "copyButton-copied" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
+    return (
+      <button
+        aria-label={isCopied ? "已复制此行日志JSON" : "复制此行日志JSON"}
+        className={copyButtonClassName}
+        disabled={!details.rawJson}
+        onClick={(event: MouseEvent<HTMLButtonElement>) => {
+          event.preventDefault();
+          event.stopPropagation();
+          void onCopyText(details.rawJson, "复制此行日志失败，请检查浏览器权限。", copyKey);
+        }}
+        title={isCopied ? "已复制" : "复制此行日志JSON"}
+        type="button"
+      >
+        <span aria-hidden="true" />
+      </button>
+    );
+  }
+
   function renderLiveLogDiagnostics(details: NonNullable<LiveLogItem["details"]>) {
     return (
       <div className="liveLogDiagnostics">
-        {details.rows.length > 0 ? (
-          <div className="liveLogDiagnosticRows">
-            {details.rows.map((row, index) => (
-              <div className="liveLogDiagnosticRow" key={`${row.label}:${index}`}>
-                <span className="liveLogDiagnosticLabel">{row.label}</span>
-                <span className="liveLogDiagnosticValue">{row.value}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
         <pre>{details.rawJson}</pre>
       </div>
     );

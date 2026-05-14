@@ -94,3 +94,96 @@ class TestStreamAgentSubgraphFiltering:
         )
 
         assert events == [{"type": "message_chunk", "data": {"content": "root"}}]
+
+    @pytest.mark.asyncio
+    async def test_provider_reasoning_content_emits_thinking_chunk(self):
+        events = await _collect_stream_events(
+            [
+                {
+                    "type": "messages",
+                    "ns": [],
+                    "data": (
+                        AIMessageChunk(
+                            content="",
+                            additional_kwargs={"reasoning_content": "先判断是否需要联网。"},
+                        ),
+                        {},
+                    ),
+                },
+            ]
+        )
+
+        assert events == [
+            {
+                "type": "thinking_chunk",
+                "data": {"content": "先判断是否需要联网。", "is_subgraph": False},
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_tool_call_chunks_are_accumulated_before_tool_result(self):
+        events = await _collect_stream_events(
+            [
+                {
+                    "type": "messages",
+                    "ns": [],
+                    "data": (
+                        AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "name": "tavily_search",
+                                    "args": '{"query"',
+                                    "id": "call-1",
+                                    "index": 0,
+                                }
+                            ],
+                        ),
+                        {},
+                    ),
+                },
+                {
+                    "type": "messages",
+                    "ns": [],
+                    "data": (
+                        AIMessageChunk(
+                            content="",
+                            tool_call_chunks=[
+                                {
+                                    "name": None,
+                                    "args": ': "progress log"}',
+                                    "id": None,
+                                    "index": 0,
+                                }
+                            ],
+                        ),
+                        {},
+                    ),
+                },
+            ]
+        )
+
+        assert events == [
+            {
+                "type": "tool_call",
+                "data": {
+                    "id": "call-1",
+                    "name": "tavily_search",
+                    "args": '{"query"',
+                    "raw_args": '{"query"',
+                    "partial": True,
+                    "is_subgraph": False,
+                },
+            },
+            {
+                "type": "tool_call",
+                "data": {
+                    "id": "call-1",
+                    "name": "tavily_search",
+                    "args": {"query": "progress log"},
+                    "raw_args": '{"query": "progress log"}',
+                    "partial": False,
+                    "is_subgraph": False,
+                },
+            },
+        ]

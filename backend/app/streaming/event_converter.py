@@ -11,6 +11,7 @@ from app.schemas import EventRecord
 
 # Mapping from adapter event type to EventRecord type string.
 _TYPE_MAP: dict[str, str] = {
+    "thinking_chunk": "assistant_thinking_delta",
     "message_chunk": "assistant_answer_delta",
     "tool_call": "tool_call",
     "tool_result": "tool_result",
@@ -20,6 +21,7 @@ _TYPE_MAP: dict[str, str] = {
 
 # Default level per event type.
 _LEVEL_MAP: dict[str, Literal["info", "success", "warning", "error"]] = {
+    "assistant_thinking_delta": "info",
     "assistant_answer_delta": "info",
     "tool_call": "info",
     "tool_result": "info",
@@ -53,7 +55,24 @@ def convert_stream_event(
     message = _build_message(record_type, data)
     level = _LEVEL_MAP.get(record_type, "info")
 
-    if record_type == "assistant_answer_delta":
+    if record_type == "assistant_thinking_delta":
+        payload = {
+            "schema_version": 1,
+            "stream_index": seq or 0,
+            "content": data.get("content", ""),
+            "is_subgraph": data.get("is_subgraph", False),
+            "live": {
+                "schema_version": 1,
+                "kind": "think",
+                "stage": "thinking",
+                "display_text": "AI正在思考...",
+                "diagnostic_label": "model.reasoning_content",
+                "parameter_items": [
+                    {"key": "is_subgraph", "value": bool(data.get("is_subgraph", False))},
+                ],
+            },
+        }
+    elif record_type == "assistant_answer_delta":
         payload = {
             "schema_version": 1,
             "stream_index": seq or 0,
@@ -82,6 +101,8 @@ def convert_stream_event(
 
 
 def _build_message(record_type: str, data: dict[str, Any]) -> str:
+    if record_type == "assistant_thinking_delta":
+        return data.get("content", "")
     if record_type == "assistant_answer_delta":
         return data.get("content", "")
     if record_type == "tool_call":
@@ -102,14 +123,16 @@ def _build_message(record_type: str, data: dict[str, Any]) -> str:
 def _build_live_metadata(record_type: str, data: dict[str, Any]) -> dict[str, Any]:
     if record_type == "tool_call":
         tool_name = _safe_string(data.get("name"), "tool")
+        partial = bool(data.get("partial", False))
         return {
             "schema_version": 1,
             "kind": "tool_call",
-            "stage": "using_tool",
+            "stage": "selecting_tool" if partial else "using_tool",
             "tool_name": tool_name,
             "tool_label": _tool_label(tool_name),
             "tool_call_id": _safe_string(data.get("id")),
             "parameter_items": _parameter_items(data.get("args")),
+            "diagnostic_label": "tool_call_delta" if partial else "tool_call",
         }
 
     if record_type == "tool_result":
@@ -238,12 +261,12 @@ def _parameter_value(value: Any) -> dict[str, Any] | None:
 
 def _status_update_stage(node: str) -> tuple[str, str]:
     normalized = node.lower()
+    if "before_agent" in normalized or "middleware" in normalized:
+        return "preparing", "正在准备任务..."
     if normalized == "model" or normalized.endswith(":model") or "after_model" in normalized:
         return "thinking", "AI正在思考..."
     if normalized in {"tools", "tool"} or "tool" in normalized:
-        return "using_tool", "正在调用工具..."
-    if "before_agent" in normalized or "middleware" in normalized:
-        return "preparing", "正在准备任务..."
+        return "organizing_state", "正在整理工具结果..."
     if "final" in normalized or "answer" in normalized:
         return "generating_answer", "AI正在生成结果"
     if "state" in normalized or "todo" in normalized or "values" in normalized:

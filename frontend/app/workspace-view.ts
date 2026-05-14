@@ -42,13 +42,8 @@ export type VisibleLogPartition = {
   hiddenReasoningCount: number;
 };
 
-export type LiveLogDetailRow = {
-  label: string;
-  value: string;
-};
-
 export type LiveLogDiagnostics = {
-  rows: LiveLogDetailRow[];
+  records: unknown[];
   rawJson: string;
 };
 
@@ -58,6 +53,8 @@ export type LiveToolLogItem = {
   createdAt?: string;
   level?: ExecutionLog["level"];
   title: string;
+  toolName?: string;
+  parameterText?: string;
   resultText: string;
   resultStatus?: NonNullable<ExecutionLog["live"]>["resultStatus"];
   details: LiveLogDiagnostics;
@@ -195,12 +192,20 @@ export function buildLiveLogItems(
   let hasAnswerStream = false;
   let lastAnswerCreatedAt: string | undefined;
   let lastAnswerDetails: LiveLogDiagnostics | undefined;
+  let answerStreamItem: LiveStatusLogItem | undefined;
+  let answerStreamBaseDetails: LiveLogDiagnostics | undefined;
+  const answerStreamLogs: ExecutionLog[] = [];
+  let thinkingStreamItem: LiveStatusLogItem | undefined;
+  let thinkingStreamBaseDetails: LiveLogDiagnostics | undefined;
+  const thinkingStreamLogs: ExecutionLog[] = [];
 
   function pushStatusItem(log: ExecutionLog, text: string) {
     const previous = items.at(-1);
     const details = buildLogDiagnostics(log);
     if (previous?.kind === "status" && previous.text === text && !previous.active) {
-      previous.details = details;
+      previous.details = mergeLiveLogDiagnostics(previous.details, details);
+      previous.createdAt = log.createdAt || previous.createdAt;
+      previous.level = log.level || previous.level;
       return previous;
     }
     const item: LiveStatusLogItem = {
@@ -215,13 +220,107 @@ export function buildLiveLogItems(
     return item;
   }
 
-  logs.forEach((log, index) => {
-    if (log.type === "assistant_answer_delta") {
-      if (log.answerStream?.content) {
-        hasAnswerStream = true;
-        lastAnswerCreatedAt = log.createdAt;
-        lastAnswerDetails = buildAnswerStreamDiagnostics(log);
+  function upsertThinkingStreamItem(log: ExecutionLog) {
+    if (!log.thinkingStream?.content) {
+      return;
+    }
+    thinkingStreamLogs.push(log);
+    const streamDetails = buildThinkingStreamDiagnostics(thinkingStreamLogs);
+    if (!thinkingStreamItem) {
+      const previous = items.at(-1);
+      if (previous?.kind === "status" && previous.text === "AI正在思考..." && !previous.active) {
+        thinkingStreamItem = previous;
+        thinkingStreamBaseDetails = previous.details;
+      } else {
+        thinkingStreamItem = {
+          id: `thinking:${log.id}`,
+          kind: "status",
+          createdAt: log.createdAt,
+          level: log.level,
+          text: "AI正在思考...",
+          details: streamDetails,
+        };
+        items.push(thinkingStreamItem);
       }
+    }
+    thinkingStreamItem.createdAt = log.createdAt || thinkingStreamItem.createdAt;
+    thinkingStreamItem.level = log.level || thinkingStreamItem.level;
+    thinkingStreamItem.details = thinkingStreamBaseDetails
+      ? mergeLiveLogDiagnostics(thinkingStreamBaseDetails, streamDetails)
+      : streamDetails;
+    activeText = "AI正在思考...";
+    activeCreatedAt = log.createdAt || activeCreatedAt;
+    activeDetails = thinkingStreamItem.details;
+  }
+
+  function upsertAnswerStreamItem(log: ExecutionLog) {
+    if (!log.answerStream?.content) {
+      return;
+    }
+    hasAnswerStream = true;
+    answerStreamLogs.push(log);
+    lastAnswerCreatedAt = log.createdAt;
+    lastAnswerDetails = buildAnswerStreamDiagnostics(answerStreamLogs);
+    if (!answerStreamItem) {
+      const previous = items.at(-1);
+      if (previous?.kind === "status" && previous.text === "AI正在生成结果" && !previous.active) {
+        answerStreamItem = previous;
+        answerStreamBaseDetails = previous.details;
+      } else {
+        answerStreamItem = {
+          id: `answer:${log.id}`,
+          kind: "status",
+          createdAt: log.createdAt,
+          level: log.level,
+          text: "AI正在生成结果",
+          details: lastAnswerDetails,
+        };
+        items.push(answerStreamItem);
+      }
+    }
+    answerStreamItem.createdAt = log.createdAt || answerStreamItem.createdAt;
+    answerStreamItem.level = log.level || answerStreamItem.level;
+    answerStreamItem.details = answerStreamBaseDetails
+      ? mergeLiveLogDiagnostics(answerStreamBaseDetails, lastAnswerDetails)
+      : lastAnswerDetails;
+  }
+
+  function upsertToolCallItem(log: ExecutionLog, live: NonNullable<ExecutionLog["live"]>) {
+    const existing = findPendingToolItem(toolItemsById, live);
+    if (existing) {
+      existing.createdAt = existing.createdAt || log.createdAt;
+      existing.level = log.level || existing.level;
+      existing.title = formatLiveToolCallTitle(live);
+      existing.toolName = live.toolName || existing.toolName;
+      existing.parameterText = formatLiveToolParameterSummary(live.parameterItems) || existing.parameterText;
+      existing.details = mergeLiveLogDiagnostics(existing.details, buildLogDiagnostics(log));
+      return;
+    }
+
+    const toolItem: LiveToolLogItem = {
+      id: `tool:${live.toolCallId ?? log.id}`,
+      kind: "tool",
+      createdAt: log.createdAt,
+      level: log.level,
+      title: formatLiveToolCallTitle(live),
+      toolName: live.toolName,
+      parameterText: formatLiveToolParameterSummary(live.parameterItems),
+      resultText: formatLiveToolPendingText(live.toolName),
+      details: buildLogDiagnostics(log),
+    };
+    items.push(toolItem);
+    rememberPendingToolItem(toolItemsById, pendingToolItemsByName, toolItem, live);
+  }
+
+  const orderedLogs = [...logs].sort(byLogOrder);
+  orderedLogs.forEach((log, index) => {
+    if (log.type === "assistant_answer_delta") {
+      upsertAnswerStreamItem(log);
+      return;
+    }
+
+    if (log.type === "assistant_thinking_delta") {
+      upsertThinkingStreamItem(log);
       return;
     }
 
@@ -247,17 +346,7 @@ export function buildLiveLogItems(
     }
 
     if (live.kind === "tool_call") {
-      const toolItem: LiveToolLogItem = {
-        id: `tool:${live.toolCallId ?? log.id}`,
-        kind: "tool",
-        createdAt: log.createdAt,
-        level: log.level,
-        title: formatLiveToolCallTitle(live),
-        resultText: formatLiveToolPendingText(live.toolName),
-        details: buildLogDiagnostics(log),
-      };
-      items.push(toolItem);
-      rememberPendingToolItem(toolItemsById, pendingToolItemsByName, toolItem, live);
+      upsertToolCallItem(log, live);
       return;
     }
 
@@ -267,6 +356,7 @@ export function buildLiveLogItems(
         toolItem.createdAt = log.createdAt || toolItem.createdAt;
         toolItem.level = log.level;
         toolItem.title = formatLiveToolResultTitle(live);
+        toolItem.toolName = live.toolName || toolItem.toolName;
         toolItem.resultStatus = live.resultStatus;
         toolItem.resultText = formatLiveToolResultText(live);
         toolItem.details = mergeLiveLogDiagnostics(toolItem.details, buildLogDiagnostics(log));
@@ -278,6 +368,8 @@ export function buildLiveLogItems(
         createdAt: log.createdAt,
         level: log.level,
         title: formatLiveToolResultTitle(live),
+        toolName: live.toolName,
+        parameterText: formatLiveToolParameterSummary(live.parameterItems),
         resultStatus: live.resultStatus,
         resultText: formatLiveToolResultText(live),
         details: buildLogDiagnostics(log),
@@ -326,7 +418,7 @@ export function buildLiveLogItems(
         lastItem.active = true;
         lastItem.createdAt = lastAnswerCreatedAt || activeCreatedAt || lastItem.createdAt;
         lastItem.level = "info";
-        lastItem.details = lastAnswerDetails
+        lastItem.details = lastAnswerDetails && lastItem !== answerStreamItem
           ? mergeLiveLogDiagnostics(lastItem.details, lastAnswerDetails)
           : lastItem.details;
       } else {
@@ -361,16 +453,10 @@ function formatRawLogRecordJson(log: ExecutionLog) {
   return JSON.stringify(log.rawRecord ?? fallbackRawLogRecord(log));
 }
 
-function formatPrettyRawLogRecord(log: ExecutionLog) {
-  if (log.memoryContext) {
-    return JSON.stringify(fallbackRawLogRecord(log), null, 2);
-  }
-  return JSON.stringify(log.rawRecord ?? fallbackRawLogRecord(log), null, 2);
-}
-
 function fallbackRawLogRecord(log: ExecutionLog) {
   return stripUndefinedValues({
     id: log.id,
+    seq: log.seq,
     type: log.type,
     message: log.title,
     detail: log.detail,
@@ -386,6 +472,7 @@ function fallbackRawLogRecord(log: ExecutionLog) {
       orchestration: log.orchestration,
       memory_context: log.memoryContext,
       answer_stream: log.answerStream,
+      thinking_stream: log.thinkingStream,
     },
   });
 }
@@ -406,107 +493,83 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
-  const live = log.live;
-  const rows: LiveLogDetailRow[] = [
-    { label: "事件类型", value: log.type || "unknown" },
-  ];
-
-  const originalMessage = readRawString(log.rawRecord?.message);
-  if (originalMessage) {
-    rows.push({ label: "原始消息", value: originalMessage });
-  }
-  if (live?.diagnosticLabel || live?.agentName) {
-    rows.push({ label: "节点", value: live.diagnosticLabel || live.agentName || "" });
-  }
-  if (live?.toolName) {
-    rows.push({ label: "工具", value: live.toolName });
-  }
-  const parameters = live?.parameterItems?.length
-    ? formatLiveToolParameters(live.parameterItems)
-    : "";
-  if (parameters) {
-    rows.push({ label: "参数", value: parameters });
-  }
-  if (live?.resultStatus) {
-    rows.push({ label: "结果状态", value: live.resultStatus });
-  }
-  if (log.memoryContext) {
-    rows.push(...formatMemoryContextRows(log.memoryContext));
-  }
-
-  return {
-    rows,
-    rawJson: formatPrettyRawLogRecord(log),
-  };
+  return buildLiveLogDiagnosticsFromRecord(rawLogRecordForDiagnostics(log));
 }
 
-function formatMemoryContextRows(memoryContext: NonNullable<ExecutionLog["memoryContext"]>) {
-  const rows: LiveLogDetailRow[] = [];
-  if (memoryContext.kind === "conversation") {
-    rows.push({ label: "上下文类型", value: "同一会话上下文" });
-    if (typeof memoryContext.recentMessageCount === "number") {
-      rows.push({ label: "最近消息", value: String(memoryContext.recentMessageCount) });
-    }
-    if (memoryContext.summaryPreview) {
-      rows.push({ label: "会话摘要", value: memoryContext.summaryPreview });
-    }
-    if (typeof memoryContext.cachedToolResultCount === "number") {
-      rows.push({ label: "工具缓存", value: String(memoryContext.cachedToolResultCount) });
-    }
-    if (memoryContext.memoryPreviews.length > 0) {
-      rows.push({ label: "缓存预览", value: memoryContext.memoryPreviews.join("；") });
-    }
-    return rows;
-  }
-
-  rows.push({ label: "上下文类型", value: "长期记忆" });
-  if (memoryContext.userId) {
-    rows.push({ label: "用户", value: memoryContext.userId });
-  }
-  if (typeof memoryContext.memoryCount === "number") {
-    rows.push({ label: "记忆数", value: String(memoryContext.memoryCount) });
-  }
-  if (memoryContext.memoryPreviews.length > 0) {
-    rows.push({ label: "记忆预览", value: memoryContext.memoryPreviews.join("；") });
-  }
-  return rows;
-}
-
-function buildAnswerStreamDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
+function buildAnswerStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
+  const chunks = sortStreamLogs(logs, "answerStream")
+    .map((log) => ({
+      event_id: log.id,
+      stream_index: log.answerStream?.streamIndex ?? 0,
+      content: log.answerStream?.content ?? "",
+      created_at: log.createdAt,
+      is_subgraph: log.answerStream?.isSubgraph ?? false,
+    }))
+    .filter((chunk) => chunk.content);
+  const content = chunks.map((chunk) => chunk.content).join("");
   const payload = stripUndefinedValues({
     answer_stream: stripUndefinedValues({
-      schema_version: log.answerStream?.schemaVersion,
-      stream_index: log.answerStream?.streamIndex,
-      content_hidden: true,
+      schema_version: 1,
+      chunk_count: chunks.length,
+      accumulated_content: content,
+      chunks,
     }),
   });
-  return {
-    rows: [
-      { label: "事件类型", value: "assistant_answer_delta" },
-      { label: "显示方式", value: "流式片段已折叠为生成状态" },
-    ],
-    rawJson: JSON.stringify(
-      stripUndefinedValues({
-        type: "assistant_answer_delta",
-        message: "AI正在生成结果",
-        created_at: log.createdAt,
-        run_id: log.runId,
-        payload,
-      }),
-      null,
-      2,
-    ),
-  };
+  return buildLiveLogDiagnosticsFromRecord(
+    stripUndefinedValues({
+      type: "assistant_answer_delta",
+      message: "AI正在生成结果",
+      created_at: chunks.at(-1)?.created_at,
+      run_id: logs.at(-1)?.runId,
+      payload,
+    }),
+  );
+}
+
+function buildThinkingStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
+  const chunks = sortStreamLogs(logs, "thinkingStream")
+    .map((log) => ({
+      event_id: log.id,
+      stream_index: log.thinkingStream?.streamIndex ?? 0,
+      content: log.thinkingStream?.content ?? "",
+      created_at: log.createdAt,
+      is_subgraph: log.thinkingStream?.isSubgraph ?? false,
+    }))
+    .filter((chunk) => chunk.content);
+  const content = chunks.map((chunk) => chunk.content).join("");
+  const payload = stripUndefinedValues({
+    thinking_stream: stripUndefinedValues({
+      schema_version: 1,
+      chunk_count: chunks.length,
+      accumulated_content: content,
+      chunks,
+    }),
+  });
+  return buildLiveLogDiagnosticsFromRecord(
+    stripUndefinedValues({
+      type: "assistant_thinking_delta",
+      message: "AI正在思考...",
+      created_at: chunks.at(-1)?.created_at,
+      run_id: logs.at(-1)?.runId,
+      payload,
+    }),
+  );
+}
+
+function sortStreamLogs(
+  logs: ExecutionLog[],
+  field: "answerStream" | "thinkingStream",
+) {
+  return [...logs].sort((left, right) => {
+    const leftIndex = left[field]?.streamIndex ?? 0;
+    const rightIndex = right[field]?.streamIndex ?? 0;
+    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+    return byLogOrder(left, right);
+  });
 }
 
 function buildSyntheticLogDiagnostics(type: string, message: string): LiveLogDiagnostics {
-  return {
-    rows: [
-      { label: "事件类型", value: type },
-      { label: "显示消息", value: message },
-    ],
-    rawJson: JSON.stringify({ type, message }, null, 2),
-  };
+  return buildLiveLogDiagnosticsFromRecord({ type, message });
 }
 
 function mergeLiveLogDiagnostics(
@@ -516,14 +579,33 @@ function mergeLiveLogDiagnostics(
   if (!first) {
     return second;
   }
+  return buildLiveLogDiagnosticsFromRecords([...first.records, ...second.records]);
+}
+
+function rawLogRecordForDiagnostics(log: ExecutionLog) {
+  if (log.memoryContext) {
+    return fallbackRawLogRecord(log);
+  }
+  return log.rawRecord ?? fallbackRawLogRecord(log);
+}
+
+function buildLiveLogDiagnosticsFromRecord(record: unknown): LiveLogDiagnostics {
+  return buildLiveLogDiagnosticsFromRecords([record]);
+}
+
+function buildLiveLogDiagnosticsFromRecords(records: unknown[]): LiveLogDiagnostics {
+  const normalizedRecords = records.map(normalizeDiagnosticRecord);
+  const displayRecord = normalizedRecords.length === 1
+    ? normalizedRecords[0]
+    : { records: normalizedRecords };
   return {
-    rows: [...first.rows, ...second.rows],
-    rawJson: `${first.rawJson}\n\n${second.rawJson}`,
+    records: normalizedRecords,
+    rawJson: JSON.stringify(displayRecord, null, 2) ?? "null",
   };
 }
 
-function readRawString(value: unknown) {
-  return typeof value === "string" ? value : "";
+function normalizeDiagnosticRecord(record: unknown): unknown {
+  return isPlainRecord(record) ? stripUndefinedValues(record) : record;
 }
 
 function rememberPendingToolItem(
@@ -563,6 +645,19 @@ function takePendingToolItem(
   return matched;
 }
 
+function findPendingToolItem(
+  toolItemsById: Map<string, LiveToolLogItem>,
+  live: NonNullable<ExecutionLog["live"]>,
+) {
+  if (live.toolCallId) {
+    const matchedById = toolItemsById.get(live.toolCallId);
+    if (matchedById) {
+      return matchedById;
+    }
+  }
+  return undefined;
+}
+
 function removePendingToolItemByReference(
   pendingToolItemsByName: Map<string, LiveToolLogItem[]>,
   toolItem: LiveToolLogItem,
@@ -585,7 +680,8 @@ function liveToolQueueKey(toolName?: string) {
 }
 
 function formatLiveToolCallTitle(live: NonNullable<ExecutionLog["live"]>) {
-  return `正在${formatLiveToolLabel(live)}`;
+  const label = formatLiveToolLabel(live);
+  return `${live.stage === "selecting_tool" ? "准备调用" : "调用"}${label === "调用工具" ? "工具" : label}`;
 }
 
 function formatLiveToolResultTitle(live: NonNullable<ExecutionLog["live"]>) {
@@ -625,17 +721,20 @@ function formatLiveToolLabel(live: NonNullable<ExecutionLog["live"]>) {
   return "调用工具";
 }
 
-function formatLiveToolParameters(
+function formatLiveToolParameterSummary(
   parameterItems: NonNullable<ExecutionLog["live"]>["parameterItems"] = [],
 ) {
   return parameterItems
-    .map((item) => `"${item.key}":${formatLiveParameterValue(item.value)}`)
-    .join(",");
+    .map((item) => {
+      const suffix = item.truncated ? "..." : "";
+      return `${item.key}=${formatLiveParameterValue(item.value)}${suffix}`;
+    })
+    .join("; ");
 }
 
 function formatLiveParameterValue(value: string | number | boolean) {
   if (typeof value === "string") {
-    return `"${value.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+    return value.replace(/\s+/g, " ").trim();
   }
   return String(value);
 }
@@ -746,6 +845,15 @@ function isTerminalLiveStage(stage: NonNullable<ExecutionLog["live"]>["stage"]) 
 }
 
 function formatLegacyLiveSummary(log: ExecutionLog) {
+  if (log.agentActivity) {
+    return formatAgentActivityPhase(log.agentActivity.phase);
+  }
+  if (log.reasoning) {
+    return "AI正在思考...";
+  }
+  if (log.type === "assistant_thinking_delta") {
+    return "AI正在思考...";
+  }
   if (log.type === "answer_generation_started") {
     return "AI正在生成结果";
   }
@@ -757,9 +865,6 @@ function formatLegacyLiveSummary(log: ExecutionLog) {
   }
   if (log.type === "task_failed") {
     return "处理遇到问题，正在调整处理方式";
-  }
-  if (log.type === "reasoning_trace") {
-    return "";
   }
   if (log.type === "assistant_answer_delta") {
     return "";
@@ -973,6 +1078,19 @@ function byCreatedAt<T extends { createdAt?: string }>(left: T, right: T) {
   return leftTime - rightTime;
 }
 
+function byLogOrder(left: ExecutionLog, right: ExecutionLog) {
+  if (typeof left.seq === "number" && typeof right.seq === "number" && left.seq !== right.seq) {
+    return left.seq - right.seq;
+  }
+  if (typeof left.seq === "number" && typeof right.seq !== "number") {
+    return -1;
+  }
+  if (typeof left.seq !== "number" && typeof right.seq === "number") {
+    return 1;
+  }
+  return byCreatedAt(left, right);
+}
+
 function artifactKeyForRun(runId: string, artifact: Artifact) {
   return `${runId}:${artifact.name}`;
 }
@@ -1003,7 +1121,7 @@ function accumulateStreamedAnswer(logs: ExecutionLog[]): string {
       const leftIndex = left.answerStream?.streamIndex ?? 0;
       const rightIndex = right.answerStream?.streamIndex ?? 0;
       if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-      return byCreatedAt(left, right);
+      return byLogOrder(left, right);
     });
   return streamLogs.map((log) => log.answerStream!.content).join("");
 }
@@ -1056,7 +1174,7 @@ export function buildRunActivityGroups(
           log.runId === run.id ||
           (runs.length === 1 && !log.runId && !isSetupFallbackLog(log)),
       )
-      .sort(byCreatedAt);
+      .sort(byLogOrder);
     const accumulatedAnswer = accumulateStreamedAnswer(runLogs);
     const lastStreamLog = runLogs
       .filter((log) => Boolean(log.answerStream?.content))
@@ -1064,7 +1182,7 @@ export function buildRunActivityGroups(
         const leftIndex = left.answerStream?.streamIndex ?? 0;
         const rightIndex = right.answerStream?.streamIndex ?? 0;
         if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-        return byCreatedAt(left, right);
+        return byLogOrder(left, right);
       })
       .at(-1);
 
@@ -1097,7 +1215,7 @@ export function buildRunActivityGroups(
       runId: "legacy",
       title: runs.length > 0 ? "历史日志" : "第 1 轮",
       status: "unknown",
-      logs: visibleFallbackLogs.sort(byCreatedAt),
+      logs: visibleFallbackLogs.sort(byLogOrder),
       artifacts: fallbackArtifacts.map((artifact) => artifactForRenderedRun("legacy", artifact)),
     });
   }

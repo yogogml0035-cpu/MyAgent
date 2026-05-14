@@ -234,10 +234,15 @@ test("runtime task contracts expose artifacts and upload errors in the browser",
   await expect(page.getByRole("button", { name: /新建会话/ })).toBeVisible();
   await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "01-history-loaded.png") });
 
-  await page.getByRole("button", { name: /DeepSeek/ }).click();
-  await expect(page.getByRole("option", { name: /GPT-4o.*未配置/ }).first()).toBeDisabled();
-  await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "02-unavailable-model-disabled.png") });
-  await page.keyboard.press("Escape");
+  await expect(page.locator(".modelPickerTrigger")).toHaveCount(1);
+  await page.getByRole("button", { name: /DeepSeek Chat/ }).click();
+  await expect(page.getByRole("option", { name: /DeepSeek Chat/ })).toHaveCount(1);
+  await expect(page.getByRole("option", { name: /DeepSeek Reasoner/ })).toHaveCount(1);
+  await expect(page.getByText("GPT-4o")).toHaveCount(0);
+  await expect(page.getByText("Claude Sonnet")).toHaveCount(0);
+  await page.getByRole("option", { name: /DeepSeek Reasoner/ }).click();
+  await expect(page.getByRole("button", { name: /DeepSeek Reasoner/ })).toBeVisible();
+  await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "02-deepseek-chat-reasoner-picker.png") });
 
   await page.getByRole("button", { name: uniqueTitle, exact: true }).click();
   await expect(page.getByText(artifactName)).toBeVisible();

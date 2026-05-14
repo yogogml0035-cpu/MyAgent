@@ -53,4 +53,4 @@ Expected backend endpoints:
 - `POST /api/tasks/{task_id}/cancel` stops a task.
 - `GET /api/tasks/{task_id}` fetches task state, messages, logs, and artifacts.
 
-The first exposed model option is `deepseek-reasoner`. Provider secrets must stay in the backend `.env`; this frontend only sends safe model IDs.
+The frontend exposes a model picker button, but the menu is intentionally restricted to the two DeepSeek options: `deepseek:deepseek-chat` and `deepseek:deepseek-reasoner`. Provider secrets must stay in the backend `.env`; the browser only sends these safe backend-registered model IDs.

@@ -105,6 +105,26 @@ function seedRunningProgressLogTask(taskId, title) {
       },
     },
     {
+      type: "assistant_thinking_delta",
+      message: "先判断问题是否需要联网。",
+      createdAt: nowIso(1500),
+      level: "info",
+      payload: {
+        schema_version: 1,
+        stream_index: 1,
+        content: "先判断问题是否需要联网。",
+        is_subgraph: false,
+        live: {
+          schema_version: 1,
+          kind: "think",
+          stage: "thinking",
+          display_text: "AI正在思考...",
+          diagnostic_label: "model.reasoning_content",
+          parameter_items: [],
+        },
+      },
+    },
+    {
       type: "tool_call",
       message: "Tool call: tavily_search",
       createdAt: nowIso(2000),
@@ -179,7 +199,7 @@ function seedRunningProgressLogTask(taskId, title) {
       payload: {
         schema_version: 1,
         stream_index: 1,
-        content: "这段原始流式内容不应显示在折叠行里。",
+        content: "这段原始流式内容会显示在展开日志里。",
       },
     },
   ];
@@ -225,6 +245,7 @@ ${eventSeeds.map((event) => appendEventSql(taskId, { ...event, runId })).join("\
 test.use({ baseURL: BASE_URL });
 
 test("progress log rows keep left timestamps and all rows expand diagnostics", async ({
+  context,
   page,
   request,
 }) => {
@@ -232,6 +253,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
 
   const evidenceDir = requirePath(EVIDENCE_DIR, "MYAGENT_E2E_EVIDENCE_DIR");
   fs.mkdirSync(evidenceDir, { recursive: true });
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE_URL });
 
   const title = `进度日志验收-${randomUUID().slice(0, 8)}`;
   const createdResponse = await request.post(`${API_URL}/api/tasks`, {
@@ -261,11 +283,20 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(2).locator("summary").getByText("联网搜索遇到问题")).toBeVisible();
     await expect(rows.nth(3).locator("summary").getByText("处理遇到问题，正在调整处理方式")).toBeVisible();
     await expect(rows.nth(4).locator("summary").getByText("AI正在生成结果")).toBeVisible();
-    await expect(logPanel.getByText("这段原始流式内容不应显示")).toHaveCount(0);
+    await expect(logPanel.locator("summary .liveLogCopyButton")).toHaveCount(5);
+    await expect(rows.nth(4).locator("pre")).toBeHidden();
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "02-progress-log-collapsed.png"),
     });
+
+    const collapsedGenerationCopyButton = rows.nth(4).locator("summary .liveLogCopyButton");
+    await collapsedGenerationCopyButton.click();
+    await expect(rows.nth(4)).not.toHaveAttribute("open", "");
+    const collapsedCopiedGenerationJson = await page.evaluate(() => navigator.clipboard.readText());
+    expect(JSON.parse(collapsedCopiedGenerationJson).payload.answer_stream.accumulated_content).toContain(
+      "这段原始流式内容会显示在展开日志里。",
+    );
 
     for (let index = 0; index < 5; index += 1) {
       const row = rows.nth(index);
@@ -284,21 +315,58 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await rows.nth(4).locator("summary").click();
     await expect(rows.nth(4)).toHaveAttribute("open", "");
     await expect(rows.nth(4).locator("dl")).toHaveCount(0);
+    await expect(rows.nth(4).locator(".liveLogDiagnosticRows")).toHaveCount(0);
+    await expect(rows.nth(4).locator("summary .liveLogCopyButton")).toBeVisible();
     await expect(rows.nth(4).locator("pre")).toContainText('"type": "assistant_answer_delta"');
-    await expect(rows.nth(4).locator("pre")).toContainText('"content_hidden": true');
+    await expect(rows.nth(4).locator("pre")).toContainText('"accumulated_content"');
+    await expect(rows.nth(4).locator("pre")).toContainText("这段原始流式内容会显示在展开日志里。");
+    await expect(rows.nth(4)).not.toContainText("事件类型");
+    await expect(rows.nth(4)).not.toContainText("显示方式");
+    const generationCopyButton = rows.nth(4).locator("summary .liveLogCopyButton");
+    const generationSummaryBox = await rows.nth(4).locator("summary").boundingBox();
+    const generationCopyBox = await generationCopyButton.boundingBox();
+    expect(generationSummaryBox).toBeTruthy();
+    expect(generationCopyBox).toBeTruthy();
+    expect(generationCopyBox.y).toBeLessThan(generationSummaryBox.y + generationSummaryBox.height);
+    await generationCopyButton.click();
+    await expect(generationCopyButton).toHaveAttribute("aria-label", "已复制此行日志JSON");
+    await expect(rows.nth(4)).toHaveAttribute("open", "");
+    const copiedGenerationJson = await page.evaluate(() => navigator.clipboard.readText());
+    expect(JSON.parse(copiedGenerationJson).payload.answer_stream.accumulated_content).toContain(
+      "这段原始流式内容会显示在展开日志里。",
+    );
     await expect(rows.nth(4).locator("dt")).toHaveCount(0);
-    await expect(rows.nth(4).getByText("这段原始流式内容不应显示")).toHaveCount(0);
+    await expect(rows.nth(4).locator("pre")).not.toContainText('"content_hidden": true');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "03-generation-row-expanded.png"),
+    });
+    await rows.nth(4).screenshot({
+      path: path.join(evidenceDir, "03-generation-row-expanded-detail.png"),
     });
 
     await rows.nth(1).locator("summary").click();
     await expect(rows.nth(1)).toHaveAttribute("open", "");
     await expect(rows.nth(1).locator("dl")).toHaveCount(0);
+    await expect(rows.nth(1).locator("p")).toHaveCount(0);
+    await expect(rows.nth(1).locator("summary .liveLogCopyButton")).toBeVisible();
     await expect(rows.nth(1).locator("pre")).toContainText('"type": "tool_result"');
     await expect(rows.nth(1).locator("pre")).toContainText('"tool_name": "tavily_search"');
+    await expect(rows.nth(1).locator(".liveToolPayload")).toContainText("工具");
+    await expect(rows.nth(1).locator(".liveToolPayload")).toContainText("tavily_search");
+    await expect(rows.nth(1).locator(".liveToolPayload")).toContainText("query=progress log e2e");
+    await expect(rows.nth(1).locator(".liveToolPayload")).toContainText("返回了 2 条结果");
+    await expect(rows.nth(1)).not.toContainText("事件类型");
+    await expect(rows.nth(1)).not.toContainText("结果状态");
     await expect(rows.nth(1).locator("dt")).toHaveCount(0);
+    const toolCopyButton = rows.nth(1).locator("summary .liveLogCopyButton");
+    await toolCopyButton.click();
+    await expect(rows.nth(1)).toHaveAttribute("open", "");
+    const copiedToolJson = await page.evaluate(() => navigator.clipboard.readText());
+    expect(JSON.parse(copiedToolJson).records.map((record) => record.type)).toEqual([
+      "tool_call",
+      "tool_result",
+    ]);
     const successfulToolOpenBorderColor = await rows.nth(1).evaluate(
       (element) => getComputedStyle(element).borderTopColor,
     );
@@ -311,6 +379,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
 
     await rows.nth(2).locator("summary").click();
     await expect(rows.nth(2)).toHaveAttribute("open", "");
+    await expect(rows.nth(2).locator("summary .liveLogCopyButton")).toBeVisible();
     await expect(rows.nth(2).locator("pre")).toContainText('"result_status": "failed"');
     const failedToolBorderColor = await rows.nth(2).evaluate(
       (element) => getComputedStyle(element).borderTopColor,
@@ -319,6 +388,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
 
     await rows.nth(3).locator("summary").click();
     await expect(rows.nth(3)).toHaveAttribute("open", "");
+    await expect(rows.nth(3).locator("summary .liveLogCopyButton")).toBeVisible();
     await expect(rows.nth(3).locator("pre")).toContainText('"stage": "failed"');
     const failedStatusBorderColor = await rows.nth(3).evaluate(
       (element) => getComputedStyle(element).borderTopColor,
@@ -332,12 +402,28 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await rows.nth(0).locator("summary").click();
     await expect(rows.nth(0)).toHaveAttribute("open", "");
     await expect(rows.nth(0).locator("dl")).toHaveCount(0);
+    await expect(rows.nth(0).locator(".liveLogDiagnosticRows")).toHaveCount(0);
+    await expect(rows.nth(0).locator("summary .liveLogCopyButton")).toBeVisible();
     await expect(rows.nth(0).locator("pre")).toContainText('"type": "status_update"');
     await expect(rows.nth(0).locator("pre")).toContainText('"diagnostic_label": "model"');
+    await expect(rows.nth(0).locator("pre")).toContainText('"type": "assistant_thinking_delta"');
+    await expect(rows.nth(0).locator("pre")).toContainText("先判断问题是否需要联网。");
+    await expect(rows.nth(0)).not.toContainText("思考内容");
+    const thinkingCopyButton = rows.nth(0).locator("summary .liveLogCopyButton");
+    await thinkingCopyButton.click();
+    await expect(rows.nth(0)).toHaveAttribute("open", "");
+    const copiedThinkingJson = await page.evaluate(() => navigator.clipboard.readText());
+    const copiedThinkingRecord = JSON.parse(copiedThinkingJson).records.at(-1);
+    expect(copiedThinkingRecord.payload.thinking_stream.accumulated_content).toContain(
+      "先判断问题是否需要联网。",
+    );
     await expect(rows.nth(0).locator("dt")).toHaveCount(0);
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "06-thinking-row-expanded.png"),
+    });
+    await rows.nth(0).screenshot({
+      path: path.join(evidenceDir, "06-thinking-row-expanded-detail.png"),
     });
   } finally {
     runSql(`

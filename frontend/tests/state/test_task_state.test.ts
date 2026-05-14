@@ -298,6 +298,34 @@ test("normalizeTaskState preserves user message content without display localiza
   assert.equal(state.messages[2].content, "任务已完成。");
 });
 
+test("normalizeTaskState preserves event seq and thinking stream diagnostics", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "running",
+      events: [
+        {
+          id: "think-1",
+          seq: 42,
+          type: "assistant_thinking_delta",
+          message: "先判断是否需要工具。",
+          payload: {
+            schema_version: 1,
+            stream_index: 7,
+            content: "先判断是否需要工具。",
+            is_subgraph: false,
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0]?.seq, 42);
+  assert.equal(state.logs[0]?.thinkingStream?.streamIndex, 7);
+  assert.equal(state.logs[0]?.thinkingStream?.content, "先判断是否需要工具。");
+});
+
 test("normalizeTaskState preserves run ids on messages, logs, artifacts, and runs", () => {
   const state = normalizeTaskState(
     {
@@ -404,6 +432,45 @@ test("normalizeTaskState preserves safe assistant answer stream events", () => {
     isSubgraph: false,
   });
   assert.equal(state.logs[1].answerStream, undefined);
+});
+
+test("normalizeTaskState preserves safe assistant thinking stream events", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "running",
+      events: [
+        {
+          id: "think-1",
+          type: "assistant_thinking_delta",
+          message: "AI 思考中。",
+          run_id: "run-1",
+          payload: {
+            schema_version: 1,
+            stream_index: 3,
+            content: "先判断是否需要联网。",
+            is_subgraph: false,
+            live: {
+              schema_version: 1,
+              kind: "think",
+              stage: "thinking",
+              display_text: "AI正在思考...",
+              parameter_items: [],
+            },
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.logs[0].thinkingStream, {
+    schemaVersion: 1,
+    streamIndex: 3,
+    content: "先判断是否需要联网。",
+    isSubgraph: false,
+  });
+  assert.equal(state.logs[0].live?.kind, "think");
 });
 
 test("normalizeTaskState preserves terminal task-run reasoning summaries", () => {

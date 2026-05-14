@@ -46,10 +46,19 @@ import {
   uploadTaskFiles,
 } from "../lib/task-api";
 
+const DEFAULT_MODEL_ID = "deepseek:deepseek-chat";
+const ALLOWED_MODEL_IDS = new Set([
+  "deepseek:deepseek-chat",
+  "deepseek:deepseek-reasoner",
+]);
 const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
   {
     id: "deepseek:deepseek-chat",
     label: "DeepSeek Chat",
+  },
+  {
+    id: "deepseek:deepseek-reasoner",
+    label: "DeepSeek Reasoner",
   },
 ];
 
@@ -60,6 +69,7 @@ export const TASK_WORKSPACE_STREAM_EVENT_TYPES = new Set([
   "log",
   "tool_call",
   "tool_result",
+  "assistant_thinking_delta",
   "assistant_answer_delta",
   "status_update",
   "context_loaded",
@@ -164,7 +174,7 @@ export function useTaskWorkspace() {
   const [needsInput, setNeedsInput] = useState<Record<string, unknown> | null>(null);
   const [input, setInput] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
-  const [model, setModel] = useState(DEFAULT_MODEL_OPTIONS[0].id);
+  const [model, setModel] = useState(DEFAULT_MODEL_ID);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string>("");
@@ -241,18 +251,17 @@ export function useTaskWorkspace() {
         if (cancelled) {
           return;
         }
-        setModelOptions(options);
-        setModel((current) => {
-          const currentOption = options.find((option) => option.id === current);
-          if (isModelRunnable(currentOption)) {
-            return current;
-          }
-          return options.find(isModelRunnable)?.id ?? currentOption?.id ?? options[0].id;
-        });
+        const deepSeekOnlyOptions = options.filter((option) => ALLOWED_MODEL_IDS.has(option.id));
+        const nextOptions = deepSeekOnlyOptions.length > 0 ? deepSeekOnlyOptions : DEFAULT_MODEL_OPTIONS;
+        setModelOptions(nextOptions);
+        setModel((current) =>
+          nextOptions.some((option) => option.id === current) ? current : DEFAULT_MODEL_ID,
+        );
       })
       .catch(() => {
         if (!cancelled) {
           setModelOptions(DEFAULT_MODEL_OPTIONS);
+          setModel(DEFAULT_MODEL_ID);
         }
       });
 

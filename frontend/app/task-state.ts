@@ -20,6 +20,7 @@ export type ChatMessage = {
 
 export type ExecutionLog = {
   id: string;
+  seq?: number;
   type?: string;
   title: string;
   detail?: string;
@@ -34,6 +35,7 @@ export type ExecutionLog = {
   orchestration?: OrchestrationTrace;
   memoryContext?: MemoryContextTrace;
   answerStream?: AssistantAnswerStreamTrace;
+  thinkingStream?: AssistantThinkingStreamTrace;
   rawRecord?: Record<string, unknown>;
 };
 
@@ -123,6 +125,13 @@ export type MemoryContextTrace = {
 };
 
 export type AssistantAnswerStreamTrace = {
+  schemaVersion: 1;
+  streamIndex: number;
+  content: string;
+  isSubgraph?: boolean;
+};
+
+export type AssistantThinkingStreamTrace = {
   schemaVersion: 1;
   streamIndex: number;
   content: string;
@@ -444,7 +453,7 @@ function normalizeLiveParameterItems(value: unknown): LiveParameterItem[] | unde
   }
 
   const items: LiveParameterItem[] = [];
-  for (const entry of value.slice(0, 5)) {
+  for (const entry of value.slice(0, 8)) {
     if (!isRecord(entry)) {
       return undefined;
     }
@@ -952,6 +961,27 @@ function normalizeAssistantAnswerStream(type: string | undefined, payload: Recor
   };
 }
 
+function normalizeAssistantThinkingStream(type: string | undefined, payload: Record<string, unknown>) {
+  if (type !== "assistant_thinking_delta") {
+    return undefined;
+  }
+  const schemaVersion = payload.schema_version ?? payload.schemaVersion;
+  const content = readBoundedContent(payload.content, 8000);
+  if (schemaVersion !== 1 || !content) {
+    return undefined;
+  }
+  return {
+    schemaVersion: 1 as const,
+    streamIndex: readOptionalBoundedInteger(
+      payload.stream_index ?? payload.streamIndex,
+      0,
+      9999,
+    ) ?? 0,
+    content,
+    isSubgraph: readOptionalBoolean(payload.is_subgraph ?? payload.isSubgraph) ?? false,
+  };
+}
+
 function normalizeMessage(value: unknown, index: number): ChatMessage {
   const record = isRecord(value) ? value : {};
   const role = readString(record.role, "assistant");
@@ -978,6 +1008,7 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
   const rawDetail = readOptionalString(record.detail ?? record.content);
   const log: ExecutionLog = {
     id: readString(record.id, `log-${index}`),
+    seq: readOptionalBoundedInteger(record.seq, -9999, 999999),
     type,
     title: translateKnownDisplayText(rawTitle),
     detail: rawDetail ? translateKnownDisplayText(rawDetail) : undefined,
@@ -992,6 +1023,7 @@ export function normalizeLog(value: unknown, index: number): ExecutionLog {
     orchestration: normalizeOrchestrationTrace(type, payload),
     memoryContext: normalizeMemoryContextTrace(type, payload),
     answerStream: normalizeAssistantAnswerStream(type, payload),
+    thinkingStream: normalizeAssistantThinkingStream(type, payload),
   };
   Object.defineProperty(log, "rawRecord", {
     value: record,

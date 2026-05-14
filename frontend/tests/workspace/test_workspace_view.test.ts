@@ -296,11 +296,97 @@ test("buildLiveLogItems pairs tool events and keeps one active status row", () =
   assert.equal(items.length, 2);
   assert.equal(items[0]?.kind, "tool");
   assert.equal(items[0]?.kind === "tool" ? items[0].title : "", "联网搜索暂无可用结果");
+  assert.equal(items[0]?.kind === "tool" ? items[0].toolName : "", "tavily_search");
+  assert.equal(items[0]?.kind === "tool" ? items[0].parameterText : "", "query=上海天气");
   assert.equal(items[0]?.kind === "tool" ? items[0].resultText : "", "未找到可用结果，正在尝试其他方式");
   assert.equal(items[0]?.kind === "tool" ? items[0].resultStatus : "", "empty");
   assert.equal(items[1]?.kind, "status");
   assert.equal(items[1]?.kind === "status" ? items[1].text : "", "AI正在生成结果");
   assert.equal(items[1]?.kind === "status" ? items[1].active : false, true);
+});
+
+test("buildLiveLogItems keeps event seq order and merges tool call argument deltas", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "result",
+        seq: 4,
+        type: "tool_result",
+        title: "result",
+        createdAt: "2026-04-27T08:01:00.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_result",
+          stage: "completed",
+          toolName: "tavily_search",
+          toolCallId: "tool-1",
+          parameterItems: [],
+          resultStatus: "success",
+          resultCount: 2,
+        },
+      },
+      {
+        id: "think",
+        seq: 1,
+        type: "assistant_thinking_delta",
+        title: "先判断是否需要联网。",
+        createdAt: "2026-04-27T08:01:00.000Z",
+        thinkingStream: {
+          schemaVersion: 1,
+          streamIndex: 1,
+          content: "先判断是否需要联网。",
+        },
+      },
+      {
+        id: "call-partial",
+        seq: 2,
+        type: "tool_call",
+        title: "partial",
+        createdAt: "2026-04-27T08:01:00.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_call",
+          stage: "selecting_tool",
+          toolName: "tavily_search",
+          toolCallId: "tool-1",
+          parameterItems: [{ key: "args", value: "{\"query\"", truncated: false }],
+        },
+      },
+      {
+        id: "call-full",
+        seq: 3,
+        type: "tool_call",
+        title: "full",
+        createdAt: "2026-04-27T08:01:00.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_call",
+          stage: "using_tool",
+          toolName: "tavily_search",
+          toolCallId: "tool-1",
+          parameterItems: [{ key: "query", value: "progress log" }],
+        },
+      },
+    ],
+    "complete",
+  );
+
+  assert.deepEqual(
+    items.map((item) => (item.kind === "status" ? item.text : item.title)),
+    ["AI正在思考...", "联网搜索已返回结果"],
+  );
+  const toolItem = items[1];
+  assert.equal(toolItem?.kind, "tool");
+  if (toolItem?.kind !== "tool") {
+    throw new Error("expected a merged tool item");
+  }
+  assert.equal(toolItem.toolName, "tavily_search");
+  assert.equal(toolItem.parameterText, "query=progress log");
+  assert.equal(toolItem.resultText, "返回了 2 条结果");
+  assert.deepEqual(
+    JSON.parse(toolItem.details.rawJson).records.map((record: { type: string }) => record.type),
+    ["tool_call", "tool_call", "tool_result"],
+  );
 });
 
 test("buildLiveLogItems folds internal state updates into Chinese progress stages", () => {
@@ -405,7 +491,7 @@ test("buildLiveLogItems does not treat model state updates as final answer gener
   );
 });
 
-test("buildLiveLogItems excludes assistant stream chunks from progress rows", () => {
+test("buildLiveLogItems aggregates assistant stream chunks into a generation row", () => {
   const items = buildLiveLogItems(
     [
       {
@@ -475,9 +561,12 @@ test("buildLiveLogItems excludes assistant stream chunks from progress rows", ()
     items.map((item) => (item.kind === "status" ? item.text : item.title)),
     ["AI正在生成结果", "回答已完成"],
   );
+  assert.equal(items[0]?.details.rawJson.includes('"accumulated_content"'), true);
+  assert.equal(items[0]?.details.rawJson.includes("第一段"), true);
+  assert.equal(items[0]?.details.rawJson.includes("第二段"), true);
 });
 
-test("buildLiveLogItems hides answer stream deltas behind a stable generation label", () => {
+test("buildLiveLogItems shows answer stream deltas only inside generation diagnostics", () => {
   const items = buildLiveLogItems(
     [
       {
@@ -523,11 +612,65 @@ test("buildLiveLogItems hides answer stream deltas behind a stable generation la
     items.map((item) => (item.kind === "status" ? item.text : item.title)),
     ["AI正在生成结果"],
   );
-  assert.equal(JSON.stringify(items).includes("第一段"), false);
-  assert.equal(JSON.stringify(items).includes("stream-punctuation"), false);
-  assert.equal(JSON.stringify(items).includes("stream-content"), false);
-  assert.equal(items[0]?.details.rows.some((row) => row.value === "流式片段已折叠为生成状态"), true);
-  assert.equal(items[0]?.details.rawJson.includes('"content_hidden": true'), true);
+  assert.equal(items[0]?.kind === "status" ? items[0].text : "", "AI正在生成结果");
+  assert.equal("rows" in (items[0]?.details ?? {}), false);
+  assert.equal(items[0]?.details.rawJson.includes("stream-punctuation"), true);
+  assert.equal(items[0]?.details.rawJson.includes("stream-content"), true);
+  assert.equal(items[0]?.details.rawJson.includes('"accumulated_content": "。第一段"'), true);
+  assert.equal(items[0]?.details.rawJson.includes('"content_hidden": true'), false);
+});
+
+test("buildLiveLogItems shows thinking stream content inside thinking diagnostics", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "model-status",
+        type: "status_update",
+        title: "State update: model",
+        createdAt: "2026-04-27T08:01:00.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "status",
+          stage: "thinking",
+          displayText: "AI正在思考...",
+          diagnosticLabel: "model",
+          parameterItems: [],
+        },
+      },
+      {
+        id: "think-1",
+        type: "assistant_thinking_delta",
+        title: "先判断是否需要联网。",
+        createdAt: "2026-04-27T08:01:01.000Z",
+        thinkingStream: {
+          schemaVersion: 1,
+          streamIndex: 1,
+          content: "先判断是否需要联网。",
+        },
+      },
+      {
+        id: "think-2",
+        type: "assistant_thinking_delta",
+        title: "再选择搜索工具。",
+        createdAt: "2026-04-27T08:01:02.000Z",
+        thinkingStream: {
+          schemaVersion: 1,
+          streamIndex: 2,
+          content: "再选择搜索工具。",
+        },
+      },
+    ],
+    "running",
+  );
+
+  assert.deepEqual(
+    items.map((item) => (item.kind === "status" ? item.text : item.title)),
+    ["AI正在思考..."],
+  );
+  assert.equal("rows" in (items[0]?.details ?? {}), false);
+  assert.equal(items[0]?.details.rawJson.includes('"assistant_thinking_delta"'), true);
+  assert.equal(items[0]?.details.rawJson.includes('"accumulated_content": "先判断是否需要联网。再选择搜索工具。"'), true);
+  assert.equal(items[0]?.details.rawJson.includes("再选择搜索工具"), true);
 });
 
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
@@ -759,7 +902,7 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   );
   assert.match(
     cssSource,
-    /\.liveStatusRow summary,\s*\n\.liveToolCard summary\s*\{[\s\S]*?grid-template-columns: 56px minmax\(0, 1fr\) auto 10px;/,
+    /\.liveStatusRow summary,\s*\n\.liveToolCard summary\s*\{[\s\S]*?grid-template-columns: 56px minmax\(0, 1fr\) auto auto 10px;/,
   );
   assert.match(
     cssSource,
@@ -775,8 +918,10 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   );
   assert.match(
     conversationSource,
-    /<time>\{formatTime\(item\.createdAt\)\}<\/time>\s*<strong>\{item\.title\}<\/strong>/,
+    /<time>\{formatTime\(item\.createdAt\)\}<\/time>\s*<strong className="liveToolSummaryText">\s*<span>\{item\.title\}<\/span>/,
   );
+  assert.equal(conversationSource.includes('className="liveToolSummaryMeta"'), true);
+  assert.equal(conversationSource.includes('className="liveToolPayload"'), true);
   assert.equal(conversationSource.includes("<article className={statusClassName}"), false);
   assert.match(
     conversationSource,
@@ -785,7 +930,29 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("<dl>"), false);
   assert.equal(conversationSource.includes("<dt>{row.label}</dt>"), false);
   assert.equal(conversationSource.includes("<dd>{row.value}</dd>"), false);
+  assert.equal(conversationSource.includes("details.rows"), false);
+  assert.equal(conversationSource.includes("<p>{item.resultText}</p>"), false);
   assert.equal(conversationSource.includes("<pre>{details.rawJson}</pre>"), true);
+  assert.equal(conversationSource.includes("liveLogCopyButton"), true);
+  assert.equal(conversationSource.includes("event.preventDefault();"), true);
+  assert.equal(conversationSource.includes("event.stopPropagation();"), true);
+  assert.equal(
+    conversationSource.includes("<summary>{statusSummary}</summary>"),
+    true,
+  );
+  assert.match(
+    conversationSource,
+    /<strong className="liveToolSummaryText">[\s\S]*?<span>\{item\.title\}<\/span>[\s\S]*?\{renderLiveLogCopyButton\(item\.details, copyKey\)\}/,
+  );
+  assert.equal(cssSource.includes(".liveLogDiagnosticRows"), false);
+  assert.match(
+    cssSource,
+    /\.liveLogCopyButton\s*\{[\s\S]*?grid-column: 4;[\s\S]*?justify-self: end;/,
+  );
+  assert.match(
+    cssSource,
+    /\.liveLogDiagnostics pre\s*\{[\s\S]*?padding: 10px;/,
+  );
   assert.match(
     cssSource,
     /\.copyButton-copied,\s*\n\.copyButton-copied:hover:not\(:disabled\)\s*\{[\s\S]*?border-color: rgba\(204, 120, 92, 0\.52\);[\s\S]*?color: var\(--primary-active\);/,
@@ -1671,11 +1838,9 @@ test("buildLiveLogItems exposes redacted memory context diagnostics", () => {
 
   assert.equal(items.length, 1);
   assert.equal(items[0].kind, "status");
-  assert.equal(items[0].details.rows.some((row) => row.value.includes("上海天气")), true);
-  assert.equal(
-    items[0].details.rows.some((row) => row.value.includes("SHOULD_STAY_RAW_ONLY")),
-    false,
-  );
+  assert.equal("rows" in items[0].details, false);
+  assert.equal(items[0].details.rawJson.includes("上海天气"), true);
+  assert.equal(items[0].details.rawJson.includes("SHOULD_STAY_RAW_ONLY"), false);
 });
 
 test("buildConversationStreamItems filters placeholder assistant messages", () => {
