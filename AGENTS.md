@@ -207,6 +207,7 @@ git diff --check
 
 - `TaskRunner.__init__` 必须同时接收 `settings` 和 `storage`，由 `main.py` 在 `create_app()` 中注入到 `app.state`。
 - `TaskRunner.start_background()` 必须接收 `run_id` 参数（来自 `storage.start_run()`），确保 storage 层和 streaming 层的 run_id 一致。
+- `storage.start_run()` 成功把任务置为 `running` 后，`runner.start_background()` 必须尽快被调用；自动标题、摘要、日志装饰等非关键增强必须自行捕获并记录异常，不能阻断 runner 调度导致无后台接管的 running 孤儿任务。
 - Agent 运行产出的事件必须通过 `storage.append_event()` 持久化到 Postgres `events` 表，seq 必须连续且由事务生成，事件不可丢弃。
 - Agent 运行结束后必须调用 `storage.update_task_if_status()` 将任务状态更新为终态（`complete`/`failed`/`cancelled`）。
 - 任何修改 TaskRunner 的变更必须同步验证 `backend/tests/unit/runner/` 中的测试覆盖。
