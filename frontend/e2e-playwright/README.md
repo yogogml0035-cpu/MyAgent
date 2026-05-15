@@ -38,7 +38,7 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --reporter=line
 ```
 
-The progress-log spec seeds a temporary running task through the same Postgres-backed task/runs/messages/events contract, verifies collapsed row layout in the browser, expands status/tool/generation rows, captures screenshots, marks the temporary task complete, and deletes it through the public API.
+The progress-log spec seeds a temporary running task through the same Postgres-backed task/runs/messages/events contract, verifies collapsed row layout in the browser, expands status/tool/generation rows, checks the trace-level collapse-all control, captures desktop and narrow-screen screenshots, marks the temporary task complete, and deletes it through the public API.
 
 Run the session-context and long-term-memory acceptance test from `frontend/` when changing conversation history injection, memory recall, per-user memory isolation, or the visible "已载入会话上下文 / 已载入长期记忆" log rows:
 

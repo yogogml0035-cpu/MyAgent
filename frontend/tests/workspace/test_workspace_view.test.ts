@@ -1389,10 +1389,8 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes('className="liveToolSummaryMeta"'), false);
   assert.equal(conversationSource.includes('className="liveToolPayload"'), false);
   assert.equal(conversationSource.includes("<article className={statusClassName}"), false);
-  assert.match(
-    conversationSource,
-    /<details className=\{`\$\{statusClassName\} liveStatusRow-details`\} key=\{item\.id\}>/,
-  );
+  assert.match(conversationSource, /className=\{`\$\{statusClassName\} liveStatusRow-details`\}/);
+  assert.match(conversationSource, /key=\{item\.id\}[\s\S]*?onToggle=\{syncOpenLogDetailCount\}/);
   assert.equal(conversationSource.includes("<dl>"), false);
   assert.equal(conversationSource.includes("<dt>{row.label}</dt>"), false);
   assert.equal(conversationSource.includes("<dd>{row.value}</dd>"), false);
@@ -1401,6 +1399,11 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("<pre>{details.displayJson}</pre>"), true);
   assert.equal(conversationSource.includes("details.rawJson"), false);
   assert.equal(conversationSource.includes("liveLogCopyButton"), true);
+  assert.equal(conversationSource.includes("onToggle={syncOpenLogDetailCount}"), true);
+  assert.equal(conversationSource.includes("collapseExpandedLogDetails"), true);
+  assert.equal(conversationSource.includes("countOpenLogDetails(logListRefs.current.values())"), true);
+  assert.equal(conversationSource.includes('className="copyButton traceCollapseButton"'), true);
+  assert.equal(conversationSource.includes('"traceCopyButton"'), true);
   assert.equal(conversationSource.includes("event.preventDefault();"), true);
   assert.equal(conversationSource.includes("event.stopPropagation();"), true);
   assert.equal(
@@ -1415,6 +1418,14 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.match(
     cssSource,
     /\.liveLogCopyButton\s*\{[\s\S]*?grid-column: 4;[\s\S]*?justify-self: end;/,
+  );
+  assert.match(
+    cssSource,
+    /\.traceActions\s*\{[\s\S]*?display: flex;[\s\S]*?gap: 8px;/,
+  );
+  assert.match(
+    cssSource,
+    /\.copyButton\.traceCollapseButton::after\s*\{[\s\S]*?m17 11-5-5-5 5[\s\S]*?center \/ 15px 15px no-repeat;/,
   );
   assert.match(
     cssSource,

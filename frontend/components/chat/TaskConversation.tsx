@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, type MouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact, ChatMessage, ExecutionLog } from "../../app/task-state";
@@ -46,6 +46,25 @@ export function scrollLogListToBottomIfPinned(
   return true;
 }
 
+export function countOpenLogDetails(logLists: Iterable<HTMLElement>) {
+  let count = 0;
+  for (const logList of logLists) {
+    count += logList.querySelectorAll("details[open]").length;
+  }
+  return count;
+}
+
+export function collapseOpenLogDetails(logLists: Iterable<HTMLElement>) {
+  let collapsedCount = 0;
+  for (const logList of logLists) {
+    logList.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((detail) => {
+      detail.open = false;
+      collapsedCount += 1;
+    });
+  }
+  return collapsedCount;
+}
+
 type TaskConversationProps = {
   activeTask: boolean;
   conversationStreamItems: ConversationStreamItem[];
@@ -72,6 +91,16 @@ export function TaskConversation({
   const conversationCanvasRef = useRef<HTMLElement | null>(null);
   const logListRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const logListPinnedRefs = useRef<Map<string, boolean>>(new Map());
+  const [openLogDetailCount, setOpenLogDetailCount] = useState(0);
+
+  const syncOpenLogDetailCount = useCallback(() => {
+    setOpenLogDetailCount(countOpenLogDetails(logListRefs.current.values()));
+  }, []);
+
+  const collapseExpandedLogDetails = useCallback(() => {
+    collapseOpenLogDetails(logListRefs.current.values());
+    syncOpenLogDetailCount();
+  }, [syncOpenLogDetailCount]);
 
   useEffect(() => {
     if (!hasConversation) {
@@ -98,10 +127,11 @@ export function TaskConversation({
 
     scrollPinnedLists();
     const animationFrameId = window.requestAnimationFrame(scrollPinnedLists);
+    syncOpenLogDetailCount();
     return () => {
       window.cancelAnimationFrame(animationFrameId);
     };
-  }, [conversationStreamItems]);
+  }, [conversationStreamItems, syncOpenLogDetailCount]);
 
   useEffect(() => {
     logListRefs.current.forEach((el, runId) => {
@@ -309,10 +339,15 @@ export function TaskConversation({
     const isLogCopied = copiedCopyKey === logCopyKey;
     const logCopyButtonClassName = [
       "copyButton",
+      "traceCopyButton",
       isLogCopied ? "copyButton-copied" : "",
     ]
       .filter(Boolean)
       .join(" ");
+    const collapseAllLabel =
+      openLogDetailCount > 0
+        ? `折叠全部已展开日志（${openLogDetailCount}条）`
+        : "暂无已展开日志可折叠";
 
     const logListId = `logList:${group.runId}`;
 
@@ -330,16 +365,28 @@ export function TaskConversation({
               />
               <span>{groupLogStatusText}</span>
             </div>
-            <button
-              aria-label={isLogCopied ? `已复制${group.title}原始诊断日志` : `复制${group.title}原始诊断日志`}
-              className={logCopyButtonClassName}
-              disabled={group.logs.length === 0}
-              onClick={() => void onCopyLogs(group.logs, logCopyKey)}
-              title={isLogCopied ? "已复制原始诊断日志" : `复制${group.title}原始诊断日志（JSONL）`}
-              type="button"
-            >
-              <span aria-hidden="true" />
-            </button>
+            <div className="traceActions" aria-label={`${group.title}日志操作`}>
+              <button
+                aria-label={collapseAllLabel}
+                className="copyButton traceCollapseButton"
+                disabled={openLogDetailCount === 0}
+                onClick={collapseExpandedLogDetails}
+                title="折叠全部已展开日志"
+                type="button"
+              >
+                <span aria-hidden="true" />
+              </button>
+              <button
+                aria-label={isLogCopied ? `已复制${group.title}原始诊断日志` : `复制${group.title}原始诊断日志`}
+                className={logCopyButtonClassName}
+                disabled={group.logs.length === 0}
+                onClick={() => void onCopyLogs(group.logs, logCopyKey)}
+                title={isLogCopied ? "已复制原始诊断日志" : `复制${group.title}原始诊断日志（JSONL）`}
+                type="button"
+              >
+                <span aria-hidden="true" />
+              </button>
+            </div>
           </header>
 
           <div
@@ -385,7 +432,7 @@ export function TaskConversation({
         .filter(Boolean)
         .join(" ");
       return (
-        <details className={toolClassName} key={item.id}>
+        <details className={toolClassName} key={item.id} onToggle={syncOpenLogDetailCount}>
           <summary>
             <time>{formatLiveLogItemTime(item)}</time>
             <strong className="liveToolSummaryText" title={toolSummaryLine}>
@@ -420,7 +467,11 @@ export function TaskConversation({
       </>
     );
     return (
-      <details className={`${statusClassName} liveStatusRow-details`} key={item.id}>
+      <details
+        className={`${statusClassName} liveStatusRow-details`}
+        key={item.id}
+        onToggle={syncOpenLogDetailCount}
+      >
         <summary>{statusSummary}</summary>
         {renderLiveLogDiagnostics(item.details)}
       </details>

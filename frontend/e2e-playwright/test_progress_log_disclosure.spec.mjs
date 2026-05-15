@@ -443,6 +443,8 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(1).locator("summary .liveToolSummaryMeta")).toHaveCount(0);
     await expect(toolSummaryLine.locator("code")).toHaveCount(0);
     expect(await toolSummaryLine.evaluate((element) => getComputedStyle(element).whiteSpace)).toBe("nowrap");
+    const collapseAllButton = logPanel.locator(".traceHeader .traceCollapseButton");
+    await expect(collapseAllButton).toBeDisabled();
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "02-progress-log-collapsed.png"),
@@ -451,7 +453,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
       path: path.join(evidenceDir, "02-tool-row-collapsed-detail.png"),
     });
 
-    const rawLogCopyButton = logPanel.locator(".traceHeader .copyButton");
+    const rawLogCopyButton = logPanel.locator(".traceHeader .traceCopyButton");
     await rawLogCopyButton.click();
     const copiedRawJsonl = await page.evaluate(() => navigator.clipboard.readText());
     const copiedRawLines = copiedRawJsonl.trim().split("\n").map((line) => JSON.parse(line));
@@ -604,6 +606,28 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "07-terminal-rows-expanded.png"),
+    });
+
+    await expect(collapseAllButton).toHaveAttribute("aria-label", "折叠全部已展开日志（6条）");
+    await collapseAllButton.hover();
+    await collapseAllButton.focus();
+    await logPanel.locator(".traceHeader").screenshot({
+      path: path.join(evidenceDir, "07-collapse-all-button-hover-focus.png"),
+    });
+    await collapseAllButton.click();
+    await expect
+      .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
+      .toBe(0);
+    await expect(collapseAllButton).toBeDisabled();
+    await page.screenshot({
+      fullPage: true,
+      path: path.join(evidenceDir, "08-all-log-rows-collapsed-by-button.png"),
+    });
+    await page.setViewportSize({ width: 500, height: 760 });
+    await expect(logPanel.locator(".traceHeader")).toBeVisible();
+    await page.screenshot({
+      fullPage: true,
+      path: path.join(evidenceDir, "09-narrow-collapsed-log-header.png"),
     });
   } finally {
     runSql(`

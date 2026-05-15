@@ -3,6 +3,8 @@ import test from "node:test";
 
 import {
   LOG_LIST_AUTO_SCROLL_THRESHOLD,
+  collapseOpenLogDetails,
+  countOpenLogDetails,
   isLogListNearBottom,
   scrollLogListToBottomIfPinned,
 } from "../../components/chat/TaskConversation";
@@ -54,4 +56,27 @@ test("scrollLogListToBottomIfPinned does not fight intentional upward scrolling"
 
   assert.equal(scrollLogListToBottomIfPinned(element, false), false);
   assert.deepEqual(calls, []);
+});
+
+test("collapseOpenLogDetails closes every expanded progress log row", () => {
+  const firstDetail = { open: true };
+  const secondDetail = { open: true };
+  const containers = [
+    {
+      querySelectorAll(selector: string) {
+        assert.equal(selector, "details[open]");
+        return [firstDetail, secondDetail];
+      },
+    },
+    {
+      querySelectorAll(selector: string) {
+        assert.equal(selector, "details[open]");
+        return [];
+      },
+    },
+  ] as unknown as HTMLElement[];
+
+  assert.equal(countOpenLogDetails(containers), 2);
+  assert.equal(collapseOpenLogDetails(containers), 2);
+  assert.deepEqual([firstDetail.open, secondDetail.open], [false, false]);
 });

@@ -1183,6 +1183,13 @@ p {
   white-space: nowrap;
 }
 
+.traceActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
 .runRoundLabel {
   color: var(--muted);
   font-size: 12px;
@@ -1255,6 +1262,11 @@ p {
   background: rgba(204, 120, 92, 0.12);
   color: #f2b69d;
   box-shadow: 0 0 0 2px rgba(204, 120, 92, 0.08);
+}
+
+.copyButton.traceCollapseButton::after {
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m17 11-5-5-5 5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='m17 18-5-5-5 5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 15px 15px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m17 11-5-5-5 5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='m17 18-5-5-5 5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 15px 15px no-repeat;
 }
 
 .copyButton::before {
@@ -2519,6 +2531,10 @@ button:hover:not(:disabled),
 
   .traceTitle {
     align-items: flex-start;
+  }
+
+  .traceActions {
+    align-self: flex-end;
   }
 
   .uploadMeta {
