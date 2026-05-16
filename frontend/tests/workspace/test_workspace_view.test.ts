@@ -1503,6 +1503,9 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("toggleRunLogDetails"), true);
   assert.equal(conversationSource.includes("setLogDetailsOpen(logList, open)"), true);
   assert.equal(conversationSource.includes("countOpenLogDetails([logList])"), true);
+  assert.equal(conversationSource.includes("const hasOpenLogDetails = openLogDetailCount > 0;"), true);
+  assert.equal(conversationSource.includes('hasOpenLogDetails ? "全部折叠" : "全部展开"'), true);
+  assert.equal(conversationSource.includes("openLogDetailCount >= totalLogDetailCount"), false);
   assert.equal(conversationSource.includes('className="copyButton traceCollapseButton"'), false);
   assert.equal(conversationSource.includes("traceLogToggleButton"), true);
   assert.equal(conversationSource.includes("全部展开"), true);

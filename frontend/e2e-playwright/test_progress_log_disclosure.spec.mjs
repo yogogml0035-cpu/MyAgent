@@ -464,7 +464,32 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await logToggleButton.screenshot({
       path: path.join(evidenceDir, "02-log-toggle-collapsed-detail.png"),
     });
+    await rows.nth(1).locator("summary").click();
+    await expect(rows.nth(1)).toHaveAttribute("open", "");
+    await expect
+      .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
+      .toBe(1);
+    await expect(logToggleButton).toHaveText("全部折叠");
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "true");
+    await expect(logToggleButton).toHaveAttribute("aria-label", "折叠第 1 轮全部日志");
+    await page.screenshot({
+      fullPage: true,
+      path: path.join(evidenceDir, "02-partial-log-row-expanded.png"),
+    });
+    await logToggleButton.screenshot({
+      path: path.join(evidenceDir, "02-log-toggle-partial-expanded-detail.png"),
+    });
     await logToggleButton.click();
+    await expect
+      .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
+      .toBe(0);
+    await expect(logToggleButton).toHaveText("全部展开");
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "false");
+
+    await logToggleButton.click();
+    await expect(logToggleButton).toHaveText("全部折叠", { timeout: 500 });
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "true");
+    expect(await rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length)).toBe(0);
     await expect
       .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
       .toBe(11);
@@ -669,8 +694,9 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
       path: path.join(evidenceDir, "07-terminal-rows-expanded.png"),
     });
 
-    await expect(logToggleButton).toHaveText("全部展开");
-    await expect(logToggleButton).toHaveAttribute("aria-label", "展开第 1 轮全部日志");
+    await expect(logToggleButton).toHaveText("全部折叠");
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "true");
+    await expect(logToggleButton).toHaveAttribute("aria-label", "折叠第 1 轮全部日志");
     await expect(rawLogCopyButton).not.toHaveClass(/copyButton-copied/);
     const toggleButtonStyles = await logToggleButton.evaluate((element) => {
       const button = getComputedStyle(element);
@@ -707,6 +733,15 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
       path: path.join(evidenceDir, "07-log-toggle-hover-focus.png"),
     });
     await logToggleButton.click();
+    await expect
+      .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
+      .toBe(0);
+    await expect(logToggleButton).toHaveText("全部展开", { timeout: 500 });
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "false");
+
+    await logToggleButton.click();
+    await expect(logToggleButton).toHaveText("全部折叠", { timeout: 500 });
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "true");
     await expect
       .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
       .toBe(11);

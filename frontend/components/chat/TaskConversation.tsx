@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
+import { flushSync } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact, ChatMessage, ExecutionLog } from "../../app/task-state";
@@ -101,6 +102,7 @@ export function TaskConversation({
   const conversationCanvasRef = useRef<HTMLElement | null>(null);
   const logListRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const logListPinnedRefs = useRef<Map<string, boolean>>(new Map());
+  const scheduledLogToggleFrameRefs = useRef<Map<string, number>>(new Map());
   const [openLogDetailCounts, setOpenLogDetailCounts] = useState<Record<string, number>>({});
 
   const syncOpenLogDetailCounts = useCallback(() => {
@@ -111,17 +113,44 @@ export function TaskConversation({
     setOpenLogDetailCounts(counts);
   }, []);
 
+  const cancelScheduledLogToggle = useCallback((runId: string) => {
+    const scheduledFrame = scheduledLogToggleFrameRefs.current.get(runId);
+    if (scheduledFrame === undefined) {
+      return;
+    }
+    window.cancelAnimationFrame(scheduledFrame);
+    scheduledLogToggleFrameRefs.current.delete(runId);
+  }, []);
+
+  const scheduleLogDetailsOpen = useCallback((runId: string, logList: HTMLElement, open: boolean) => {
+    cancelScheduledLogToggle(runId);
+    const firstFrame = window.requestAnimationFrame(() => {
+      const secondFrame = window.requestAnimationFrame(() => {
+        scheduledLogToggleFrameRefs.current.delete(runId);
+        setLogDetailsOpen(logList, open);
+        if (open) {
+          logListPinnedRefs.current.set(runId, false);
+        }
+        syncOpenLogDetailCounts();
+      });
+      scheduledLogToggleFrameRefs.current.set(runId, secondFrame);
+    });
+    scheduledLogToggleFrameRefs.current.set(runId, firstFrame);
+  }, [cancelScheduledLogToggle, syncOpenLogDetailCounts]);
+
   const toggleRunLogDetails = useCallback((runId: string, open: boolean) => {
     const logList = logListRefs.current.get(runId);
     if (!logList) {
       return;
     }
-    setLogDetailsOpen(logList, open);
-    if (open) {
-      logListPinnedRefs.current.set(runId, false);
-    }
-    syncOpenLogDetailCounts();
-  }, [syncOpenLogDetailCounts]);
+    flushSync(() => {
+      setOpenLogDetailCounts((currentCounts) => ({
+        ...currentCounts,
+        [runId]: open ? logList.querySelectorAll("details").length : 0,
+      }));
+    });
+    scheduleLogDetailsOpen(runId, logList, open);
+  }, [scheduleLogDetailsOpen]);
 
   useEffect(() => {
     if (!hasConversation) {
@@ -160,6 +189,16 @@ export function TaskConversation({
       scrollLogListToBottomIfPinned(el, logListPinnedRefs.current.get(runId));
     });
   }, [noticeMessages]);
+
+  useEffect(() => {
+    const scheduledFrames = scheduledLogToggleFrameRefs.current;
+    return () => {
+      scheduledFrames.forEach((frameId) => {
+        window.cancelAnimationFrame(frameId);
+      });
+      scheduledFrames.clear();
+    };
+  }, []);
 
   function artifactCanOpen(artifact: Artifact) {
     const artifactKind = artifact.kind ?? (artifact.name.toLowerCase().endsWith(".html") ? "html" : "file");
@@ -360,9 +399,9 @@ export function TaskConversation({
     const isLogCopied = copiedCopyKey === logCopyKey;
     const openLogDetailCount = openLogDetailCounts[group.runId] ?? 0;
     const totalLogDetailCount = liveItems.length;
-    const allLogDetailsOpen = totalLogDetailCount > 0 && openLogDetailCount >= totalLogDetailCount;
-    const toggleLogDetailsLabel = allLogDetailsOpen ? "全部折叠" : "全部展开";
-    const toggleLogDetailsTitle = allLogDetailsOpen
+    const hasOpenLogDetails = openLogDetailCount > 0;
+    const toggleLogDetailsLabel = hasOpenLogDetails ? "全部折叠" : "全部展开";
+    const toggleLogDetailsTitle = hasOpenLogDetails
       ? `折叠${group.title}全部日志`
       : `展开${group.title}全部日志`;
     const logCopyButtonClassName = [
@@ -374,7 +413,7 @@ export function TaskConversation({
       .join(" ");
     const logToggleButtonClassName = [
       "traceLogToggleButton",
-      allLogDetailsOpen ? "traceLogToggleButton-open" : "",
+      hasOpenLogDetails ? "traceLogToggleButton-open" : "",
     ]
       .filter(Boolean)
       .join(" ");
@@ -397,11 +436,11 @@ export function TaskConversation({
             </div>
             <div className="traceActions" aria-label={`${group.title}日志操作`}>
               <button
-                aria-expanded={allLogDetailsOpen}
+                aria-expanded={hasOpenLogDetails}
                 aria-label={toggleLogDetailsTitle}
                 className={logToggleButtonClassName}
                 disabled={totalLogDetailCount === 0}
-                onClick={() => toggleRunLogDetails(group.runId, !allLogDetailsOpen)}
+                onClick={() => toggleRunLogDetails(group.runId, !hasOpenLogDetails)}
                 title={toggleLogDetailsTitle}
                 type="button"
               >
