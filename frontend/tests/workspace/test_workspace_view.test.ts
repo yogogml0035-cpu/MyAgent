@@ -294,16 +294,20 @@ test("buildLiveLogItems pairs tool events and keeps one active status row", () =
     "running",
   );
 
-  assert.equal(items.length, 2);
+  assert.equal(items.length, 4);
   assert.equal(items[0]?.kind, "tool");
-  assert.equal(items[0]?.kind === "tool" ? items[0].title : "", "联网搜索暂无可用结果");
+  assert.equal(items[0]?.kind === "tool" ? items[0].title : "", "调用联网搜索");
   assert.equal(items[0]?.kind === "tool" ? items[0].toolName : "", "tavily_search");
   assert.equal(items[0]?.kind === "tool" ? items[0].parameterText : "", "query=上海天气");
-  assert.equal(items[0]?.kind === "tool" ? items[0].resultText : "", "未找到可用结果，正在尝试其他方式");
-  assert.equal(items[0]?.kind === "tool" ? items[0].resultStatus : "", "empty");
   assert.equal(items[1]?.kind, "status");
   assert.equal(items[1]?.kind === "status" ? items[1].text : "", "AI正在生成结果");
-  assert.equal(items[1]?.kind === "status" ? items[1].active : false, true);
+  assert.equal(items[2]?.kind, "tool");
+  assert.equal(items[2]?.kind === "tool" ? items[2].title : "", "联网搜索暂无可用结果");
+  assert.equal(items[2]?.kind === "tool" ? items[2].resultText : "", "未找到可用结果，正在尝试其他方式");
+  assert.equal(items[2]?.kind === "tool" ? items[2].resultStatus : "", "empty");
+  assert.equal(items[3]?.kind, "status");
+  assert.equal(items[3]?.kind === "status" ? items[3].text : "", "AI正在生成结果");
+  assert.equal(items[3]?.kind === "status" ? items[3].active : false, true);
 });
 
 test("buildLiveLogItems keeps event seq order and merges tool call argument deltas", () => {
@@ -374,30 +378,35 @@ test("buildLiveLogItems keeps event seq order and merges tool call argument delt
 
   assert.deepEqual(
     items.map((item) => (item.kind === "status" ? item.text : item.title)),
-    ["AI正在思考...", "联网搜索已返回结果"],
+    ["AI正在思考", "准备调用联网搜索", "调用联网搜索", "联网搜索已返回结果"],
   );
-  const toolItem = items[1];
-  assert.equal(toolItem?.kind, "tool");
-  if (toolItem?.kind !== "tool") {
-    throw new Error("expected a merged tool item");
+  const selectingItem = items[1];
+  const usingItem = items[2];
+  const resultItem = items[3];
+  assert.equal(selectingItem?.kind, "tool");
+  assert.equal(usingItem?.kind, "tool");
+  assert.equal(resultItem?.kind, "tool");
+  if (selectingItem?.kind !== "tool" || usingItem?.kind !== "tool" || resultItem?.kind !== "tool") {
+    throw new Error("expected staged tool items");
   }
-  assert.equal(toolItem.toolName, "tavily_search");
-  assert.equal(toolItem.parameterText, "query=progress log");
-  assert.equal(toolItem.resultText, "返回了 2 条结果");
+  assert.equal(selectingItem.toolName, "tavily_search");
+  assert.equal(selectingItem.parameterText, "args={\"query\"");
+  assert.equal(usingItem.parameterText, "query=progress log");
+  assert.equal(resultItem.resultText, "返回了 2 条结果");
   assert.deepEqual(
-    JSON.parse(toolItem.details.rawJson).records.map((record: { type: string }) => record.type),
-    ["tool_call", "tool_call", "tool_result"],
+    JSON.parse(selectingItem.details.rawJson).type,
+    "tool_call",
   );
-  const toolDisplay = JSON.parse(toolItem.details.displayJson);
-  assert.equal(toolDisplay.type, "tool_lifecycle");
-  assert.equal(toolDisplay.tool_name, "tavily_search");
-  assert.equal(toolDisplay.tool_call_id, "tool-1");
-  assert.deepEqual(toolDisplay.tool_call.args, { query: "progress log" });
-  assert.equal(JSON.stringify(toolDisplay).includes("call-partial"), false);
-  assert.equal(toolItem.completedAt, "2026-04-27T08:01:00.000Z");
+  const usingDisplay = JSON.parse(usingItem.details.displayJson);
+  assert.equal(usingDisplay.type, "tool_call");
+  assert.equal(usingDisplay.tool_name, "tavily_search");
+  assert.equal(usingDisplay.tool_call_id, "tool-1");
+  assert.deepEqual(usingDisplay.args, { query: "progress log" });
+  assert.equal(JSON.stringify(usingDisplay).includes("call-partial"), false);
+  assert.equal(resultItem.completedAt, undefined);
 });
 
-test("buildLiveLogItems projects tool rows as one lifecycle display JSON", () => {
+test("buildLiveLogItems projects staged tool rows into per-event display JSON", () => {
   const logs: Parameters<typeof buildLiveLogItems>[0] = [
     {
       id: "call-partial",
@@ -499,26 +508,43 @@ test("buildLiveLogItems projects tool rows as one lifecycle display JSON", () =>
     },
   ];
 
-  const [toolItem] = buildLiveLogItems(logs, "complete");
-  assert.equal(toolItem?.kind, "tool");
-  if (toolItem?.kind !== "tool") {
-    throw new Error("expected a tool row");
+  const items = buildLiveLogItems(logs, "complete");
+  assert.equal(items.length, 3);
+  assert.equal(items[0]?.kind, "tool");
+  assert.equal(items[1]?.kind, "tool");
+  assert.equal(items[2]?.kind, "tool");
+  if (items[0]?.kind !== "tool" || items[1]?.kind !== "tool" || items[2]?.kind !== "tool") {
+    throw new Error("expected staged tool rows");
   }
 
-  const display = JSON.parse(toolItem.details.displayJson);
-  assert.equal(display.type, "tool_lifecycle");
-  assert.equal(display.tool_name, "tavily_search");
-  assert.equal(display.tool_label, "联网搜索");
-  assert.equal(display.tool_call_id, "tool-json");
-  assert.deepEqual(display.tool_call.args, { query: "progress log", max_results: 2 });
-  assert.equal(display.tool_result.status, "success");
-  assert.deepEqual(display.tool_result.content, { ok: true, items: [{ title: "A" }] });
-  assert.equal("records" in display, false);
-  assert.equal(toolItem.details.displayJson.includes("call-partial"), false);
-  assert.deepEqual(
-    JSON.parse(toolItem.details.rawJson).records.map((record: { type: string }) => record.type),
-    ["tool_call", "tool_call", "tool_result"],
-  );
+  const selectingDisplay = JSON.parse(items[0].details.displayJson);
+  assert.equal(selectingDisplay.type, "tool_call");
+  assert.equal(selectingDisplay.tool_name, "tavily_search");
+  assert.equal(selectingDisplay.tool_label, "联网搜索");
+  assert.equal(selectingDisplay.tool_call_id, "tool-json");
+  assert.equal(selectingDisplay.stage, "selecting_tool");
+  assert.equal(selectingDisplay.args, "{\"query\"");
+
+  const usingDisplay = JSON.parse(items[1].details.displayJson);
+  assert.equal(usingDisplay.type, "tool_call");
+  assert.equal(usingDisplay.tool_name, "tavily_search");
+  assert.equal(usingDisplay.tool_label, "联网搜索");
+  assert.equal(usingDisplay.tool_call_id, "tool-json");
+  assert.equal(usingDisplay.stage, "using_tool");
+  assert.deepEqual(usingDisplay.args, { query: "progress log", max_results: 2 });
+
+  const resultDisplay = JSON.parse(items[2].details.displayJson);
+  assert.equal(resultDisplay.type, "tool_result");
+  assert.equal(resultDisplay.tool_name, "tavily_search");
+  assert.equal(resultDisplay.tool_label, "联网搜索");
+  assert.equal(resultDisplay.tool_call_id, "tool-json");
+  assert.equal(resultDisplay.status, "success");
+  assert.deepEqual(resultDisplay.content, { ok: true, items: [{ title: "A" }] });
+  assert.equal("records" in resultDisplay, false);
+  assert.equal(items[1].details.displayJson.includes("call-partial"), false);
+  assert.equal(JSON.parse(items[0].details.rawJson).type, "tool_call");
+  assert.equal(JSON.parse(items[1].details.rawJson).type, "tool_call");
+  assert.equal(JSON.parse(items[2].details.rawJson).type, "tool_result");
 
   const rawLines = buildLogClipboardText(logs).split("\n").map((line) => JSON.parse(line));
   assert.equal(rawLines.length, 3);
@@ -528,7 +554,7 @@ test("buildLiveLogItems projects tool rows as one lifecycle display JSON", () =>
 
 test("buildLiveLogItems truncates oversized tool result display JSON only", () => {
   const oversizedContent = `${"x".repeat(105 * 1024)}TAIL_MARKER`;
-  const [toolItem] = buildLiveLogItems([
+  const items = buildLiveLogItems([
     {
       id: "call",
       type: "tool_call",
@@ -578,16 +604,18 @@ test("buildLiveLogItems truncates oversized tool result display JSON only", () =
     },
   ], "complete");
 
+  const toolItem = items[1];
+  assert.equal(items.length, 2);
   assert.equal(toolItem?.kind, "tool");
   if (toolItem?.kind !== "tool") {
-    throw new Error("expected a tool row");
+    throw new Error("expected a tool result row");
   }
   const display = JSON.parse(toolItem.details.displayJson);
-  assert.equal(display.type, "tool_lifecycle");
-  assert.equal(display.tool_result.content_truncated, true);
-  assert.equal(display.tool_result.content.truncated, true);
-  assert.equal(display.tool_result.content.preview.length, 4096);
-  assert.equal(display.tool_result.content_truncation.max_serialized_size_bytes, 100 * 1024);
+  assert.equal(display.type, "tool_result");
+  assert.equal(display.content_truncated, true);
+  assert.equal(display.content.truncated, true);
+  assert.equal(display.content.preview.length, 4096);
+  assert.equal(display.content_truncation.max_serialized_size_bytes, 100 * 1024);
   assert.equal(toolItem.details.rawJson.includes("TAIL_MARKER"), true);
   assert.equal(toolItem.details.displayJson.includes("TAIL_MARKER"), false);
 });
@@ -800,19 +828,24 @@ test("buildLiveLogItems renders DeepAgents stream order with segmented thinking 
   const labels = items.map((item) => (item.kind === "status" ? item.text : item.title));
 
   assert.deepEqual(labels, [
-    "AI正在思考...",
+    "AI正在思考",
+    "准备调用联网搜索",
+    "调用联网搜索",
     "联网搜索已返回结果",
-    "正在整理工具结果...",
-    "AI正在思考...",
+    "状态已更新",
+    "AI正在思考",
+    "调用联网搜索",
     "联网搜索已返回结果",
     "AI正在生成结果",
-    "模型输出已完成",
+    "状态已更新",
     "任务已完成",
-    "回答已完成",
   ]);
   assert.equal(labels.includes("正在准备任务..."), false);
+  assert.equal(labels.includes("正在整理工具结果..."), false);
+  assert.equal(labels.includes("模型输出已完成"), false);
+  assert.equal(labels.includes("状态已更新"), true);
   assert.equal(labels.includes("State snapshot"), false);
-  assert.equal(labels.at(-1), "回答已完成");
+  assert.equal(labels.includes("回答已完成"), false);
 
   const firstTool = items[1];
   assert.equal(firstTool?.kind, "tool");
@@ -820,20 +853,20 @@ test("buildLiveLogItems renders DeepAgents stream order with segmented thinking 
     throw new Error("expected first tool row");
   }
   assert.equal(firstTool.createdAt, "2026-05-14T05:15:25.000Z");
-  assert.equal(firstTool.completedAt, "2026-05-14T05:15:28.000Z");
-  assert.match(formatLiveLogItemTime(firstTool), /-/);
-  assert.deepEqual(
-    JSON.parse(firstTool.details.rawJson).records.map((record: { type: string }) => record.type),
-    ["tool_call", "tool_call", "tool_result"],
-  );
+  assert.equal(firstTool.completedAt, undefined);
+  assert.equal(formatLiveLogItemTime(firstTool), formatTime(firstTool.createdAt));
+  assert.equal(JSON.parse(firstTool.details.rawJson).type, "tool_call");
 
   const firstThinking = items[0];
-  const secondThinking = items[3];
+  const firstStatusUpdate = items[4];
+  const secondThinking = items[5];
   assert.equal(firstThinking?.kind, "status");
+  assert.equal(firstStatusUpdate?.kind, "status");
   assert.equal(secondThinking?.kind, "status");
   assert.equal(firstThinking?.details.rawJson.includes("Need verify."), false);
   assert.equal(secondThinking?.details.displayJson.includes("Need verify."), true);
-  assert.equal(items[2]?.details.rawJson.includes("values_snapshot"), true);
+  assert.equal(firstStatusUpdate?.details.rawJson.includes("values_snapshot"), true);
+  assert.equal(firstStatusUpdate?.details.rawJson.includes('"type": "status_update"'), true);
   assert.equal(firstThinking?.details.displayJson.includes("values_snapshot"), false);
   assert.equal(
     JSON.parse(firstThinking?.details.displayJson ?? "{}").payload.thinking_stream.content,
@@ -841,7 +874,7 @@ test("buildLiveLogItems renders DeepAgents stream order with segmented thinking 
   );
 });
 
-test("buildLiveLogItems folds internal state updates into Chinese progress stages", () => {
+test("buildLiveLogItems shows status updates as a generic compact row while retaining diagnostics", () => {
   const items = buildLiveLogItems(
     [
       {
@@ -907,12 +940,16 @@ test("buildLiveLogItems folds internal state updates into Chinese progress stage
 
   assert.deepEqual(
     items.map((item) => (item.kind === "status" ? item.text : item.title)),
-    ["正在准备任务...", "AI正在思考..."],
+    ["状态已更新"],
   );
   const lastItem = items.at(-1);
   assert.equal(lastItem?.kind === "status" ? lastItem.active : false, true);
   assert.equal(
     JSON.stringify(items.map((item) => item.kind === "status" ? item.text : item.title)).includes("Middleware"),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(items.map((item) => item.kind === "status" ? item.text : item.title)).includes("正在准备任务..."),
     false,
   );
   assert.equal(JSON.stringify(items).includes("PatchToolCallsMiddleware.before_agent"), true);
@@ -939,8 +976,58 @@ test("buildLiveLogItems does not treat model state updates as final answer gener
 
   assert.deepEqual(
     items.map((item) => (item.kind === "status" ? item.text : item.title)),
-    ["AI正在思考..."],
+    ["状态已更新"],
   );
+});
+
+test("buildLiveLogItems keeps final_answer only in diagnostics instead of a visible row", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "completed",
+        type: "task_completed",
+        title: "任务已完成。",
+        live: {
+          schemaVersion: 1,
+          kind: "status",
+          stage: "completed",
+          displayText: "任务已完成",
+          parameterItems: [],
+        },
+        rawRecord: {
+          id: "completed",
+          type: "task_completed",
+          message: "任务已完成。",
+        },
+      },
+      {
+        id: "final",
+        type: "final_answer",
+        title: "Final answer generated",
+        live: {
+          schemaVersion: 1,
+          kind: "answer_status",
+          stage: "completed",
+          displayText: "回答已完成",
+          parameterItems: [],
+        },
+        rawRecord: {
+          id: "final",
+          type: "final_answer",
+          message: "Final answer generated",
+        },
+      },
+    ],
+    "complete",
+  );
+
+  assert.deepEqual(
+    items.map((item) => (item.kind === "status" ? item.text : item.title)),
+    ["任务已完成"],
+  );
+  assert.equal(items[0]?.details.displayJson.includes('"type": "task_completed"'), true);
+  assert.equal(items[0]?.details.displayJson.includes('"type": "final_answer"'), true);
+  assert.equal(items[0]?.details.displayJson.includes("Final answer generated"), true);
 });
 
 test("buildLiveLogItems aggregates assistant stream chunks into a generation row", () => {
@@ -1125,17 +1212,17 @@ test("buildLiveLogItems shows thinking stream content inside thinking diagnostic
 
   assert.deepEqual(
     items.map((item) => (item.kind === "status" ? item.text : item.title)),
-    ["AI正在思考..."],
+    ["状态已更新", "AI正在思考"],
   );
-  assert.equal("rows" in (items[0]?.details ?? {}), false);
-  assert.equal(items[0]?.details.rawJson.includes('"assistant_thinking_delta"'), true);
-  const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
+  assert.equal("rows" in (items[1]?.details ?? {}), false);
+  assert.equal(items[1]?.details.rawJson.includes('"assistant_thinking_delta"'), true);
+  const display = JSON.parse(items[1]?.details.displayJson ?? "{}");
   assert.equal(display.type, "assistant_thinking_delta");
   assert.equal(display.payload.thinking_stream.content, "先判断是否需要联网。再选择搜索工具。");
   assert.equal("chunks" in display.payload.thinking_stream, false);
   assert.equal("chunk_count" in display.payload.thinking_stream, false);
   assert.equal("accumulated_content" in display.payload.thinking_stream, false);
-  assert.equal(items[0]?.details.displayJson.includes("再选择搜索工具"), true);
+  assert.equal(items[1]?.details.displayJson.includes("再选择搜索工具"), true);
 });
 
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
@@ -1194,18 +1281,31 @@ test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
     },
   ], "complete");
 
-  assert.equal(items.length, 2);
+  assert.equal(items.length, 4);
   const firstItem = items[0];
   const secondItem = items[1];
+  const thirdItem = items[2];
+  const fourthItem = items[3];
   assert.equal(firstItem?.kind, "tool");
   assert.equal(secondItem?.kind, "tool");
-  if (firstItem?.kind !== "tool" || secondItem?.kind !== "tool") {
-    throw new Error("expected two tool live items");
+  assert.equal(thirdItem?.kind, "tool");
+  assert.equal(fourthItem?.kind, "tool");
+  if (
+    firstItem?.kind !== "tool" ||
+    secondItem?.kind !== "tool" ||
+    thirdItem?.kind !== "tool" ||
+    fourthItem?.kind !== "tool"
+  ) {
+    throw new Error("expected four tool live items");
   }
-  assert.equal(firstItem.title, "读取文件已返回结果");
-  assert.equal(firstItem.resultText, "返回了 1 条结果");
-  assert.equal(secondItem.title, "读取文件暂无可用结果");
-  assert.equal(secondItem.resultText, "未找到可用结果，正在尝试其他方式");
+  assert.equal(firstItem.title, "调用读取文件");
+  assert.equal(firstItem.parameterText, "relative_path=uploads/a.md");
+  assert.equal(secondItem.title, "调用读取文件");
+  assert.equal(secondItem.parameterText, "relative_path=uploads/b.md");
+  assert.equal(thirdItem.title, "读取文件已返回结果");
+  assert.equal(thirdItem.resultText, "返回了 1 条结果");
+  assert.equal(fourthItem.title, "读取文件暂无可用结果");
+  assert.equal(fourthItem.resultText, "未找到可用结果，正在尝试其他方式");
 });
 
 test("buildLogClipboardText copies orchestration fallback as JSONL", () => {
@@ -1390,7 +1490,7 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes('className="liveToolPayload"'), false);
   assert.equal(conversationSource.includes("<article className={statusClassName}"), false);
   assert.match(conversationSource, /className=\{`\$\{statusClassName\} liveStatusRow-details`\}/);
-  assert.match(conversationSource, /key=\{item\.id\}[\s\S]*?onToggle=\{syncOpenLogDetailCount\}/);
+  assert.match(conversationSource, /key=\{item\.id\}[\s\S]*?onToggle=\{syncOpenLogDetailCounts\}/);
   assert.equal(conversationSource.includes("<dl>"), false);
   assert.equal(conversationSource.includes("<dt>{row.label}</dt>"), false);
   assert.equal(conversationSource.includes("<dd>{row.value}</dd>"), false);
@@ -1399,10 +1499,14 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("<pre>{details.displayJson}</pre>"), true);
   assert.equal(conversationSource.includes("details.rawJson"), false);
   assert.equal(conversationSource.includes("liveLogCopyButton"), true);
-  assert.equal(conversationSource.includes("onToggle={syncOpenLogDetailCount}"), true);
-  assert.equal(conversationSource.includes("collapseExpandedLogDetails"), true);
-  assert.equal(conversationSource.includes("countOpenLogDetails(logListRefs.current.values())"), true);
-  assert.equal(conversationSource.includes('className="copyButton traceCollapseButton"'), true);
+  assert.equal(conversationSource.includes("onToggle={syncOpenLogDetailCounts}"), true);
+  assert.equal(conversationSource.includes("toggleRunLogDetails"), true);
+  assert.equal(conversationSource.includes("setLogDetailsOpen(logList, open)"), true);
+  assert.equal(conversationSource.includes("countOpenLogDetails([logList])"), true);
+  assert.equal(conversationSource.includes('className="copyButton traceCollapseButton"'), false);
+  assert.equal(conversationSource.includes("traceLogToggleButton"), true);
+  assert.equal(conversationSource.includes("全部展开"), true);
+  assert.equal(conversationSource.includes("全部折叠"), true);
   assert.equal(conversationSource.includes('"traceCopyButton"'), true);
   assert.equal(conversationSource.includes("event.preventDefault();"), true);
   assert.equal(conversationSource.includes("event.stopPropagation();"), true);
@@ -1425,8 +1529,20 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   );
   assert.match(
     cssSource,
-    /\.copyButton\.traceCollapseButton::after\s*\{[\s\S]*?m17 11-5-5-5 5[\s\S]*?center \/ 15px 15px no-repeat;/,
+    /\.traceLogToggleButton\s*\{[\s\S]*?min-width: 82px;[\s\S]*?height: 28px;[\s\S]*?border: 1px solid rgba\(250, 249, 245, 0\.1\);[\s\S]*?background: var\(--surface-dark-soft\);/,
   );
+  assert.match(
+    cssSource,
+    /\.traceLogToggleButton::after\s*\{[\s\S]*?m6 9 6 6 6-6[\s\S]*?center \/ 13px 13px no-repeat;/,
+  );
+  assert.match(cssSource, /\.traceLogToggleButton::before\s*\{[\s\S]*?display: none;/);
+  assert.match(
+    cssSource,
+    /\.traceLogToggleButton-open::after\s*\{[\s\S]*?m18 15-6-6-6 6/,
+  );
+  assert.equal(cssSource.includes(".traceLogToggleButton-open {\n"), false);
+  assert.equal(cssSource.includes("rgba(204, 120, 92, 0.68)"), false);
+  assert.equal(cssSource.includes(".copyButton.traceCollapseButton"), false);
   assert.match(
     cssSource,
     /\.liveLogDiagnostics pre\s*\{[\s\S]*?padding: 10px;/,
@@ -2247,7 +2363,7 @@ test("buildLiveLogItems default fallback is AI thinking", () => {
   const activeItem = items.find(i => i.kind === "status" && i.active);
   assert.ok(activeItem, "should have an active status item");
   if (activeItem && activeItem.kind === "status") {
-    assert.equal(activeItem.text, "AI正在思考...");
+    assert.equal(activeItem.text, "AI正在思考");
   }
 });
 

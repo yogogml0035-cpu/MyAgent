@@ -1264,11 +1264,6 @@ p {
   box-shadow: 0 0 0 2px rgba(204, 120, 92, 0.08);
 }
 
-.copyButton.traceCollapseButton::after {
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m17 11-5-5-5 5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='m17 18-5-5-5 5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 15px 15px no-repeat;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m17 11-5-5-5 5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3Cpath d='m17 18-5-5-5 5' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 15px 15px no-repeat;
-}
-
 .copyButton::before {
   display: none;
 }
@@ -1317,6 +1312,68 @@ p {
 .copyButton-copied span::before,
 .copyButton-copied span::after {
   display: none;
+}
+
+.traceLogToggleButton {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 82px;
+  height: 28px;
+  flex: 0 0 auto;
+  gap: 7px;
+  padding: 0 9px 0 11px;
+  overflow: hidden;
+  border: 1px solid rgba(250, 249, 245, 0.1);
+  border-radius: var(--radius-sm);
+  background: var(--surface-dark-soft);
+  color: var(--on-dark-soft);
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    box-shadow 0.16s ease,
+    color 0.16s ease,
+    transform 0.16s ease;
+}
+
+.traceLogToggleButton:hover:not(:disabled) {
+  border-color: rgba(250, 249, 245, 0.16);
+  background: var(--surface-dark-elevated);
+  color: var(--on-dark);
+  box-shadow: 0 0 0 2px rgba(250, 249, 245, 0.08);
+  transform: translateY(-1px);
+}
+
+.traceLogToggleButton:focus-visible {
+  border-color: rgba(250, 249, 245, 0.1);
+  background: var(--surface-dark-soft);
+  color: var(--on-dark-soft);
+  outline: none;
+  box-shadow: 0 0 0 2px rgba(250, 249, 245, 0.1);
+}
+
+.traceLogToggleButton::before {
+  display: none;
+}
+
+.traceLogToggleButton::after {
+  width: 13px;
+  height: 13px;
+  flex: 0 0 auto;
+  background: currentColor;
+  content: "";
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 13px 13px no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 13px 13px no-repeat;
+}
+
+.traceLogToggleButton-open::after {
+  -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m18 15-6-6-6 6' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='m18 15-6-6-6 6' fill='none' stroke='black' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 .logList {

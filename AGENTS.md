@@ -138,6 +138,7 @@
 - 默认后端开发端口为 `8001`，默认前端开发端口为 `3001`；前端 `auto` API base 默认按页面 hostname 访问后端 `8001`。
 - WSL 本地开发启动入口在 `scripts/start-dev-wsl.ps1`，由 Windows PowerShell 拉起 WSL 前后端终端；`scripts/dev-terminal-runner.sh` 是新开 WSL 标签页内的服务 runner，`scripts/stop-dev-ports.sh` 负责释放默认或指定端口。
 - 修改本地脚本时至少运行 `powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -Help`、`powershell.exe -NoProfile -ExecutionPolicy Bypass -File scripts/start-dev-wsl.ps1 -DryRun`、`bash -n scripts/dev-terminal-runner.sh`、`bash -n scripts/stop-dev-ports.sh`、`./scripts/stop-dev-ports.sh --dry-run` 和 `git diff --check`。
+- 本地开发或 E2E 验收需要前后端服务时，默认优先复用用户当前已经运行的 `3001`/`8001` 服务；先探测端口、健康状态、页面/接口可访问性和是否指向当前仓库，再决定是否新启服务。禁止为了“干净环境”直接 kill 或重启用户服务；只有确认端口进程不是当前仓库、环境/缓存与本次验收冲突、服务不可用、或 E2E 必须使用隔离 `NEXT_DIST_DIR=.next-dev-e2e` 且现有服务无法满足时，才允许说明原因后重启或换端口。若服务由智能体本次启动，验收结束后应清理；若服务原本由用户启动，不得擅自停止。
 - 前端开发服务必须使用隔离的 `NEXT_DIST_DIR=.next-dev`，生产构建保留 `.next`；不要让 `next dev` 和 `next build` 写同一个目录。
 - 浏览器端 E2E 前端服务默认固定使用 `NEXT_DIST_DIR=.next-dev-e2e`；不要按场景随意创建 `.next-dev-e2e-*` 目录，除非确实需要并行隔离多个 Next dev server，且验收结束后必须清理临时目录。
 - 仓库位于 `/mnt/c`、`/mnt/d` 等 Windows 挂载盘时，WSL 文件事件可能不会稳定触发；本地开发默认启用轮询 watcher。前端保持 `watchOptions.pollIntervalMs`、`WATCHPACK_POLLING=true`、`CHOKIDAR_USEPOLLING=true`，后端保持 `WATCHFILES_FORCE_POLLING=true` 和 `uvicorn --reload`。只有仓库迁移到 WSL 原生 Linux 文件系统且确认热更新稳定时，才可通过 `MYAGENT_DEV_FORCE_POLLING=0` 关闭脚本里的轮询。
@@ -183,7 +184,7 @@ git diff --check
 
 - 用户请求修复代码或新增功能时，默认必须执行本节 E2E 场景测试，除非本次修改被明确限定为纯文档/纯注释且不改变运行行为。
 - 新的或不稳定的网页流程先用 Chrome DevTools MCP 探路：打开本地页面，走通关键用户路径，观察 console、network、DOM 状态和截图，明确哪些信号应被 Playwright 固化。
-- 启动实际后端与前端服务实例，而不是只跑离线测试。
+- 启动或复用实际后端与前端服务实例，而不是只跑离线测试；复用已有服务时必须在交付说明中注明使用了现有服务、访问 URL 和未停止用户服务。
 - 将探路中确认的稳定断言写入 Playwright spec 后，执行当前仓库为本次需求准备的浏览器端 E2E 用例；若缺失则先补齐，再交付行为修改。
 - 在网页端完成人工复核并截图，截图存入 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`；这些截图不提交到 git。
 - 截图验收要高频且足量：在每个关键交互或状态变化后及时截图，并补充关键区域截图，避免因截图过少、过晚或只覆盖整页远景而漏掉细节问题。

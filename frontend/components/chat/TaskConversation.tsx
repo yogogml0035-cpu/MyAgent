@@ -65,6 +65,16 @@ export function collapseOpenLogDetails(logLists: Iterable<HTMLElement>) {
   return collapsedCount;
 }
 
+export function setLogDetailsOpen(logList: HTMLElement, open: boolean) {
+  const selector = open ? "details:not([open])" : "details[open]";
+  let changedCount = 0;
+  logList.querySelectorAll<HTMLDetailsElement>(selector).forEach((detail) => {
+    detail.open = open;
+    changedCount += 1;
+  });
+  return changedCount;
+}
+
 type TaskConversationProps = {
   activeTask: boolean;
   conversationStreamItems: ConversationStreamItem[];
@@ -91,16 +101,27 @@ export function TaskConversation({
   const conversationCanvasRef = useRef<HTMLElement | null>(null);
   const logListRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const logListPinnedRefs = useRef<Map<string, boolean>>(new Map());
-  const [openLogDetailCount, setOpenLogDetailCount] = useState(0);
+  const [openLogDetailCounts, setOpenLogDetailCounts] = useState<Record<string, number>>({});
 
-  const syncOpenLogDetailCount = useCallback(() => {
-    setOpenLogDetailCount(countOpenLogDetails(logListRefs.current.values()));
+  const syncOpenLogDetailCounts = useCallback(() => {
+    const counts: Record<string, number> = {};
+    logListRefs.current.forEach((logList, runId) => {
+      counts[runId] = countOpenLogDetails([logList]);
+    });
+    setOpenLogDetailCounts(counts);
   }, []);
 
-  const collapseExpandedLogDetails = useCallback(() => {
-    collapseOpenLogDetails(logListRefs.current.values());
-    syncOpenLogDetailCount();
-  }, [syncOpenLogDetailCount]);
+  const toggleRunLogDetails = useCallback((runId: string, open: boolean) => {
+    const logList = logListRefs.current.get(runId);
+    if (!logList) {
+      return;
+    }
+    setLogDetailsOpen(logList, open);
+    if (open) {
+      logListPinnedRefs.current.set(runId, false);
+    }
+    syncOpenLogDetailCounts();
+  }, [syncOpenLogDetailCounts]);
 
   useEffect(() => {
     if (!hasConversation) {
@@ -127,11 +148,11 @@ export function TaskConversation({
 
     scrollPinnedLists();
     const animationFrameId = window.requestAnimationFrame(scrollPinnedLists);
-    syncOpenLogDetailCount();
+    syncOpenLogDetailCounts();
     return () => {
       window.cancelAnimationFrame(animationFrameId);
     };
-  }, [conversationStreamItems, syncOpenLogDetailCount]);
+  }, [conversationStreamItems, syncOpenLogDetailCounts]);
 
   useEffect(() => {
     logListRefs.current.forEach((el, runId) => {
@@ -337,6 +358,13 @@ export function TaskConversation({
     const liveItems = buildLiveLogItems(group.logs, group.status);
     const logCopyKey = `logs:${group.runId}`;
     const isLogCopied = copiedCopyKey === logCopyKey;
+    const openLogDetailCount = openLogDetailCounts[group.runId] ?? 0;
+    const totalLogDetailCount = liveItems.length;
+    const allLogDetailsOpen = totalLogDetailCount > 0 && openLogDetailCount >= totalLogDetailCount;
+    const toggleLogDetailsLabel = allLogDetailsOpen ? "全部折叠" : "全部展开";
+    const toggleLogDetailsTitle = allLogDetailsOpen
+      ? `折叠${group.title}全部日志`
+      : `展开${group.title}全部日志`;
     const logCopyButtonClassName = [
       "copyButton",
       "traceCopyButton",
@@ -344,10 +372,12 @@ export function TaskConversation({
     ]
       .filter(Boolean)
       .join(" ");
-    const collapseAllLabel =
-      openLogDetailCount > 0
-        ? `折叠全部已展开日志（${openLogDetailCount}条）`
-        : "暂无已展开日志可折叠";
+    const logToggleButtonClassName = [
+      "traceLogToggleButton",
+      allLogDetailsOpen ? "traceLogToggleButton-open" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
 
     const logListId = `logList:${group.runId}`;
 
@@ -367,14 +397,15 @@ export function TaskConversation({
             </div>
             <div className="traceActions" aria-label={`${group.title}日志操作`}>
               <button
-                aria-label={collapseAllLabel}
-                className="copyButton traceCollapseButton"
-                disabled={openLogDetailCount === 0}
-                onClick={collapseExpandedLogDetails}
-                title="折叠全部已展开日志"
+                aria-expanded={allLogDetailsOpen}
+                aria-label={toggleLogDetailsTitle}
+                className={logToggleButtonClassName}
+                disabled={totalLogDetailCount === 0}
+                onClick={() => toggleRunLogDetails(group.runId, !allLogDetailsOpen)}
+                title={toggleLogDetailsTitle}
                 type="button"
               >
-                <span aria-hidden="true" />
+                <span>{toggleLogDetailsLabel}</span>
               </button>
               <button
                 aria-label={isLogCopied ? `已复制${group.title}原始诊断日志` : `复制${group.title}原始诊断日志`}
@@ -432,7 +463,7 @@ export function TaskConversation({
         .filter(Boolean)
         .join(" ");
       return (
-        <details className={toolClassName} key={item.id} onToggle={syncOpenLogDetailCount}>
+        <details className={toolClassName} key={item.id} onToggle={syncOpenLogDetailCounts}>
           <summary>
             <time>{formatLiveLogItemTime(item)}</time>
             <strong className="liveToolSummaryText" title={toolSummaryLine}>
@@ -470,7 +501,7 @@ export function TaskConversation({
       <details
         className={`${statusClassName} liveStatusRow-details`}
         key={item.id}
-        onToggle={syncOpenLogDetailCount}
+        onToggle={syncOpenLogDetailCounts}
       >
         <summary>{statusSummary}</summary>
         {renderLiveLogDiagnostics(item.details)}
@@ -518,7 +549,7 @@ export function TaskConversation({
   }
 
   function formatToolSummaryLine(item: Extract<LiveLogItem, { kind: "tool" }>) {
-    return [item.title, item.toolName, item.parameterText].filter(Boolean).join(" · ");
+    return item.title;
   }
 
   return (

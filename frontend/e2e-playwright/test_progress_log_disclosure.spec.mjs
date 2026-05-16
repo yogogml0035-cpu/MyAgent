@@ -420,31 +420,40 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     const logPanel = page.getByRole("region", { name: /进度日志/ }).first();
     await expect(logPanel).toBeVisible();
     const rows = logPanel.locator(".liveStatusRow, .liveToolCard");
-    await expect(rows).toHaveCount(9);
-    await expect(rows.nth(0).locator("summary").getByText("AI正在思考...")).toBeVisible();
-    await expect(rows.nth(1).locator("summary").getByText("联网搜索已返回结果")).toBeVisible();
-    await expect(rows.nth(2).locator("summary").getByText("正在整理工具结果...")).toBeVisible();
-    await expect(rows.nth(3).locator("summary").getByText("AI正在思考...")).toBeVisible();
-    await expect(rows.nth(4).locator("summary").getByText("联网搜索已返回结果")).toBeVisible();
-    await expect(rows.nth(5).locator("summary").getByText("AI正在生成结果")).toBeVisible();
-    await expect(rows.nth(6).locator("summary").getByText("模型输出已完成")).toBeVisible();
-    await expect(rows.nth(7).locator("summary").getByText("任务已完成")).toBeVisible();
-    await expect(rows.nth(8).locator("summary").getByText("回答已完成")).toBeVisible();
-    await expect(logPanel).not.toContainText("正在准备任务...");
+    await expect(rows).toHaveCount(11);
+    await expect(rows.nth(0).locator("summary").getByText("AI正在思考")).toBeVisible();
+    await expect(rows.nth(1).locator("summary").getByText("准备调用联网搜索")).toBeVisible();
+    await expect(rows.nth(2).locator("summary").getByText("调用联网搜索")).toBeVisible();
+    await expect(rows.nth(3).locator("summary").getByText("联网搜索已返回结果")).toBeVisible();
+    await expect(rows.nth(4).locator("summary").getByText("状态已更新")).toBeVisible();
+    await expect(rows.nth(5).locator("summary").getByText("AI正在思考")).toBeVisible();
+    await expect(rows.nth(6).locator("summary").getByText("调用联网搜索")).toBeVisible();
+    await expect(rows.nth(7).locator("summary").getByText("联网搜索已返回结果")).toBeVisible();
+    await expect(rows.nth(8).locator("summary").getByText("AI正在生成结果")).toBeVisible();
+    await expect(rows.nth(9).locator("summary").getByText("状态已更新")).toBeVisible();
+    await expect(rows.nth(10).locator("summary").getByText("任务已完成")).toBeVisible();
     const collapsedSummaryText = (await logPanel.locator("summary").allTextContents()).join("\n");
     expect(collapsedSummaryText).not.toContain("State snapshot");
-    await expect(logPanel.locator("summary .liveLogCopyButton")).toHaveCount(9);
-    await expect(rows.nth(5).locator("pre")).toBeHidden();
-    await expect(rows.nth(1).locator("summary time")).toContainText("-");
+    expect(collapsedSummaryText).not.toContain("正在准备任务...");
+    expect(collapsedSummaryText).not.toContain("正在整理工具结果...");
+    expect(collapsedSummaryText).not.toContain("模型输出已完成");
+    expect(collapsedSummaryText).not.toContain("回答已完成");
+    expect(collapsedSummaryText).toContain("状态已更新");
+    await expect(logPanel.locator("summary .liveLogCopyButton")).toHaveCount(11);
+    await expect(rows.nth(8).locator("pre")).toBeHidden();
+    await expect(rows.nth(1).locator("summary time")).not.toContainText("-");
     const toolSummaryLine = rows.nth(1).locator("summary .liveToolSummaryText");
-    await expect(toolSummaryLine).toContainText("联网搜索已返回结果");
-    await expect(toolSummaryLine).toContainText("tavily_search");
-    await expect(toolSummaryLine).toContainText("query=progress log e2e");
+    await expect(toolSummaryLine).toContainText("准备调用联网搜索");
+    await expect(toolSummaryLine).not.toContainText("tavily_search");
+    await expect(toolSummaryLine).not.toContainText("query=progress log e2e");
     await expect(rows.nth(1).locator("summary .liveToolSummaryMeta")).toHaveCount(0);
     await expect(toolSummaryLine.locator("code")).toHaveCount(0);
     expect(await toolSummaryLine.evaluate((element) => getComputedStyle(element).whiteSpace)).toBe("nowrap");
-    const collapseAllButton = logPanel.locator(".traceHeader .traceCollapseButton");
-    await expect(collapseAllButton).toBeDisabled();
+    const logToggleButton = logPanel.locator(".traceHeader .traceLogToggleButton");
+    const rawLogCopyButton = logPanel.locator(".traceHeader .traceCopyButton");
+    await expect(logToggleButton).toHaveText("全部展开");
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "false");
+    await expect(logToggleButton).toHaveAttribute("aria-label", "展开第 1 轮全部日志");
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "02-progress-log-collapsed.png"),
@@ -452,23 +461,62 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await rows.nth(1).screenshot({
       path: path.join(evidenceDir, "02-tool-row-collapsed-detail.png"),
     });
+    await logToggleButton.screenshot({
+      path: path.join(evidenceDir, "02-log-toggle-collapsed-detail.png"),
+    });
+    await logToggleButton.click();
+    await expect
+      .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
+      .toBe(11);
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(220);
+    await expect(logToggleButton).toHaveText("全部折叠");
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "true");
+    const expandedToggleStyles = await logToggleButton.evaluate((element) => {
+      const button = getComputedStyle(element);
+      return {
+        backgroundColor: button.backgroundColor,
+        borderColor: button.borderColor,
+      };
+    });
+    const rawLogCopyButtonStylesInitial = await rawLogCopyButton.evaluate((element) => {
+      const button = getComputedStyle(element);
+      return {
+        backgroundColor: button.backgroundColor,
+        borderColor: button.borderColor,
+      };
+    });
+    expect(expandedToggleStyles.backgroundColor).toBe(rawLogCopyButtonStylesInitial.backgroundColor);
+    expect(expandedToggleStyles.borderColor).toBe(rawLogCopyButtonStylesInitial.borderColor);
+    await page.screenshot({
+      fullPage: true,
+      path: path.join(evidenceDir, "02-all-log-rows-expanded-by-toggle.png"),
+    });
+    await logToggleButton.screenshot({
+      path: path.join(evidenceDir, "02-log-toggle-expanded-detail.png"),
+    });
+    await logToggleButton.click();
+    await expect
+      .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
+      .toBe(0);
+    await expect(logToggleButton).toHaveText("全部展开");
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "false");
 
-    const rawLogCopyButton = logPanel.locator(".traceHeader .traceCopyButton");
     await rawLogCopyButton.click();
     const copiedRawJsonl = await page.evaluate(() => navigator.clipboard.readText());
     const copiedRawLines = copiedRawJsonl.trim().split("\n").map((line) => JSON.parse(line));
     expect(copiedRawLines.some((line) => line.type === "tool_call" && line.payload?.partial === true)).toBe(true);
     expect(copiedRawLines.some((line) => line.type === "tool_result" && line.payload?.content === "2 results")).toBe(true);
 
-    const collapsedGenerationCopyButton = rows.nth(5).locator("summary .liveLogCopyButton");
+    const collapsedGenerationCopyButton = rows.nth(8).locator("summary .liveLogCopyButton");
     await collapsedGenerationCopyButton.click();
-    await expect(rows.nth(5)).not.toHaveAttribute("open", "");
+    await expect(rows.nth(8)).not.toHaveAttribute("open", "");
     const collapsedCopiedGenerationJson = await page.evaluate(() => navigator.clipboard.readText());
     expect(JSON.parse(collapsedCopiedGenerationJson).payload.answer_stream.content).toContain(
       "这段原始流式内容会显示在展开日志里。",
     );
 
-    for (let index = 0; index < 9; index += 1) {
+    for (let index = 0; index < 11; index += 1) {
       const row = rows.nth(index);
       await expect(row).toHaveJSProperty("tagName", "DETAILS");
       const summary = row.locator("summary");
@@ -482,39 +530,39 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
       expect(timeBox.x - rowBox.x).toBeLessThan(20);
     }
 
-    await rows.nth(5).locator("summary").click();
-    await expect(rows.nth(5)).toHaveAttribute("open", "");
-    await expect(rows.nth(5).locator("dl")).toHaveCount(0);
-    await expect(rows.nth(5).locator(".liveLogDiagnosticRows")).toHaveCount(0);
-    await expect(rows.nth(5).locator("summary .liveLogCopyButton")).toBeVisible();
-    await expect(rows.nth(5).locator("pre")).toContainText('"type": "assistant_answer_delta"');
-    await expect(rows.nth(5).locator("pre")).toContainText('"content"');
-    await expect(rows.nth(5).locator("pre")).not.toContainText('"accumulated_content"');
-    await expect(rows.nth(5).locator("pre")).not.toContainText('"chunks"');
-    await expect(rows.nth(5).locator("pre")).not.toContainText('"chunk_count"');
-    await expect(rows.nth(5).locator("pre")).toContainText("这段原始流式内容会显示在展开日志里。");
-    await expect(rows.nth(5)).not.toContainText("事件类型");
-    await expect(rows.nth(5)).not.toContainText("显示方式");
-    const generationCopyButton = rows.nth(5).locator("summary .liveLogCopyButton");
-    const generationSummaryBox = await rows.nth(5).locator("summary").boundingBox();
+    await rows.nth(8).locator("summary").click();
+    await expect(rows.nth(8)).toHaveAttribute("open", "");
+    await expect(rows.nth(8).locator("dl")).toHaveCount(0);
+    await expect(rows.nth(8).locator(".liveLogDiagnosticRows")).toHaveCount(0);
+    await expect(rows.nth(8).locator("summary .liveLogCopyButton")).toBeVisible();
+    await expect(rows.nth(8).locator("pre")).toContainText('"type": "assistant_answer_delta"');
+    await expect(rows.nth(8).locator("pre")).toContainText('"content"');
+    await expect(rows.nth(8).locator("pre")).not.toContainText('"accumulated_content"');
+    await expect(rows.nth(8).locator("pre")).not.toContainText('"chunks"');
+    await expect(rows.nth(8).locator("pre")).not.toContainText('"chunk_count"');
+    await expect(rows.nth(8).locator("pre")).toContainText("这段原始流式内容会显示在展开日志里。");
+    await expect(rows.nth(8)).not.toContainText("事件类型");
+    await expect(rows.nth(8)).not.toContainText("显示方式");
+    const generationCopyButton = rows.nth(8).locator("summary .liveLogCopyButton");
+    const generationSummaryBox = await rows.nth(8).locator("summary").boundingBox();
     const generationCopyBox = await generationCopyButton.boundingBox();
     expect(generationSummaryBox).toBeTruthy();
     expect(generationCopyBox).toBeTruthy();
     expect(generationCopyBox.y).toBeLessThan(generationSummaryBox.y + generationSummaryBox.height);
     await generationCopyButton.click();
     await expect(generationCopyButton).toHaveAttribute("aria-label", "已复制此行日志JSON");
-    await expect(rows.nth(5)).toHaveAttribute("open", "");
+    await expect(rows.nth(8)).toHaveAttribute("open", "");
     const copiedGenerationJson = await page.evaluate(() => navigator.clipboard.readText());
     expect(JSON.parse(copiedGenerationJson).payload.answer_stream.content).toContain(
       "这段原始流式内容会显示在展开日志里。",
     );
-    await expect(rows.nth(5).locator("dt")).toHaveCount(0);
-    await expect(rows.nth(5).locator("pre")).not.toContainText('"content_hidden": true');
+    await expect(rows.nth(8).locator("dt")).toHaveCount(0);
+    await expect(rows.nth(8).locator("pre")).not.toContainText('"content_hidden": true');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "03-answer-row-expanded.png"),
     });
-    await rows.nth(5).screenshot({
+    await rows.nth(8).screenshot({
       path: path.join(evidenceDir, "03-answer-row-expanded-detail.png"),
     });
 
@@ -524,14 +572,12 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(1).locator("p")).toHaveCount(0);
     await expect(rows.nth(1).locator(".liveToolPayload")).toHaveCount(0);
     await expect(rows.nth(1).locator("summary .liveLogCopyButton")).toBeVisible();
-    await expect(rows.nth(1).locator("pre")).toContainText('"type": "tool_lifecycle"');
+    await expect(rows.nth(1).locator("pre")).toContainText('"type": "tool_call"');
     await expect(rows.nth(1).locator("pre")).toContainText('"tool_name": "tavily_search"');
-    await expect(rows.nth(1).locator("pre")).toContainText('"tool_call"');
-    await expect(rows.nth(1).locator("pre")).toContainText('"tool_result"');
-    await expect(rows.nth(1).locator("pre")).toContainText('"query": "progress log e2e"');
-    await expect(rows.nth(1).locator("pre")).toContainText('"content": "2 results"');
+    await expect(rows.nth(1).locator("pre")).toContainText('"stage": "selecting_tool"');
+    await expect(rows.nth(1).locator("pre")).not.toContainText('"tool_result"');
+    await expect(rows.nth(1).locator("pre")).not.toContainText('"content": "2 results"');
     await expect(rows.nth(1).locator("pre")).not.toContainText('"records"');
-    await expect(rows.nth(1).locator("pre")).not.toContainText('"partial": true');
     await expect(rows.nth(1)).not.toContainText("事件类型");
     await expect(rows.nth(1)).not.toContainText("结果状态");
     await expect(rows.nth(1).locator("dt")).toHaveCount(0);
@@ -540,10 +586,10 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(1)).toHaveAttribute("open", "");
     const copiedToolJson = await page.evaluate(() => navigator.clipboard.readText());
     const copiedToolRecord = JSON.parse(copiedToolJson);
-    expect(copiedToolRecord.type).toBe("tool_lifecycle");
+    expect(copiedToolRecord.type).toBe("tool_call");
     expect(copiedToolRecord.tool_name).toBe("tavily_search");
-    expect(copiedToolRecord.tool_call.args).toEqual({ query: "progress log e2e", max_results: 5 });
-    expect(copiedToolRecord.tool_result).toEqual({ status: "success", content: "2 results" });
+    expect(copiedToolRecord.stage).toBe("selecting_tool");
+    expect(copiedToolRecord.args).toBe('{"query"');
     const successfulToolOpenBorderColor = await rows.nth(1).evaluate(
       (element) => getComputedStyle(element).borderTopColor,
     );
@@ -557,17 +603,26 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
       path: path.join(evidenceDir, "04-tool-row-expanded-detail.png"),
     });
 
-    await rows.nth(2).locator("summary").click();
-    await expect(rows.nth(2)).toHaveAttribute("open", "");
-    await expect(rows.nth(2).locator("summary .liveLogCopyButton")).toBeVisible();
-    await expect(rows.nth(2).locator("pre")).toContainText('"type": "values_snapshot"');
-    await expect(rows.nth(2).locator("pre")).toContainText('"type": "status_update"');
-
     await rows.nth(3).locator("summary").click();
     await expect(rows.nth(3)).toHaveAttribute("open", "");
     await expect(rows.nth(3).locator("summary .liveLogCopyButton")).toBeVisible();
-    await expect(rows.nth(3).locator("pre")).toContainText("I should verify with another source.");
-    await expect(rows.nth(3).locator("pre")).not.toContainText('"chunks"');
+    await expect(rows.nth(3).locator("pre")).toContainText('"type": "tool_result"');
+    await expect(rows.nth(3).locator("pre")).toContainText('"status": "success"');
+    await expect(rows.nth(3).locator("pre")).toContainText('"content": "2 results"');
+
+    await rows.nth(4).locator("summary").click();
+    await expect(rows.nth(4)).toHaveAttribute("open", "");
+    await expect(rows.nth(4).locator("summary .liveLogCopyButton")).toBeVisible();
+    await expect(rows.nth(4).locator("pre")).toContainText('"type": "status_update"');
+    await expect(rows.nth(4).locator("pre")).toContainText('"type": "values_snapshot"');
+    await expect(rows.nth(4).locator("pre")).toContainText('"display_text": "正在整理工具结果..."');
+
+    await rows.nth(5).locator("summary").click();
+    await expect(rows.nth(5)).toHaveAttribute("open", "");
+    await expect(rows.nth(5).locator("summary .liveLogCopyButton")).toBeVisible();
+    await expect(rows.nth(5).locator("pre")).toContainText('"type": "assistant_thinking_delta"');
+    await expect(rows.nth(5).locator("pre")).toContainText("I should verify with another source.");
+    await expect(rows.nth(5).locator("pre")).not.toContainText('"chunks"');
 
     await rows.nth(0).locator("summary").click();
     await expect(rows.nth(0)).toHaveAttribute("open", "");
@@ -599,26 +654,88 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
       path: path.join(evidenceDir, "06-thinking-row-expanded-detail.png"),
     });
 
-    await rows.nth(8).locator("summary").click();
-    await expect(rows.nth(8)).toHaveAttribute("open", "");
-    await expect(rows.nth(8).locator("pre")).toContainText('"type": "final_answer"');
-    await expect(rows.nth(8).locator("pre")).toContainText('"display_text": "回答已完成"');
+    await rows.nth(9).locator("summary").click();
+    await expect(rows.nth(9)).toHaveAttribute("open", "");
+    await expect(rows.nth(9).locator("pre")).toContainText('"type": "status_update"');
+    await expect(rows.nth(9).locator("pre")).toContainText('"display_text": "模型输出已完成"');
+    await rows.nth(10).locator("summary").click();
+    await expect(rows.nth(10)).toHaveAttribute("open", "");
+    await expect(rows.nth(10).locator("pre")).toContainText('"type": "task_completed"');
+    await expect(rows.nth(10).locator("pre")).toContainText('"display_text": "任务已完成"');
+    await expect(rows.nth(10).locator("pre")).toContainText('"type": "final_answer"');
+    await expect(rows.nth(10).locator("pre")).toContainText('"display_text": "回答已完成"');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "07-terminal-rows-expanded.png"),
     });
 
-    await expect(collapseAllButton).toHaveAttribute("aria-label", "折叠全部已展开日志（6条）");
-    await collapseAllButton.hover();
-    await collapseAllButton.focus();
-    await logPanel.locator(".traceHeader").screenshot({
-      path: path.join(evidenceDir, "07-collapse-all-button-hover-focus.png"),
+    await expect(logToggleButton).toHaveText("全部展开");
+    await expect(logToggleButton).toHaveAttribute("aria-label", "展开第 1 轮全部日志");
+    await expect(rawLogCopyButton).not.toHaveClass(/copyButton-copied/);
+    const toggleButtonStyles = await logToggleButton.evaluate((element) => {
+      const button = getComputedStyle(element);
+      const before = getComputedStyle(element, "::before");
+      const after = getComputedStyle(element, "::after");
+      return {
+        backgroundColor: button.backgroundColor,
+        borderColor: button.borderColor,
+        borderRadius: button.borderRadius,
+        textDecorationLine: button.textDecorationLine,
+        afterMaskImage: after.webkitMaskImage || after.maskImage,
+        beforeDisplay: before.display,
+      };
     });
-    await collapseAllButton.click();
+    const rawLogCopyButtonStyles = await rawLogCopyButton.evaluate((element) => {
+      const button = getComputedStyle(element);
+      return {
+        backgroundColor: button.backgroundColor,
+        borderColor: button.borderColor,
+      };
+    });
+    expect(toggleButtonStyles.backgroundColor).toBe(rawLogCopyButtonStyles.backgroundColor);
+    expect(toggleButtonStyles.borderColor).toBe(rawLogCopyButtonStyles.borderColor);
+    expect(toggleButtonStyles.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(toggleButtonStyles.borderRadius).not.toBe("0px");
+    expect(toggleButtonStyles.textDecorationLine).toBe("none");
+    expect(toggleButtonStyles.beforeDisplay).toBe("none");
+    await logToggleButton.screenshot({
+      path: path.join(evidenceDir, "07-log-toggle-partial-detail.png"),
+    });
+    await logToggleButton.hover();
+    await logToggleButton.focus();
+    await logPanel.locator(".traceHeader").screenshot({
+      path: path.join(evidenceDir, "07-log-toggle-hover-focus.png"),
+    });
+    await logToggleButton.click();
+    await expect
+      .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
+      .toBe(11);
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(220);
+    await expect(logToggleButton).toHaveText("全部折叠");
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "true");
+    const expandedToggleStylesLater = await logToggleButton.evaluate((element) => {
+      const button = getComputedStyle(element);
+      return {
+        backgroundColor: button.backgroundColor,
+        borderColor: button.borderColor,
+      };
+    });
+    expect(expandedToggleStylesLater.backgroundColor).toBe(rawLogCopyButtonStyles.backgroundColor);
+    expect(expandedToggleStylesLater.borderColor).toBe(rawLogCopyButtonStyles.borderColor);
+    await logToggleButton.screenshot({
+      path: path.join(evidenceDir, "07-log-toggle-expanded-detail.png"),
+    });
+    await page.screenshot({
+      fullPage: true,
+      path: path.join(evidenceDir, "07-all-log-rows-expanded-by-toggle.png"),
+    });
+    await logToggleButton.click();
     await expect
       .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
       .toBe(0);
-    await expect(collapseAllButton).toBeDisabled();
+    await expect(logToggleButton).toHaveText("全部展开");
+    await expect(logToggleButton).toHaveAttribute("aria-expanded", "false");
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "08-all-log-rows-collapsed-by-button.png"),

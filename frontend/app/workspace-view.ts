@@ -51,9 +51,11 @@ export type LiveLogDiagnostics = {
 export type LiveToolLogItem = {
   id: string;
   kind: "tool";
+  eventType: "tool_call" | "tool_result";
   createdAt?: string;
   completedAt?: string;
   level?: ExecutionLog["level"];
+  stage?: NonNullable<ExecutionLog["live"]>["stage"];
   title: string;
   toolName?: string;
   parameterText?: string;
@@ -196,8 +198,7 @@ export function buildLiveLogItems(
   status: TaskStatus = "unknown",
 ): LiveLogItem[] {
   const items: LiveLogItem[] = [];
-  const toolItemsById = new Map<string, LiveToolLogItem>();
-  const pendingToolItemsByName = new Map<string, LiveToolLogItem[]>();
+  const toolCallItemsByStageKey = new Map<string, LiveToolLogItem>();
   let hiddenDiagnosticLogs: ExecutionLog[] = [];
   let activeText = "";
   let activeCreatedAt: string | undefined;
@@ -270,7 +271,7 @@ export function buildLiveLogItems(
     const streamDetails = buildThinkingStreamDiagnostics(thinkingStreamLogs);
     if (!thinkingStreamItem) {
       const previous = items.at(-1);
-      if (previous?.kind === "status" && previous.text === "AI正在思考..." && !previous.active) {
+      if (previous?.kind === "status" && previous.text === "AI正在思考" && !previous.active) {
         thinkingStreamItem = previous;
         thinkingStreamBaseDetails = previous.details;
       } else {
@@ -280,7 +281,7 @@ export function buildLiveLogItems(
           kind: "status",
           createdAt: log.createdAt,
           level: log.level,
-          text: "AI正在思考...",
+          text: "AI正在思考",
           details: streamDetails,
         };
         items.push(thinkingStreamItem);
@@ -291,7 +292,7 @@ export function buildLiveLogItems(
     thinkingStreamItem.details = thinkingStreamBaseDetails
       ? mergeLiveLogDiagnostics(thinkingStreamBaseDetails, streamDetails)
       : streamDetails;
-    activeText = "AI正在思考...";
+    activeText = "AI正在思考";
     activeCreatedAt = log.createdAt || activeCreatedAt;
     activeDetails = thinkingStreamItem.details;
   }
@@ -330,37 +331,40 @@ export function buildLiveLogItems(
   }
 
   function upsertToolCallItem(log: ExecutionLog, live: NonNullable<ExecutionLog["live"]>) {
-    const existing = findPendingToolItem(toolItemsById, live);
+    const existing = findToolCallStageItem(toolCallItemsByStageKey, live);
     if (existing) {
       existing.createdAt = existing.createdAt || log.createdAt;
       existing.level = log.level || existing.level;
+      existing.stage = live.stage;
       existing.title = formatLiveToolCallTitle(live);
       existing.toolName = live.toolName || existing.toolName;
       existing.parameterText = formatLiveToolParameterSummary(live.parameterItems) || existing.parameterText;
       existing.details = mergeLiveLogDiagnostics(existing.details, buildLogDiagnostics(log));
-      refreshToolLogDisplayJson(existing);
+      refreshToolEventDisplayJson(existing);
       return;
     }
 
     const toolItem: LiveToolLogItem = {
-      id: `tool:${live.toolCallId ?? log.id}`,
+      id: `tool-call:${live.toolCallId ?? log.id}:${live.stage ?? "using_tool"}`,
       kind: "tool",
+      eventType: "tool_call",
       createdAt: log.createdAt,
       level: log.level,
+      stage: live.stage,
       title: formatLiveToolCallTitle(live),
       toolName: live.toolName,
       parameterText: formatLiveToolParameterSummary(live.parameterItems),
       resultText: formatLiveToolPendingText(live.toolName),
       details: buildLogDiagnostics(log),
     };
-    refreshToolLogDisplayJson(toolItem);
+    refreshToolEventDisplayJson(toolItem);
     items.push(toolItem);
-    rememberPendingToolItem(toolItemsById, pendingToolItemsByName, toolItem, live);
+    rememberToolCallStageItem(toolCallItemsByStageKey, toolItem, live);
   }
 
   const orderedLogs = [...logs].sort(byLogOrder);
   orderedLogs.forEach((log, index) => {
-    if (log.type === "values_snapshot") {
+    if (log.type === "values_snapshot" || log.type === "final_answer") {
       hiddenDiagnosticLogs.push(log);
       return;
     }
@@ -407,25 +411,13 @@ export function buildLiveLogItems(
     }
 
     if (live.kind === "tool_result") {
-      const existingToolItem = takePendingToolItem(toolItemsById, pendingToolItemsByName, live);
-      if (existingToolItem) {
-        existingToolItem.createdAt = existingToolItem.createdAt || log.createdAt;
-        existingToolItem.completedAt = log.createdAt || existingToolItem.completedAt;
-        existingToolItem.level = log.level;
-        existingToolItem.title = formatLiveToolResultTitle(live);
-        existingToolItem.toolName = live.toolName || existingToolItem.toolName;
-        existingToolItem.resultStatus = live.resultStatus;
-        existingToolItem.resultText = formatLiveToolResultText(live);
-        existingToolItem.details = mergeLiveLogDiagnostics(existingToolItem.details, buildLogDiagnostics(log));
-        refreshToolLogDisplayJson(existingToolItem);
-        return;
-      }
       const toolItem: LiveToolLogItem = {
         id: `tool-result:${live.toolCallId ?? log.id ?? index}`,
         kind: "tool",
+        eventType: "tool_result",
         createdAt: log.createdAt,
-        completedAt: log.createdAt,
         level: log.level,
+        stage: live.stage,
         title: formatLiveToolResultTitle(live),
         toolName: live.toolName,
         parameterText: formatLiveToolParameterSummary(live.parameterItems),
@@ -433,8 +425,18 @@ export function buildLiveLogItems(
         resultText: formatLiveToolResultText(live),
         details: buildLogDiagnostics(log),
       };
-      refreshToolLogDisplayJson(toolItem);
+      refreshToolEventDisplayJson(toolItem);
       items.push(toolItem);
+      return;
+    }
+
+    if (log.type === "status_update") {
+      const statusItem = pushStatusItem(log, "状态已更新");
+      if (isTaskActive(status)) {
+        activeText = "状态已更新";
+        activeCreatedAt = log.createdAt || activeCreatedAt;
+        activeDetails = statusItem.details;
+      }
       return;
     }
 
@@ -460,7 +462,7 @@ export function buildLiveLogItems(
     activeDetails = statusItem.details;
   });
 
-  if (hiddenDiagnosticLogs.length > 0) {
+  if (!isTaskActive(status) && hiddenDiagnosticLogs.length > 0) {
     const target = [...items].reverse().find((item) => item.kind === "status");
     const hiddenDetails = consumeHiddenDiagnostics();
     if (target && hiddenDetails) {
@@ -471,6 +473,12 @@ export function buildLiveLogItems(
   if (isTaskActive(status)) {
     // If there's a cancel event, show cancelled status instead of active thinking
     if (hasCancelEvent) {
+      const trailingHiddenDetails = consumeHiddenDiagnostics();
+      const mergedCancelDetails = trailingHiddenDetails
+        ? activeDetails
+          ? mergeLiveLogDiagnostics(activeDetails, trailingHiddenDetails)
+          : trailingHiddenDetails
+        : activeDetails;
       const lastItem = items.at(-1);
       if (
         lastItem?.kind === "status" &&
@@ -478,6 +486,9 @@ export function buildLiveLogItems(
         lastItem.id.startsWith("status:")
       ) {
         lastItem.active = false;
+        if (trailingHiddenDetails) {
+          lastItem.details = mergeLiveLogDiagnostics(lastItem.details, trailingHiddenDetails);
+        }
       } else {
         items.push({
           id: "status:cancelled",
@@ -486,19 +497,30 @@ export function buildLiveLogItems(
           level: "warning",
           text: "任务已取消",
           active: false,
-          details: activeDetails ?? buildSyntheticLogDiagnostics("task_cancelled", "任务已取消"),
+          details: mergedCancelDetails ?? buildSyntheticLogDiagnostics("task_cancelled", "任务已取消"),
         });
       }
     } else {
-      const displayText = hasAnswerStream ? "AI正在生成结果" : activeText || "AI正在思考...";
+      const displayText = hasAnswerStream ? "AI正在生成结果" : activeText || "AI正在思考";
+      const trailingHiddenDetails = consumeHiddenDiagnostics();
+      const mergedActiveDetails = trailingHiddenDetails
+        ? activeDetails
+          ? mergeLiveLogDiagnostics(activeDetails, trailingHiddenDetails)
+          : trailingHiddenDetails
+        : activeDetails;
+      const mergedAnswerDetails = trailingHiddenDetails && lastAnswerDetails
+        ? mergeLiveLogDiagnostics(lastAnswerDetails, trailingHiddenDetails)
+        : lastAnswerDetails;
       const lastItem = items.at(-1);
       if (lastItem?.kind === "status" && lastItem.text === displayText) {
         lastItem.active = true;
         lastItem.createdAt = lastAnswerCreatedAt || activeCreatedAt || lastItem.createdAt;
         lastItem.level = "info";
-        lastItem.details = lastAnswerDetails && lastItem !== answerStreamItem
-          ? mergeLiveLogDiagnostics(lastItem.details, lastAnswerDetails)
-          : lastItem.details;
+        if (mergedAnswerDetails && lastItem !== answerStreamItem) {
+          lastItem.details = mergeLiveLogDiagnostics(lastItem.details, mergedAnswerDetails);
+        } else if (trailingHiddenDetails) {
+          lastItem.details = mergeLiveLogDiagnostics(lastItem.details, trailingHiddenDetails);
+        }
       } else {
         items.push({
           id: "status:active",
@@ -507,7 +529,9 @@ export function buildLiveLogItems(
           level: "info",
           text: displayText,
           active: true,
-          details: lastAnswerDetails ?? activeDetails ?? buildSyntheticLogDiagnostics("active_status", displayText),
+          details: mergedAnswerDetails
+            ?? mergedActiveDetails
+            ?? buildSyntheticLogDiagnostics("active_status", displayText),
         });
       }
     }
@@ -612,7 +636,7 @@ function buildThinkingStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostic
     streamLogs.map(rawLogRecordForDiagnostics),
     stripUndefinedValues({
       type: "assistant_thinking_delta",
-      message: "AI正在思考...",
+      message: "AI正在思考",
       created_at: lastLog?.createdAt,
       run_id: lastLog?.runId,
       payload,
@@ -705,46 +729,58 @@ function withLiveLogDisplayRecord(
 const TOOL_RESULT_DISPLAY_JSON_MAX_BYTES = 100 * 1024;
 const TOOL_RESULT_DISPLAY_PREVIEW_CHARS = 4096;
 
-function refreshToolLogDisplayJson(item: LiveToolLogItem) {
-  item.details = withLiveLogDisplayRecord(item.details, buildToolLifecycleDisplayRecord(item));
+function refreshToolEventDisplayJson(item: LiveToolLogItem) {
+  item.details = withLiveLogDisplayRecord(item.details, buildToolEventDisplayRecord(item));
 }
 
-function buildToolLifecycleDisplayRecord(item: LiveToolLogItem) {
+function buildToolEventDisplayRecord(item: LiveToolLogItem) {
+  if (item.eventType === "tool_call") {
+    return buildToolCallDisplayRecord(item);
+  }
+  return buildToolResultDisplayRecord(item);
+}
+
+function buildToolCallDisplayRecord(item: LiveToolLogItem) {
   const toolCalls = item.details.records
     .map(readToolCallDiagnostic)
     .filter((call): call is NonNullable<ReturnType<typeof readToolCallDiagnostic>> => Boolean(call));
-  const toolResults = item.details.records
-    .map(readToolResultDiagnostic)
-    .filter((result): result is NonNullable<ReturnType<typeof readToolResultDiagnostic>> => Boolean(result));
-
   const finalToolCall =
     [...toolCalls].reverse().find((call) => call.partial !== true) ?? toolCalls.at(-1);
-  const finalToolResult = toolResults.at(-1);
-  const toolName = finalToolCall?.toolName ?? finalToolResult?.toolName ?? item.toolName;
-  const displayRecord = stripUndefinedValues({
-    type: "tool_lifecycle",
+  const toolName = finalToolCall?.toolName ?? item.toolName;
+
+  return stripUndefinedValues({
+    type: "tool_call",
+    stage: item.stage,
+    created_at: item.createdAt ?? finalToolCall?.createdAt,
     tool_name: toolName,
     tool_label:
       finalToolCall?.toolLabel ??
-      finalToolResult?.toolLabel ??
       (toolName ? formatLiveToolLabel({ toolName } as NonNullable<ExecutionLog["live"]>) : undefined),
-    tool_call_id: finalToolCall?.toolCallId ?? finalToolResult?.toolCallId,
-    created_at: item.createdAt ?? finalToolCall?.createdAt,
-    completed_at: item.completedAt ?? finalToolResult?.createdAt,
-    tool_call: finalToolCall
-      ? stripUndefinedValues({
-          args: finalToolCall.args,
-        })
-      : undefined,
-    tool_result: finalToolResult
-      ? stripUndefinedValues({
-          status: finalToolResult.status,
-          content: finalToolResult.content,
-        })
-      : undefined,
+    tool_call_id: finalToolCall?.toolCallId,
+    args: finalToolCall?.args,
   });
+}
 
-  return capToolLifecycleDisplayRecord(displayRecord);
+function buildToolResultDisplayRecord(item: LiveToolLogItem) {
+  const toolResults = item.details.records
+    .map(readToolResultDiagnostic)
+    .filter((result): result is NonNullable<ReturnType<typeof readToolResultDiagnostic>> => Boolean(result));
+  const finalToolResult = toolResults.at(-1);
+  const toolName = finalToolResult?.toolName ?? item.toolName;
+
+  return capToolResultDisplayRecord(
+    stripUndefinedValues({
+      type: "tool_result",
+      created_at: item.createdAt ?? finalToolResult?.createdAt,
+      tool_name: toolName,
+      tool_label:
+        finalToolResult?.toolLabel ??
+        (toolName ? formatLiveToolLabel({ toolName } as NonNullable<ExecutionLog["live"]>) : undefined),
+      tool_call_id: finalToolResult?.toolCallId,
+      status: finalToolResult?.status ?? item.resultStatus,
+      content: finalToolResult?.content,
+    }),
+  );
 }
 
 function readToolCallDiagnostic(record: unknown) {
@@ -916,14 +952,13 @@ function parseJsonStringIfPossible(value: string) {
   }
 }
 
-function capToolLifecycleDisplayRecord(displayRecord: Record<string, unknown>) {
+function capToolResultDisplayRecord(displayRecord: Record<string, unknown>) {
   const serialized = formatDiagnosticJson(displayRecord);
   if (getSerializedSizeBytes(serialized) <= TOOL_RESULT_DISPLAY_JSON_MAX_BYTES) {
     return displayRecord;
   }
 
-  const toolResult = isPlainRecord(displayRecord.tool_result) ? displayRecord.tool_result : undefined;
-  if (!toolResult || !Object.prototype.hasOwnProperty.call(toolResult, "content")) {
+  if (!Object.prototype.hasOwnProperty.call(displayRecord, "content")) {
     return {
       ...displayRecord,
       display_truncated: true,
@@ -934,11 +969,11 @@ function capToolLifecycleDisplayRecord(displayRecord: Record<string, unknown>) {
     };
   }
 
-  const content = toolResult.content;
+  const content = displayRecord.content;
   const contentSerialized =
     typeof content === "string" ? content : formatDiagnosticJson(content);
-  const truncatedResult = stripUndefinedValues({
-    ...toolResult,
+  return stripUndefinedValues({
+    ...displayRecord,
     content: {
       truncated: true,
       preview: contentSerialized.slice(0, TOOL_RESULT_DISPLAY_PREVIEW_CHARS),
@@ -949,86 +984,42 @@ function capToolLifecycleDisplayRecord(displayRecord: Record<string, unknown>) {
       max_serialized_size_bytes: TOOL_RESULT_DISPLAY_JSON_MAX_BYTES,
     },
   });
-
-  return stripUndefinedValues({
-    ...displayRecord,
-    tool_result: truncatedResult,
-  });
 }
 
 function getSerializedSizeBytes(value: string) {
   return new TextEncoder().encode(value).length;
 }
 
-function rememberPendingToolItem(
-  toolItemsById: Map<string, LiveToolLogItem>,
-  pendingToolItemsByName: Map<string, LiveToolLogItem[]>,
+function rememberToolCallStageItem(
+  toolCallItemsByStageKey: Map<string, LiveToolLogItem>,
   toolItem: LiveToolLogItem,
   live: NonNullable<ExecutionLog["live"]>,
 ) {
-  if (live.toolCallId) {
-    toolItemsById.set(live.toolCallId, toolItem);
+  const key = getToolCallStageKey(live);
+  if (key) {
+    toolCallItemsByStageKey.set(key, toolItem);
   }
-  const toolName = liveToolQueueKey(live.toolName);
-  const queue = pendingToolItemsByName.get(toolName) ?? [];
-  queue.push(toolItem);
-  pendingToolItemsByName.set(toolName, queue);
 }
 
-function takePendingToolItem(
-  toolItemsById: Map<string, LiveToolLogItem>,
-  pendingToolItemsByName: Map<string, LiveToolLogItem[]>,
+function findToolCallStageItem(
+  toolCallItemsByStageKey: Map<string, LiveToolLogItem>,
   live: NonNullable<ExecutionLog["live"]>,
 ) {
-  if (live.toolCallId) {
-    const matchedById = toolItemsById.get(live.toolCallId);
-    if (matchedById) {
-      toolItemsById.delete(live.toolCallId);
-      removePendingToolItemByReference(pendingToolItemsByName, matchedById);
-      return matchedById;
-    }
-  }
-  const toolName = liveToolQueueKey(live.toolName);
-  const queue = pendingToolItemsByName.get(toolName);
-  const matched = queue?.shift();
-  if (queue && queue.length === 0) {
-    pendingToolItemsByName.delete(toolName);
-  }
-  return matched;
-}
-
-function findPendingToolItem(
-  toolItemsById: Map<string, LiveToolLogItem>,
-  live: NonNullable<ExecutionLog["live"]>,
-) {
-  if (live.toolCallId) {
-    const matchedById = toolItemsById.get(live.toolCallId);
-    if (matchedById) {
-      return matchedById;
+  const key = getToolCallStageKey(live);
+  if (key) {
+    const matched = toolCallItemsByStageKey.get(key);
+    if (matched) {
+      return matched;
     }
   }
   return undefined;
 }
 
-function removePendingToolItemByReference(
-  pendingToolItemsByName: Map<string, LiveToolLogItem[]>,
-  toolItem: LiveToolLogItem,
-) {
-  for (const [toolName, queue] of pendingToolItemsByName) {
-    const index = queue.indexOf(toolItem);
-    if (index < 0) {
-      continue;
-    }
-    queue.splice(index, 1);
-    if (queue.length === 0) {
-      pendingToolItemsByName.delete(toolName);
-    }
-    return;
+function getToolCallStageKey(live: NonNullable<ExecutionLog["live"]>) {
+  if (!live.toolCallId || !live.stage) {
+    return undefined;
   }
-}
-
-function liveToolQueueKey(toolName?: string) {
-  return toolName || "tool";
+  return `${live.toolCallId}:${live.stage}`;
 }
 
 function formatLiveToolCallTitle(live: NonNullable<ExecutionLog["live"]>) {
@@ -1221,7 +1212,10 @@ function formatLegacyLiveSummary(log: ExecutionLog) {
   if (log.type === "assistant_answer_delta") {
     return "";
   }
-  if (log.type === "tool_call" || log.type === "tool_result" || log.type === "status_update") {
+  if (log.type === "status_update") {
+    return "AI正在更新状态";
+  }
+  if (log.type === "tool_call" || log.type === "tool_result") {
     const translated = translateKnownDisplayText(log.title);
     return translated || log.title;
   }

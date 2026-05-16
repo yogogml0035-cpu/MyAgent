@@ -7,6 +7,7 @@ import {
   countOpenLogDetails,
   isLogListNearBottom,
   scrollLogListToBottomIfPinned,
+  setLogDetailsOpen,
 } from "../../components/chat/TaskConversation";
 
 function scrollElement(options: {
@@ -79,4 +80,26 @@ test("collapseOpenLogDetails closes every expanded progress log row", () => {
   assert.equal(countOpenLogDetails(containers), 2);
   assert.equal(collapseOpenLogDetails(containers), 2);
   assert.deepEqual([firstDetail.open, secondDetail.open], [false, false]);
+});
+
+test("setLogDetailsOpen toggles every collapsed or expanded progress log row", () => {
+  const firstDetail = { open: false };
+  const secondDetail = { open: true };
+  const thirdDetail = { open: false };
+  const container = {
+    querySelectorAll(selector: string) {
+      if (selector === "details:not([open])") {
+        return [firstDetail, thirdDetail];
+      }
+      if (selector === "details[open]") {
+        return [firstDetail, secondDetail, thirdDetail].filter((detail) => detail.open);
+      }
+      throw new Error(`Unexpected selector: ${selector}`);
+    },
+  } as unknown as HTMLElement;
+
+  assert.equal(setLogDetailsOpen(container, true), 2);
+  assert.deepEqual([firstDetail.open, secondDetail.open, thirdDetail.open], [true, true, true]);
+  assert.equal(setLogDetailsOpen(container, false), 3);
+  assert.deepEqual([firstDetail.open, secondDetail.open, thirdDetail.open], [false, false, false]);
 });
