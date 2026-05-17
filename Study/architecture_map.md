@@ -91,6 +91,18 @@ sequenceDiagram
 | `backend/app/storage.py` | run、event、artifact 的状态如何落库？ |
 | `frontend/app/workspace-view.ts` | 原始日志如何变成可见进度？ |
 
+参考答案：
+
+| 文件 | 参考答案 |
+| --- | --- |
+| `frontend/components/chat/TaskWorkspace.tsx` | 页面由 `ChatSidebar`、`TaskConversation`、`ChatComposer` 三个大组件拼起来。`TaskWorkspace` 自己不管理复杂业务，只调用 `useTaskWorkspace()` 拿状态和回调，再把它们传给子组件。 |
+| `frontend/hooks/use-task-workspace.ts` | 发送由 `handleSubmit` 负责；停止由 `handleStop` 负责；选择上传文件由 `handleFileSelection` 负责；移除待上传文件由 `handleRemoveFile` 负责；打开产物由 `handleOpenArtifact` 负责；下载产物由 `handleDownloadArtifact` 负责；新建、选择、重命名、删除历史会话分别由 `handleNewConversation`、`handleSelectConversation`、`handleRenameConversation`、`handleDeleteConversation` 负责。 |
+| `frontend/lib/task-api.ts` | 前端主要调用 `/api/models`、`/api/tasks`、`/api/tasks/{id}`、`/api/tasks/{id}/events`、`/api/tasks/{id}/files`、`/api/tasks/{id}/messages`、`/api/tasks/{id}/cancel`、`/api/tasks/{id}/stream`，以及 task/run artifact 下载路由。 |
+| `backend/app/api/tasks.py` | 发送消息前先检查 task 存在、模型注册且可运行；如果 `runner.is_running(task_id)` 为真就返回 409；`storage.start_run()` 还会检查当前状态是否在允许集合内；删除 running task 也会返回 409。 |
+| `backend/app/runner/core.py` | Runner 执行前会注入同一 task 的会话上下文、长期记忆上下文、上传资源 manifest，最后才追加当前 `HumanMessage`。资源 manifest 只包含文件元数据，不包含上传正文。 |
+| `backend/app/storage.py` | `start_run()` 创建 run 记录、写入用户消息、设置 task 为 `running` 和 `active_run_id`；`append_event()` 追加事件并递增 `seq`；artifact 通过 run-scoped artifact 目录、artifact names 和下载解析方法暴露；终态通过 `update_task_if_status_and_append_event()` 等方法在状态更新时一起写事件。 |
+| `frontend/app/workspace-view.ts` | 原始 `ExecutionLog` 会先按展示顺序处理，`buildRunActivityGroups()` 把 logs/artifacts 按 run 分组，`buildLiveLogItems()` 把工具调用、工具结果、思考流、回答流、状态更新折叠成用户可读进度行，`buildConversationStreamItems()` 再把消息、run 进度和产物组织成会话流。 |
+
 ## 已实现与规划边界
 
 当前源码已经实现的是通用 Agent 平台：Task、Run、Event、Resource、Artifact、SSE、模型 registry、长期记忆等。
