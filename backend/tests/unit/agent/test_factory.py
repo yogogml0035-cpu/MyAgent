@@ -57,10 +57,10 @@ class TestBuildAgent:
         fake_graph = MagicMock(spec=CompiledStateGraph)
         mock_create.return_value = fake_graph
 
-        build_agent(test_settings, system_prompt="Use resource tools.")
+        build_agent(test_settings, system_prompt="请使用资源工具。")
 
         call_kwargs = mock_create.call_args
-        assert call_kwargs.kwargs["system_prompt"] == "Use resource tools."
+        assert call_kwargs.kwargs["system_prompt"] == "请使用资源工具。"
 
     @patch("app.agent.factory._create_model", return_value=_mock_model())
     @patch("app.agent.factory.create_deep_agent")

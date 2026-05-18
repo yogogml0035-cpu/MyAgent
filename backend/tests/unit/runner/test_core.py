@@ -124,7 +124,7 @@ class TestTaskRunnerStreamState:
         runner = TaskRunner(test_settings)
         await runner.start(task_id, "summarize uploads", run_id="run-1")
 
-        assert "Uploaded files are task Resources" in captured["system_prompt"]
+        assert "上传文件属于任务资源" in captured["system_prompt"]
         assert {tool.name for tool in captured["tools"]} >= {
             "list_uploaded_resources",
             "inspect_resource",

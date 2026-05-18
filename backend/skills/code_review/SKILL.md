@@ -1,21 +1,21 @@
 ---
 name: code-review
-description: Review code for quality, security, and best practices. Use when the user asks for code review or needs feedback on their code.
+description: 审查代码质量、安全性和最佳实践。用户要求代码审查或需要代码反馈时使用。
 ---
 
-# Code Review Skill
+# 代码审查技能
 
-## Workflow
+## 工作流程
 
-1. Read the code files using filesystem tools
-2. Analyze code structure and patterns
-3. Check for common issues (security, performance, readability)
-4. Provide actionable recommendations
+1. 使用文件系统工具读取相关代码文件
+2. 分析代码结构和实现模式
+3. 检查常见问题（安全、性能、可读性）
+4. 给出可执行的改进建议
 
-## Checklist
+## 检查清单
 
-- Error handling completeness
-- Security vulnerabilities (injection, XSS, etc.)
-- Code readability and naming conventions
-- Performance considerations
-- Test coverage
+- 错误处理是否完整
+- 是否存在安全风险（注入、XSS 等）
+- 代码可读性与命名规范
+- 性能方面的考虑
+- 测试覆盖情况

@@ -87,7 +87,7 @@ class TestGetPlatformTools:
             "categories": "news",
         }
         assert "https://example.test" in result
-        assert "Engine: test" in result
+        assert "来源引擎：test" in result
 
     def test_searxng_tool_reuses_fresh_cache_until_refresh_requested(
         self, tmp_path, monkeypatch
@@ -130,5 +130,5 @@ class TestGetPlatformTools:
             "http://127.0.0.1:8181/:刷新上海天气:auto:15.0",
         ]
         assert "fresh:上海天气" in cached
-        assert "[Cached within this conversation" in repeat
+        assert "[本会话缓存结果" in repeat
         assert "fresh:刷新上海天气" in refreshed

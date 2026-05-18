@@ -16,6 +16,8 @@ from langchain_core.tools import tool
 
 DEFAULT_SEARXNG_URL = "http://127.0.0.1:8181/"
 SEARCH_TOOL_NAME = "searxng_search"
+SEARCH_ERROR_PREFIX = "错误："
+NO_RESULTS_TEXT = "未找到结果。"
 
 
 def create_searxng_search_tool(
@@ -36,17 +38,17 @@ def create_searxng_search_tool(
         topic: str = "general",
         language: str = "auto",
     ) -> str:
-        """Search the web using the configured local SearXNG engine.
+        """使用已配置的本地 SearXNG 搜索引擎进行联网搜索。
 
-        Args:
-            query: The search query string.
-            max_results: Maximum number of results to return (1-10, default 5).
-            topic: SearXNG category such as ``"general"`` or ``"news"``.
-            language: SearXNG language code, or ``"auto"`` for engine default.
+        参数：
+            query: 搜索关键词。
+            max_results: 返回结果上限（1-10，默认 5）。
+            topic: SearXNG 分类，例如 ``"general"`` 或 ``"news"``。
+            language: SearXNG 语言代码，或 ``"auto"`` 使用引擎默认设置。
         """
         normalized_query = " ".join(query.split())
         if not normalized_query:
-            return "Error: search query is empty."
+            return f"{SEARCH_ERROR_PREFIX}搜索词不能为空。"
 
         cache_query = _cache_key(normalized_query, topic=topic, language=language)
         if cache is not None and task_id and not _asks_for_refresh(normalized_query):
@@ -57,8 +59,7 @@ def create_searxng_search_tool(
             )
             if cached is not None:
                 return (
-                    f"[Cached within this conversation at {cached.created_at}; "
-                    "ask to refresh for a new search]\n"
+                    f"[本会话缓存结果，生成时间 {cached.created_at}；如需最新结果，请明确要求刷新]\n"
                     f"{cached.result_text}"
                 )
         result = _run_searxng_search(
@@ -69,7 +70,7 @@ def create_searxng_search_tool(
             language=language,
             timeout_seconds=timeout_seconds,
         )
-        if cache is not None and task_id and not result.startswith("Error:"):
+        if cache is not None and task_id and not result.startswith(SEARCH_ERROR_PREFIX):
             cache.cache_tool_result(
                 task_id,
                 tool_name=SEARCH_TOOL_NAME,
@@ -90,17 +91,17 @@ def searxng_search(
     topic: str = "general",
     language: str = "auto",
 ) -> str:
-    """Search the web using a local SearXNG engine.
+    """使用本地 SearXNG 搜索引擎进行联网搜索。
 
-    Args:
-        query: The search query string.
-        max_results: Maximum number of results to return (1-10, default 5).
-        topic: SearXNG category such as ``"general"`` or ``"news"``.
-        language: SearXNG language code, or ``"auto"`` for engine default.
+    参数：
+        query: 搜索关键词。
+        max_results: 返回结果上限（1-10，默认 5）。
+        topic: SearXNG 分类，例如 ``"general"`` 或 ``"news"``。
+        language: SearXNG 语言代码，或 ``"auto"`` 使用引擎默认设置。
 
-    Returns:
-        Formatted search results with title, URL, and snippet, or an error
-        message if the SearXNG service is unavailable or returns invalid data.
+    返回：
+        格式化后的搜索结果，包含标题、链接和摘要；如果服务不可用或返回无效数据，
+        则返回错误信息。
     """
     base_url = _get_base_url()
     return _run_searxng_search(
@@ -123,7 +124,7 @@ def _run_searxng_search(
     timeout_seconds: float,
 ) -> str:
     if not query:
-        return "Error: search query is empty."
+        return f"{SEARCH_ERROR_PREFIX}搜索词不能为空。"
 
     try:
         response = httpx.get(
@@ -135,10 +136,10 @@ def _run_searxng_search(
         response.raise_for_status()
         payload = response.json()
     except Exception as exc:
-        return f"Error: SearXNG search failed - {exc}"
+        return f"{SEARCH_ERROR_PREFIX}SearXNG 搜索失败 - {exc}"
 
     if not isinstance(payload, dict):
-        return "No results found."
+        return NO_RESULTS_TEXT
 
     direct_parts = _format_direct_results(payload)
     results = payload.get("results")
@@ -148,7 +149,7 @@ def _run_searxng_search(
         formatted_parts.extend(_format_result_items(results[:limit]))
 
     all_parts = [*direct_parts, *formatted_parts]
-    return "\n\n".join(all_parts) if all_parts else "No results found."
+    return "\n\n".join(all_parts) if all_parts else NO_RESULTS_TEXT
 
 
 def _format_result_items(results: list[Any]) -> list[str]:
@@ -156,13 +157,13 @@ def _format_result_items(results: list[Any]) -> list[str]:
     for idx, item in enumerate(results, start=1):
         if not isinstance(item, dict):
             continue
-        title = _string_value(item.get("title")) or "Untitled"
+        title = _string_value(item.get("title")) or "未命名"
         url = _string_value(item.get("url"))
         snippet = _string_value(item.get("content") or item.get("snippet"))
         metadata = _result_metadata(item)
         lines = [f"[{idx}] {title}"]
         if url:
-            lines.append(f"    URL: {url}")
+            lines.append(f"    链接：{url}")
         if metadata:
             lines.append(f"    {metadata}")
         if snippet:
@@ -178,16 +179,16 @@ def _format_direct_results(payload: dict[str, Any]) -> list[str]:
         for answer in answers:
             text = _string_value(answer)
             if text:
-                formatted_parts.append(f"Answer: {text}")
+                formatted_parts.append(f"直接答案：{text}")
 
     infoboxes = payload.get("infoboxes")
     if isinstance(infoboxes, list):
         for infobox in infoboxes:
             if not isinstance(infobox, dict):
                 continue
-            title = _string_value(infobox.get("infobox") or infobox.get("title")) or "Infobox"
+            title = _string_value(infobox.get("infobox") or infobox.get("title")) or "信息框"
             content = _string_value(infobox.get("content"))
-            lines = [f"Infobox: {title}"]
+            lines = [f"信息框：{title}"]
             if content:
                 lines.append(f"    {content}")
             urls = infobox.get("urls")
@@ -197,7 +198,7 @@ def _format_direct_results(payload: dict[str, Any]) -> list[str]:
                         continue
                     url = _string_value(url_item.get("url"))
                     if url:
-                        label = _string_value(url_item.get("title")) or "Source"
+                        label = _string_value(url_item.get("title")) or "来源"
                         lines.append(f"    {label}: {url}")
             formatted_parts.append("\n".join(lines))
     return formatted_parts
@@ -231,14 +232,14 @@ def _result_metadata(item: dict[str, Any]) -> str:
     parts: list[str] = []
     published_at = _string_value(item.get("publishedDate") or item.get("published_at"))
     if published_at:
-        parts.append(f"Published: {published_at}")
+        parts.append(f"发布时间：{published_at}")
     engines = item.get("engines") or item.get("engine")
     if isinstance(engines, list):
         engine_text = ", ".join(str(engine) for engine in engines if str(engine).strip())
     else:
         engine_text = _string_value(engines)
     if engine_text:
-        parts.append(f"Engine: {engine_text}")
+        parts.append(f"来源引擎：{engine_text}")
     return " | ".join(parts)
 
 

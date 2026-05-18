@@ -41,8 +41,8 @@ def test_searxng_search_formats_infoboxes_when_regular_results_are_empty(monkeyp
         timeout_seconds=1.0,
     )
 
-    assert "Answer: Direct answer" in result
-    assert "Infobox: OpenAI" in result
+    assert "直接答案：Direct answer" in result
+    assert "信息框：OpenAI" in result
     assert "Wikipedia: https://example.test/openai" in result
 
 
@@ -61,4 +61,4 @@ def test_searxng_search_returns_error_string_when_request_fails(monkeypatch):
         timeout_seconds=1.0,
     )
 
-    assert result == "Error: SearXNG search failed - connection refused"
+    assert result == "错误：SearXNG 搜索失败 - connection refused"

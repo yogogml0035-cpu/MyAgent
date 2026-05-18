@@ -1,19 +1,19 @@
 ---
 name: web-research
-description: Search the web for information using the configured local SearXNG search engine. Use when you need current information, news, facts, or data from the internet.
+description: 使用已配置的本地 SearXNG 搜索引擎进行联网搜索。需要最新信息、新闻、事实或互联网数据时使用。
 ---
 
-# Web Research Skill
+# 联网研究技能
 
-## Workflow
+## 工作流程
 
-1. Use the `searxng_search` tool to search for relevant information
-2. Analyze the search results
-3. Synthesize findings into a coherent response
-4. Cite sources when possible
+1. 使用 `searxng_search` 工具搜索相关信息
+2. 分析搜索结果
+3. 综合发现并组织成连贯回答
+4. 在可能的情况下注明来源
 
-## Tips
+## 使用提示
 
-- Use specific search queries for better results
-- Set `topic="news"` for current events if the local SearXNG instance enables the news category
-- Use `topic="general"` for broad web results
+- 使用更具体的搜索词以获得更好的结果
+- 如果本地 SearXNG 实例启用了新闻分类，查询当前事件时可设置 `topic="news"`
+- 需要广泛网页结果时使用 `topic="general"`

@@ -124,7 +124,7 @@ function seedSearxngSearchTask(taskId, title) {
       payload: {
         name: "searxng_search",
         status: "success",
-        content: "Infobox: OpenAI\\n    Wikipedia: https://en.wikipedia.org/wiki/OpenAI",
+        content: "信息框：OpenAI\\n    Wikipedia: https://en.wikipedia.org/wiki/OpenAI",
         live: {
           schema_version: 1,
           kind: "tool_result",
@@ -248,7 +248,7 @@ test("browser progress log displays SearXNG search tool activity", async ({ page
     await expect(rows.nth(0).locator("pre")).toContainText('"query": "OpenAI"');
     await rows.nth(1).locator("summary").click();
     await expect(rows.nth(1).locator("pre")).toContainText('"tool_name": "searxng_search"');
-    await expect(rows.nth(1).locator("pre")).toContainText("Infobox: OpenAI");
+    await expect(rows.nth(1).locator("pre")).toContainText("信息框：OpenAI");
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "03-searxng-progress-expanded.png"),

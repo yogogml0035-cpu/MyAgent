@@ -22,8 +22,8 @@ from app.storage import (
     source_format_for_upload,
 )
 
-RESOURCE_TOOL_SYSTEM_PROMPT = """Uploaded files are task Resources, not chat context.
-Use the resource tools when a user asks about uploaded files. First inspect or list resources, then read only the needed text page or table range. Do not assume uploaded file contents are already visible in the conversation."""
+RESOURCE_TOOL_SYSTEM_PROMPT = """上传文件属于任务资源，不是聊天上下文。
+当用户询问上传文件时，优先使用资源工具。先检查或列出资源，再只读取所需的文本页或表格范围。不要假设上传文件内容已经直接出现在当前对话中。"""
 
 DEFAULT_TEXT_LIMIT = 40
 MAX_TEXT_LIMIT = 200
@@ -157,19 +157,19 @@ def create_resource_tools(*, task_id: str, workspace_root: Path) -> list[BaseToo
 
     @tool
     def list_uploaded_resources() -> str:
-        """List task-scoped uploaded resources without reading file contents."""
+        """列出当前任务下的上传资源，不读取文件正文。"""
         return adapter.execute(ExecutionRequest("list_uploaded_resources")).to_json()
 
     @tool
     def inspect_resource(resource: str) -> str:
-        """Inspect a task resource by resource_id or filename and return structured metadata."""
+        """按 resource_id 或文件名检查任务资源，并返回结构化元数据。"""
         return adapter.execute(
             ExecutionRequest("inspect_resource", {"resource": resource})
         ).to_json()
 
     @tool
     def read_resource_text(resource: str, page: int = 1, limit: int = DEFAULT_TEXT_LIMIT) -> str:
-        """Read paginated structured text blocks from a task resource."""
+        """读取任务资源中的分页结构化文本块。"""
         return adapter.execute(
             ExecutionRequest(
                 "read_resource_text",
@@ -186,7 +186,7 @@ def create_resource_tools(*, task_id: str, workspace_root: Path) -> list[BaseToo
         start_row: int = 1,
         limit: int = DEFAULT_TABLE_LIMIT,
     ) -> str:
-        """Read a table/range from Excel or Word resources as structured rows."""
+        """从 Excel 或 Word 资源中读取表格或范围，并返回结构化行数据。"""
         return adapter.execute(
             ExecutionRequest(
                 "read_resource_table",
@@ -216,7 +216,7 @@ def format_resource_manifest_message(manifest: dict[str, Any]) -> str:
     return "\n".join(
         [
             RESOURCE_TOOL_SYSTEM_PROMPT,
-            "Current task resource manifest:",
+            "当前任务资源清单：",
             json.dumps(
                 {
                     "schema_version": 1,
