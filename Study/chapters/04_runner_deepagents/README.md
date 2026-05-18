@@ -25,6 +25,7 @@
 - `backend/app/streaming/v2_adapter.py`
 - `backend/app/streaming/event_converter.py`
 - `backend/app/tools/registry.py`
+- `backend/app/tools/searxng_search.py`
 - `backend/app/subagents/definitions.py`
 
 ## 本章主线
@@ -40,6 +41,15 @@ Runner 不是模型本身。它像一条生产线：
 ```text
 准备工具/上下文 -> 构造 Agent -> 消费流式事件 -> 写事件 -> 提取最终回答 -> 写终态
 ```
+
+### 平台工具由 registry 统一注册
+
+`get_platform_tools(settings, task_id=..., storage=...)` 是平台工具入口。它做两类事：
+
+- 有 `task_id` 时注册 task-scoped resource tools：`list_uploaded_resources`、`inspect_resource`、`read_resource_text`、`read_resource_table`。
+- `settings.searxng_url` 非空时注册 `searxng_search`，默认调用本地 SearXNG：`http://127.0.0.1:8181/`。
+
+注意：联网搜索现在按本地 SearXNG 引擎理解，不再按外部搜索 API Key 路径理解。工具调用失败时应返回可读错误字符串，不能让 Runner 因搜索服务不可用而崩溃。
 
 ### DeepAgents 是执行引擎
 
@@ -88,7 +98,7 @@ python3 Study/chapters/04_runner_deepagents/mini_unit.py
 
 尝试把 `extract_final_answer` 改成返回最后一条 AI 消息，不过滤 `tool_calls`，再运行。你会看到失败。这个失败说明工具调用中间消息不能当最终回答。
 
-练习还会读取 `runner/core.py`、`agent/factory.py`、`v2_adapter.py`，确认当前项目确实通过这些源码路径实现 run 生命周期。
+练习还会读取 `runner/core.py`、`agent/factory.py`、`tools/registry.py`、`tools/searxng_search.py`、`v2_adapter.py`，确认当前项目确实通过这些源码路径实现 run 生命周期和本地搜索工具注册。
 
 ## 自测题
 
@@ -96,6 +106,7 @@ python3 Study/chapters/04_runner_deepagents/mini_unit.py
 2. 为什么 `values_snapshot` 对最终回答很重要？
 3. 工具调用事件为什么要转成平台自己的 `EventRecord`？
 4. 上传资源 manifest 为什么不能包含文件正文？
+5. `searxng_search` 和 resource tools 的注册条件有什么不同？
 
 ## 常见误区
 

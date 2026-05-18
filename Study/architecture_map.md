@@ -22,6 +22,8 @@ backend/app/schemas.py               后端公开数据结构
 backend/app/storage.py               Postgres 任务存储与文件工作区
 backend/app/runner/core.py           Agent run 生命周期编排
 backend/app/agent/factory.py         create_deep_agent 包装
+backend/app/tools/registry.py        平台工具注册入口
+backend/app/tools/searxng_search.py  本地 SearXNG 联网搜索工具
 backend/app/streaming/*.py           LangGraph/DeepAgents 流式事件适配
 backend/app/execution/resources.py   上传资源工具
 backend/app/models/*.py              多模型 registry 和 provider
@@ -71,11 +73,12 @@ sequenceDiagram
 - 如果自动标题生成失败，API 只记录 warning，不能阻止 `runner.start_background()`。
 - SSE 断线时，前端会用 `/api/tasks/{id}/events?after_id=...` 补事件。
 
-## 三个最重要的边界
+## 四个最重要的边界
 
 1. API 边界：外部只通过 `/api/tasks...` 操作任务，不直接改 storage。
 2. Runner 边界：只有 Runner 负责启动 Agent 并写终态事件。
 3. Resource 边界：上传文件只在当前 task 的 `uploads/` 内可读，不能任意读宿主机路径。
+4. Web search 边界：联网搜索通过 `searxng_search` 调用后端配置的本地 SearXNG 引擎，默认地址是 `http://127.0.0.1:8181/`，不要再按外部搜索 API Key 路径理解搜索工具。
 
 ## 读代码时的入口顺序
 
@@ -88,6 +91,7 @@ sequenceDiagram
 | `frontend/lib/task-api.ts` | 前端调用了哪些后端 API？ |
 | `backend/app/api/tasks.py` | task 生命周期路由如何防止重复运行？ |
 | `backend/app/runner/core.py` | Runner 执行前注入了哪些上下文？ |
+| `backend/app/tools/registry.py` | 平台工具如何注册 resource tools 和 `searxng_search`？ |
 | `backend/app/storage.py` | run、event、artifact 的状态如何落库？ |
 | `frontend/app/workspace-view.ts` | 原始日志如何变成可见进度？ |
 
@@ -100,6 +104,7 @@ sequenceDiagram
 | `frontend/lib/task-api.ts` | 前端主要调用 `/api/models`、`/api/tasks`、`/api/tasks/{id}`、`/api/tasks/{id}/events`、`/api/tasks/{id}/files`、`/api/tasks/{id}/messages`、`/api/tasks/{id}/cancel`、`/api/tasks/{id}/stream`，以及 task/run artifact 下载路由。 |
 | `backend/app/api/tasks.py` | 发送消息前先检查 task 存在、模型注册且可运行；如果 `runner.is_running(task_id)` 为真就返回 409；`storage.start_run()` 还会检查当前状态是否在允许集合内；删除 running task 也会返回 409。 |
 | `backend/app/runner/core.py` | Runner 执行前会注入同一 task 的会话上下文、长期记忆上下文、上传资源 manifest，最后才追加当前 `HumanMessage`。资源 manifest 只包含文件元数据，不包含上传正文。 |
+| `backend/app/tools/registry.py` | 有 task_id 时注册上传资源工具；只要 `settings.searxng_url` 非空就注册 `searxng_search`，默认指向本地 SearXNG。 |
 | `backend/app/storage.py` | `start_run()` 创建 run 记录、写入用户消息、设置 task 为 `running` 和 `active_run_id`；`append_event()` 追加事件并递增 `seq`；artifact 通过 run-scoped artifact 目录、artifact names 和下载解析方法暴露；终态通过 `update_task_if_status_and_append_event()` 等方法在状态更新时一起写事件。 |
 | `frontend/app/workspace-view.ts` | 原始 `ExecutionLog` 会先按展示顺序处理，`buildRunActivityGroups()` 把 logs/artifacts 按 run 分组，`buildLiveLogItems()` 把工具调用、工具结果、思考流、回答流、状态更新折叠成用户可读进度行，`buildConversationStreamItems()` 再把消息、run 进度和产物组织成会话流。 |
 

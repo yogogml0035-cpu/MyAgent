@@ -32,7 +32,7 @@ asset/                   面向后续智能体协作的长期知识包目录
 - 本机可访问的 Postgres 与 Qdrant 服务
 - 用于真实模型调用的 DeepSeek API Key
 - 用于长期记忆向量化的 DashScope API Key
-- 可选：用于联网搜索分析工具的 Tavily API Key
+- 本机可访问的 SearXNG 搜索引擎，默认地址为 `http://127.0.0.1:8181/`
 
 当前 README 默认覆盖“同一台机器上的本地开发和本机部署”。不再展开访问令牌配置或跨主机/LAN 暴露方案。
 
@@ -118,7 +118,7 @@ cp .env.example .env
 ```env
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
-TAVILY_API_KEY=
+MYAGENT_SEARXNG_URL=http://127.0.0.1:8181/
 MYAGENT_DATABASE_URL=postgresql://USER:PASSWORD@127.0.0.1:5432/DBNAME
 MYAGENT_QDRANT_URL=http://127.0.0.1:6333
 DASHSCOPE_API_KEY=

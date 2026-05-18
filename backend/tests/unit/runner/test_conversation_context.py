@@ -104,7 +104,7 @@ def test_context_builder_injects_fresh_tool_cache_unless_refresh_requested(tmp_p
     state = storage.create_task(message=None, model="deepseek:deepseek-chat")
     storage.cache_tool_result(
         state.task_id,
-        tool_name="tavily_search",
+        tool_name="searxng_search",
         query="上海天气",
         result_text="上海今日多云。",
         ttl_seconds=600,

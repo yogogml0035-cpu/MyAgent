@@ -38,6 +38,7 @@ POST /api/tasks 带 message 或 POST /api/tasks/{id}/messages
   -> runner.start_background()
   -> runner.start()
   -> build_agent() + get_platform_tools()
+     （resource tools + searxng_search）
   -> stream_agent()
   -> convert_stream_event()
   -> storage.append_event()
@@ -59,6 +60,7 @@ POST /api/tasks 带 message 或 POST /api/tasks/{id}/messages
 
 - 上传文件为什么不直接塞进模型上下文？
 - `read_resource_text` 和普通文件读取有什么边界区别？
+- `searxng_search` 为什么走本地 SearXNG，而不是 provider API key？
 - 前端为什么要把后端 `snake_case` 转成 `camelCase`？
 - 进度日志为什么主要按 `seq` 排序？
 

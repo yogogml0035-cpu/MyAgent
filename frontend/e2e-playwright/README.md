@@ -40,6 +40,21 @@ npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --repor
 
 The progress-log spec seeds a temporary running task through the same Postgres-backed task/runs/messages/events contract, verifies collapsed row layout in the browser, expands status/tool/generation rows, checks the trace-level collapse-all control, captures desktop and narrow-screen screenshots, marks the temporary task complete, and deletes it through the public API.
 
+Run the SearXNG search progress acceptance test when changing the configured web-search tool or tool-call/result payloads:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_API_URL=http://127.0.0.1:8001 \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/searxng-search-progress \
+MYAGENT_E2E_ACCESS_TOKEN=... \
+MYAGENT_E2E_POSTGRES_CONTAINER=PostgreSQL \
+MYAGENT_E2E_POSTGRES_USER=postgres \
+MYAGENT_E2E_POSTGRES_DB=myagent \
+npx playwright test e2e-playwright/test_searxng_search_progress.spec.mjs --reporter=line
+```
+
+The SearXNG spec creates a temporary task through the public API, seeds `searxng_search` tool-call and tool-result events through the Postgres-backed event contract, verifies the browser progress log hides raw tool names in collapsed rows while preserving `searxng_search` diagnostics in expanded JSON, captures screenshots, and deletes the task.
+
 Run the session-context and long-term-memory acceptance test from `frontend/` when changing conversation history injection, memory recall, per-user memory isolation, or the visible "已载入会话上下文 / 已载入长期记忆" log rows:
 
 ```bash

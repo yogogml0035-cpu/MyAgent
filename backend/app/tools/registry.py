@@ -6,7 +6,7 @@ from langchain_core.tools import BaseTool
 
 from app.config import Settings
 from app.execution.resources import create_resource_tools
-from app.tools.tavily_search import create_tavily_search_tool
+from app.tools.searxng_search import create_searxng_search_tool
 
 
 def get_platform_tools(settings: Settings, *, task_id: str | None = None, storage=None) -> list[BaseTool]:
@@ -17,18 +17,19 @@ def get_platform_tools(settings: Settings, *, task_id: str | None = None, storag
     the ``backend`` parameter (see ``agent/factory.py``).  This function only
     returns additional tools that deepagents does not provide natively.
 
-    The Tavily search tool is included only when
-    ``settings.tavily_api_key`` is configured.
+    The SearXNG search tool is included when ``settings.searxng_url`` is
+    configured. By default this points to the local engine at
+    ``http://127.0.0.1:8181/``.
     """
     tools: list[BaseTool] = []
 
     if task_id:
         tools.extend(create_resource_tools(task_id=task_id, workspace_root=settings.workspace_root))
 
-    if settings.tavily_api_key:
+    if settings.searxng_url:
         tools.append(
-            create_tavily_search_tool(
-                settings.tavily_api_key,
+            create_searxng_search_tool(
+                settings.searxng_url,
                 cache=storage,
                 task_id=task_id,
                 ttl_seconds=settings.fresh_tool_cache_seconds,

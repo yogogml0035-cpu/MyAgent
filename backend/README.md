@@ -54,7 +54,7 @@ Copy `.env.example` to `.env` and configure:
 
 - `DEEPSEEK_API_KEY`
 - `DEEPSEEK_BASE_URL`
-- `TAVILY_API_KEY`
+- `MYAGENT_SEARXNG_URL`
 - `MYAGENT_CORS_ORIGINS`
 - `MYAGENT_TASK_ROOT`
 

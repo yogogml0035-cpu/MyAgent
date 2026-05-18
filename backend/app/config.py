@@ -25,7 +25,7 @@ class Settings:
     deepseek_base_url: str = "https://api.deepseek.com"
     openai_api_key: str | None = None
     anthropic_api_key: str | None = None
-    tavily_api_key: str | None = None
+    searxng_url: str = "http://127.0.0.1:8181/"
     dashscope_api_key: str | None = None
     embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     embedding_model: str = "text-embedding-v3"
@@ -119,7 +119,7 @@ def load_settings() -> Settings:
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
         openai_api_key=os.getenv("OPENAI_API_KEY") or None,
         anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
-        tavily_api_key=os.getenv("TAVILY_API_KEY") or None,
+        searxng_url=os.getenv("MYAGENT_SEARXNG_URL") or "http://127.0.0.1:8181/",
         dashscope_api_key=os.getenv("DASHSCOPE_API_KEY") or None,
         embedding_base_url=os.getenv(
             "MYAGENT_EMBEDDING_BASE_URL",

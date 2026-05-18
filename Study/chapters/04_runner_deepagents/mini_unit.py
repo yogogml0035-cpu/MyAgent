@@ -36,6 +36,9 @@ def convert_stream_event(event: dict, seq: int) -> dict:
 def assert_source_contracts() -> None:
     runner = (REPO_ROOT / "backend/app/runner/core.py").read_text(encoding="utf-8")
     factory = (REPO_ROOT / "backend/app/agent/factory.py").read_text(encoding="utf-8")
+    registry = (REPO_ROOT / "backend/app/tools/registry.py").read_text(encoding="utf-8")
+    searxng = (REPO_ROOT / "backend/app/tools/searxng_search.py").read_text(encoding="utf-8")
+    config = (REPO_ROOT / "backend/app/config.py").read_text(encoding="utf-8")
     adapter = (REPO_ROOT / "backend/app/streaming/v2_adapter.py").read_text(encoding="utf-8")
     converter = (REPO_ROOT / "backend/app/streaming/event_converter.py").read_text(
         encoding="utf-8"
@@ -50,6 +53,10 @@ def assert_source_contracts() -> None:
     assert "final_answer" in runner
     assert "create_deep_agent(" in factory
     assert "CompositeBackend" in factory
+    assert "create_searxng_search_tool" in registry
+    assert "settings.searxng_url" in registry
+    assert "searxng_search" in searxng
+    assert "MYAGENT_SEARXNG_URL" in config
     assert 'stream_mode=_V2_MODES' in adapter
     assert 'version="v2"' in adapter
     assert '"message_chunk": "assistant_answer_delta"' in converter

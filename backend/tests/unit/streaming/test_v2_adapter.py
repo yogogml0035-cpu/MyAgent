@@ -132,7 +132,7 @@ class TestStreamAgentSubgraphFiltering:
                             content="",
                             tool_call_chunks=[
                                 {
-                                    "name": "tavily_search",
+                                    "name": "searxng_search",
                                     "args": '{"query"',
                                     "id": "call-1",
                                     "index": 0,
@@ -168,7 +168,7 @@ class TestStreamAgentSubgraphFiltering:
                 "type": "tool_call",
                 "data": {
                     "id": "call-1",
-                    "name": "tavily_search",
+                    "name": "searxng_search",
                     "args": '{"query"',
                     "raw_args": '{"query"',
                     "partial": True,
@@ -179,7 +179,7 @@ class TestStreamAgentSubgraphFiltering:
                 "type": "tool_call",
                 "data": {
                     "id": "call-1",
-                    "name": "tavily_search",
+                    "name": "searxng_search",
                     "args": {"query": "progress log"},
                     "raw_args": '{"query": "progress log"}',
                     "partial": False,

@@ -24,7 +24,7 @@ class TestFullAgentBuild:
         settings = Settings(
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
-            tavily_api_key="tvly-test",
+            searxng_url="http://127.0.0.1:8181/",
         )
 
         from app.tools.registry import get_platform_tools

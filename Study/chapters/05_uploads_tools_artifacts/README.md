@@ -40,6 +40,8 @@
 - `read_resource_text`
 - `read_resource_table`
 
+这些是“上传资源工具”，只处理当前 task 的 uploads。联网搜索是另一类平台工具：`searxng_search`，由 `backend/app/tools/searxng_search.py` 调用本地 SearXNG 引擎，不读取上传文件，也不扩大 resource tool 的文件系统权限。
+
 ### Resource 工具必须 task-scoped
 
 资源工具只能读：

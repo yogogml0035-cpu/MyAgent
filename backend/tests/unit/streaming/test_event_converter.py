@@ -10,7 +10,7 @@ class TestConvertStreamEvent:
                 "type": "tool_call",
                 "data": {
                     "id": "call-1",
-                    "name": "tavily_search",
+                    "name": "searxng_search",
                     "args": {"query": "上海天气", "max_results": 5},
                     "is_subgraph": False,
                 },
@@ -22,14 +22,14 @@ class TestConvertStreamEvent:
 
         assert record is not None
         assert record.type == "tool_call"
-        assert record.message == "Calling tool: tavily_search"
-        assert record.payload["name"] == "tavily_search"
+        assert record.message == "Calling tool: searxng_search"
+        assert record.payload["name"] == "searxng_search"
         assert record.payload["args"] == {"query": "上海天气", "max_results": 5}
         assert record.payload["live"] == {
             "schema_version": 1,
             "kind": "tool_call",
             "stage": "using_tool",
-            "tool_name": "tavily_search",
+            "tool_name": "searxng_search",
             "tool_label": "联网搜索",
             "tool_call_id": "call-1",
             "parameter_items": [
@@ -45,7 +45,7 @@ class TestConvertStreamEvent:
                 "type": "tool_call",
                 "data": {
                     "id": "call-1",
-                    "name": "tavily_search",
+                    "name": "searxng_search",
                     "args": '{"query"',
                     "partial": True,
                     "is_subgraph": False,
@@ -66,7 +66,7 @@ class TestConvertStreamEvent:
                 "type": "tool_result",
                 "data": {
                     "tool_call_id": "call-1",
-                    "name": "tavily_search",
+                    "name": "searxng_search",
                     "content": "result",
                     "status": "success",
                 },
@@ -83,7 +83,7 @@ class TestConvertStreamEvent:
             "schema_version": 1,
             "kind": "tool_result",
             "stage": "completed",
-            "tool_name": "tavily_search",
+            "tool_name": "searxng_search",
             "tool_label": "联网搜索",
             "tool_call_id": "call-1",
             "parameter_items": [],

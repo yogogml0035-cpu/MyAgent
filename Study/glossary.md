@@ -58,6 +58,18 @@
 - `backend/app/api/files.py`
 - `backend/app/execution/resources.py`
 
+## Web Search Tool
+
+联网搜索工具。当前平台工具名是 `searxng_search`，由 `backend/app/tools/registry.py` 注册，具体实现是 `backend/app/tools/searxng_search.py`。它调用后端配置的本地 SearXNG JSON 搜索接口，默认地址为 `http://127.0.0.1:8181/`。
+
+关键点：搜索工具不是模型 provider，不需要 provider API key；如果本地 SearXNG 不可用，工具应返回错误字符串，让 Agent 可以降级说明，而不是让 Runner 崩溃。
+
+相关代码：
+
+- `backend/app/tools/registry.py`
+- `backend/app/tools/searxng_search.py`
+- `backend/app/config.py` 的 `searxng_url`
+
 ## Artifact
 
 Agent 运行后生成的结果文件，例如 `report.html`、`final-summary.md`。前端通过受控 API 下载或预览。

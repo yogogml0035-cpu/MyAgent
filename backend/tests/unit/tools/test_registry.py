@@ -6,20 +6,25 @@ from tests.fakes import InMemoryTaskStorage
 
 
 class TestGetPlatformTools:
-    def test_excludes_tavily_when_no_key(self, test_settings):
-        tools = get_platform_tools(test_settings)
-        names = [t.name for t in tools]
-        assert "tavily_search" not in names
-
-    def test_includes_tavily_when_key_set(self, tmp_path):
+    def test_excludes_searxng_when_url_is_empty(self, tmp_path):
         settings = Settings(
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
-            tavily_api_key="tvly-test-key",
+            searxng_url="",
         )
         tools = get_platform_tools(settings)
         names = [t.name for t in tools]
-        assert "tavily_search" in names
+        assert "searxng_search" not in names
+
+    def test_includes_searxng_when_url_is_set(self, tmp_path):
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            searxng_url="http://127.0.0.1:8181/",
+        )
+        tools = get_platform_tools(settings)
+        names = [t.name for t in tools]
+        assert "searxng_search" in names
 
     def test_no_custom_filesystem_tools(self, test_settings):
         tools = get_platform_tools(test_settings)
@@ -40,64 +45,90 @@ class TestGetPlatformTools:
             "read_resource_table",
         }.issubset(set(names))
 
-    def test_tavily_tool_uses_settings_key_not_runtime_environment(self, tmp_path, monkeypatch):
-        captured: dict[str, str] = {}
+    def test_searxng_tool_uses_settings_url_not_runtime_environment(self, tmp_path, monkeypatch):
+        captured: dict[str, object] = {}
 
-        class FakeTavilyClient:
-            def __init__(self, *, api_key: str) -> None:
-                captured["api_key"] = api_key
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
 
-            def search(self, **kwargs):
+            def json(self):
                 return {
                     "results": [
                         {
                             "title": "Result",
                             "url": "https://example.test",
                             "content": "Snippet",
+                            "engine": "test",
                         }
                     ]
                 }
 
-        monkeypatch.delenv("TAVILY_API_KEY", raising=False)
-        monkeypatch.setattr("app.tools.tavily_search.TavilyClient", FakeTavilyClient)
+        def fake_get(url, **kwargs):
+            captured["url"] = url
+            captured["params"] = kwargs["params"]
+            return FakeResponse()
+
+        monkeypatch.setenv("MYAGENT_SEARXNG_URL", "http://runtime.example/")
+        monkeypatch.setattr("app.tools.searxng_search.httpx.get", fake_get)
         settings = Settings(
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
-            tavily_api_key="settings-tvly-key",
+            searxng_url="http://settings.example/base/",
         )
 
         [tool] = get_platform_tools(settings)
-        result = tool.invoke({"query": "MyAgent", "max_results": 3})
+        result = tool.invoke({"query": "MyAgent", "max_results": 3, "topic": "news"})
 
-        assert captured["api_key"] == "settings-tvly-key"
+        assert captured["url"] == "http://settings.example/base/search"
+        assert captured["params"] == {
+            "q": "MyAgent",
+            "format": "json",
+            "categories": "news",
+        }
         assert "https://example.test" in result
+        assert "Engine: test" in result
 
-    def test_tavily_tool_reuses_fresh_cache_until_refresh_requested(
+    def test_searxng_tool_reuses_fresh_cache_until_refresh_requested(
         self, tmp_path, monkeypatch
     ):
         calls: list[str] = []
 
-        def fake_run(api_key: str, query: str, *, max_results: int, topic: str) -> str:
-            calls.append(query)
-            return f"fresh:{query}:{max_results}:{topic}"
+        def fake_run(
+            base_url: str,
+            query: str,
+            *,
+            max_results: int,
+            topic: str,
+            language: str,
+            timeout_seconds: float,
+        ) -> str:
+            calls.append(f"{base_url}:{query}:{language}:{timeout_seconds}")
+            return f"fresh:{query}:{max_results}:{topic}:{language}"
 
-        monkeypatch.setattr("app.tools.tavily_search._run_tavily_search", fake_run)
-        monkeypatch.setenv("TAVILY_API_KEY", "runtime-key")
+        monkeypatch.setattr("app.tools.searxng_search._run_searxng_search", fake_run)
         storage = InMemoryTaskStorage(tmp_path / "tasks")
         state = storage.create_task(message=None, model="deepseek:deepseek-chat")
         settings = Settings(
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
-            tavily_api_key="settings-tvly-key",
+            searxng_url="http://127.0.0.1:8181/",
         )
 
-        [tool] = [t for t in get_platform_tools(settings, task_id=state.task_id, storage=storage) if t.name == "tavily_search"]
+        [tool] = [
+            t
+            for t in get_platform_tools(settings, task_id=state.task_id, storage=storage)
+            if t.name == "searxng_search"
+        ]
 
         cached = tool.invoke({"query": "上海天气"})
         repeat = tool.invoke({"query": "上海天气"})
         refreshed = tool.invoke({"query": "刷新上海天气"})
 
-        assert calls == ["上海天气", "刷新上海天气"]
+        assert calls == [
+            "http://127.0.0.1:8181/:上海天气:auto:15.0",
+            "http://127.0.0.1:8181/:刷新上海天气:auto:15.0",
+        ]
         assert "fresh:上海天气" in cached
         assert "[Cached within this conversation" in repeat
         assert "fresh:刷新上海天气" in refreshed
