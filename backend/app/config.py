@@ -65,28 +65,7 @@ MODEL_REGISTRY = [
         "provider": "deepseek",
         "supports_files": True,
         "supports_images": False,
-    },
-    {
-        "id": "openai:gpt-4o",
-        "label": "GPT-4o",
-        "provider": "openai",
-        "supports_files": True,
-        "supports_images": True,
-    },
-    {
-        "id": "openai:gpt-4o-mini",
-        "label": "GPT-4o Mini",
-        "provider": "openai",
-        "supports_files": True,
-        "supports_images": True,
-    },
-    {
-        "id": "anthropic:claude-sonnet-4-20250514",
-        "label": "Claude Sonnet 4",
-        "provider": "anthropic",
-        "supports_files": True,
-        "supports_images": True,
-    },
+    }
 ]
 
 WORKER_COUNT_ENV_VARS = ("WEB_CONCURRENCY", "UVICORN_WORKERS", "GUNICORN_WORKERS")

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from hmac import compare_digest
 from ipaddress import ip_address
@@ -69,7 +69,7 @@ def create_app(
     )
 
     @asynccontextmanager
-    async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
         if startup_errors:
             raise RuntimeError("；".join(startup_errors))
         assert storage is not None
