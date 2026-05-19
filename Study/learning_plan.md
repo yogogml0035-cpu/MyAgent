@@ -10,6 +10,7 @@
 
 - 读 [architecture_map.md](./architecture_map.md)，先看数据流。
 - 读 [glossary.md](./glossary.md)，把 Task、Run、Event、Artifact、Resource、Runner、Storage 区分开。
+- 先跑 [00 最小可运行示例](./chapters/00_minimal_runnable_example/README.md)，把最短主链路追一遍。
 - 完成 [01 大图景](./chapters/01_big_picture/README.md)。
 
 你要能回答：

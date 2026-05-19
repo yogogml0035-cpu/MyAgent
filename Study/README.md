@@ -13,16 +13,17 @@
 | 0 | [学习计划](./learning_plan.md) | 如何按阶段学习，不迷路 |
 | 1 | [全局架构地图](./architecture_map.md) | 一次任务从页面到 Agent 再回页面的完整链路 |
 | 2 | [术语表](./glossary.md) | 先把项目里的高频名词弄懂 |
-| 3 | [01 大图景](./chapters/01_big_picture/README.md) | MyAgent 的分层和核心数据流 |
-| 4 | [02 后端 API 与 Schema](./chapters/02_backend_api_schemas/README.md) | FastAPI 路由、请求模型、响应状态 |
-| 5 | [03 Storage 与事件日志](./chapters/03_storage_event_log/README.md) | 为什么 Postgres 是事实来源，事件 seq 为什么重要 |
-| 6 | [04 Runner 与 DeepAgents](./chapters/04_runner_deepagents/README.md) | 一次 Agent run 如何启动、流式执行、结束 |
-| 7 | [05 上传资源、工具与产物](./chapters/05_uploads_tools_artifacts/README.md) | 上传文件如何变成 task-scoped resource |
-| 8 | [06 流式事件与前端状态](./chapters/06_streaming_frontend_state/README.md) | SSE 事件如何变成页面日志和 AI 回复 |
-| 9 | [07 前端工作区](./chapters/07_frontend_workspace/README.md) | TaskWorkspace、Hook、Composer、Conversation 的分工 |
-| 10 | [08 安全、记忆与测试](./chapters/08_security_memory_testing/README.md) | 本地优先安全边界、长期记忆、测试结构 |
-| 11 | [09 招投标分析工作流](./chapters/09_bid_analysis_workflow/README.md) | 招投标业务规则如何落到 Agent 平台 |
-| 12 | [最终自测](./final_self_check.md) | 检查是否能从用户动作反推源码 |
+| 3 | [00 最小可运行示例](./chapters/00_minimal_runnable_example/README.md) | 先用一份最短代码看懂主链路骨架 |
+| 4 | [01 大图景](./chapters/01_big_picture/README.md) | MyAgent 的分层和核心数据流 |
+| 5 | [02 后端 API 与 Schema](./chapters/02_backend_api_schemas/README.md) | FastAPI 路由、请求模型、响应状态 |
+| 6 | [03 Storage 与事件日志](./chapters/03_storage_event_log/README.md) | 为什么 Postgres 是事实来源，事件 seq 为什么重要 |
+| 7 | [04 Runner 与 DeepAgents](./chapters/04_runner_deepagents/README.md) | 一次 Agent run 如何启动、流式执行、结束 |
+| 8 | [05 上传资源、工具与产物](./chapters/05_uploads_tools_artifacts/README.md) | 上传文件如何变成 task-scoped resource |
+| 9 | [06 流式事件与前端状态](./chapters/06_streaming_frontend_state/README.md) | SSE 事件如何变成页面日志和 AI 回复 |
+| 10 | [07 前端工作区](./chapters/07_frontend_workspace/README.md) | TaskWorkspace、Hook、Composer、Conversation 的分工 |
+| 11 | [08 安全、记忆与测试](./chapters/08_security_memory_testing/README.md) | 本地优先安全边界、长期记忆、测试结构 |
+| 12 | [09 招投标分析工作流](./chapters/09_bid_analysis_workflow/README.md) | 招投标业务规则如何落到 Agent 平台 |
+| 13 | [最终自测](./final_self_check.md) | 检查是否能从用户动作反推源码 |
 
 维护记录见 [Study 资料审计记录](./audit_notes.md)。
 
