@@ -1,123 +1,53 @@
-# Coding Conventions
+# 前端编码约定
 
-**Analysis Date:** 2026-05-19
+**分析日期：** 2026-05-19
 
-## Naming Patterns
+## 命名
 
-**Files:**
-- `kebab-case.ts` for non-component modules: `frontend/app/task-state.ts`, `frontend/app/workspace-view.ts`, `frontend/lib/task-api.ts`.
-- `PascalCase.tsx` for React component files: `ChatComposer.tsx`, `TaskConversation.tsx`.
-- `test_*.test.ts` for Node tests under `frontend/tests/`.
-- `test_*.spec.mjs` for Playwright specs under `frontend/e2e-playwright/`.
+- 非组件模块使用 `kebab-case.ts`，例如 `task-state.ts`、`workspace-view.ts`。
+- React 组件文件使用 `PascalCase.tsx`。
+- hook 文件使用 `use-*.ts`。
+- 函数和变量使用 `camelCase`。
+- 事件处理函数使用 `handle*`。
+- 常量使用 `UPPER_SNAKE_CASE`。
+- 类型使用 `PascalCase`。
+- Node 测试使用 `test_*.test.ts`。
+- Playwright spec 使用 `test_*.spec.mjs`。
 
-**Functions:**
-- Use `camelCase` for functions and helpers: `requestTaskJson()`, `normalizeTaskState()`, `buildRunActivityGroups()`.
-- Use `handle*` for component/hook event handlers: `handleSubmit()`, `handleFileSelection()`.
-- Use `use*` for hooks: `useTaskWorkspace()`.
+## 模块边界
 
-**Variables:**
-- Use `UPPER_SNAKE_CASE` for module constants: `MAX_SSE_RETRIES`, `DEFAULT_MODEL_ID`, `TASK_API_BASE_URL`.
-- Use `camelCase` for frontend state fields after normalization: `createdAt`, `runId`, `uploadCount`, `needsInput`.
-- Keep backend field names only inside normalization/API boundary code.
+- 组件不直接调用后端 API。
+- API 请求集中在 `frontend/lib/task-api.ts`。
+- 后端 payload 归一化集中在 `frontend/app/task-state.ts`。
+- React 副作用集中在 `frontend/hooks/use-task-workspace.ts`。
+- 纯 view projection 集中在 `frontend/app/workspace-view.ts`。
+- 视觉样式集中在 `frontend/app/globals.css`。
 
-**Types:**
-- Use `PascalCase` for type aliases: `TaskState`, `ExecutionLog`, `RunActivityGroup`, `ModelOption`.
-- Prefer exported type aliases for shared UI/view models in `frontend/app/task-state.ts` and `frontend/app/workspace-view.ts`.
+## 导入
 
-## Code Style
+- 不使用 TypeScript path alias。
+- 外部包导入放在本地模块导入前。
+- 类型导入尽量使用 `type`。
+- 组件和 hook 通过相对路径导入 app/helper。
 
-**Formatting:**
-- TypeScript strict mode is enabled in `frontend/tsconfig.json`.
-- No Prettier or Biome config is present; keep formatting consistent with existing source.
-- Keep display text sized to component context and style through CSS classes, not inline styles, except generated artifact preview document string.
+## 错误处理
 
-**Linting:**
-- Run `npm run lint` from `frontend/`; ESLint warnings fail because the script uses `--max-warnings=0`.
-- Next generated directories are ignored by `frontend/eslint.config.mjs`.
+- `requestTaskJson()` 负责网络错误、HTTP 错误、JSON 解析和 token。
+- 非 JSON 的成功响应要防御性处理。
+- hook handler 捕获错误后设置用户可见 notice。
+- unknown 后端状态归一化为 `unknown`，不要当成 `running`。
+- SSE parse 或连接错误触发刷新和有界重试。
+- artifact URL 验证失败时不能附带 token 请求。
 
-## Import Organization
+## CSS 和视觉
 
-**Order:**
-1. React and Node/package imports.
-2. Type imports when practical.
-3. Relative app/helper/component imports.
+- 视觉变更先读 `DESIGN.md`。
+- 复用 `--canvas`、`--surface-card`、`--primary`、`--radius-md` 等现有 token。
+- 不随意引入孤立色系或与当前暖色画布不一致的控件。
+- 文案大小要匹配所在容器，避免按钮、卡片、侧栏文字溢出。
 
-**Grouping:**
-- Components import types and helpers from `frontend/app/` through relative paths.
-- Hook imports API functions from `../lib/task-api` and projection helpers from `../app/workspace-view`.
+## 日志和注释
 
-**Path Aliases:**
-- No `@/` or other TypeScript path alias is configured.
-- Do not introduce aliases without updating `frontend/tsconfig.json`, lint/test tooling, and imports.
-
-## Error Handling
-
-**Patterns:**
-- `requestTaskJson()` centralizes network, status, JSON parsing, and token attachment for JSON requests.
-- `formatHttpErrorMessage()` extracts backend `detail` messages and hides verbose 422 payloads.
-- `formatRequestFailure()` turns network `TypeError` into backend-down guidance.
-- Hook handlers catch errors, set user-visible notices, and refresh task state when possible.
-- Unknown backend statuses normalize to `unknown`, not `running`.
-- SSE parse or connection problems trigger summary/event refresh and bounded retry.
-
-**Error Types:**
-- User-facing frontend errors are regular `Error` instances with localized messages.
-- Trusted artifact validation throws before token attachment.
-
-## Logging
-
-**Framework:**
-- No frontend logging framework is used.
-- Avoid `console.log` in committed app code; use React state, notices, and copied diagnostics.
-
-**Patterns:**
-- Backend event diagnostics stay in `ExecutionLog.rawRecord` as a non-enumerable property.
-- Clipboard logs use raw JSONL through `buildLogClipboardText()`.
-
-## Comments
-
-**When to Comment:**
-- Use comments only around non-obvious protocol or security choices.
-- Existing examples include the disabled streamed-answer card explanation in `frontend/app/workspace-view.ts`.
-
-**JSDoc/TSDoc:**
-- Not a dominant pattern. Prefer expressive names, strict types, and focused tests.
-
-## Function Design
-
-**Size:**
-- Keep React components mostly presentational.
-- Keep backend I/O in `frontend/lib/task-api.ts`.
-- Keep side effects in `frontend/hooks/use-task-workspace.ts`.
-- Keep pure projections in `frontend/app/task-state.ts` and `frontend/app/workspace-view.ts`.
-
-**Parameters:**
-- Use options objects for optional behavior, such as `buildMessageRequestPayload()` and `fetchTask()`.
-- Use typed event-intent objects for keyboard behavior, such as `shouldSubmitComposerKey()`.
-
-**Return Values:**
-- Return typed normalized records from API/state helpers.
-- Return view model arrays from projection helpers.
-- Return callback props from `useTaskWorkspace()` for components to wire.
-
-## Module Design
-
-**Exports:**
-- Prefer named exports for components, hooks, helpers, and types.
-- `frontend/app/page.tsx` uses the default export required by Next app router.
-
-**Boundary Rules:**
-- Components should not call backend APIs directly.
-- API adapter should not render UI.
-- State normalization should not create React state.
-- View projection helpers should remain pure enough to test with Node.
-
-**CSS:**
-- Global CSS is centralized in `frontend/app/globals.css`.
-- Reuse existing tokens such as `--canvas`, `--surface-card`, `--primary`, `--radius-md`, and font variables.
-- Visual changes must align with `DESIGN.md`.
-
----
-
-*Convention analysis: 2026-05-19*
-*Update when frontend style, naming, imports, or boundary conventions change*
+- 提交的前端应用代码避免 `console.log`。
+- 用户可见问题通过 notice、日志面板或复制诊断表达。
+- 注释只解释协议、安全或不直观的 projection 逻辑。

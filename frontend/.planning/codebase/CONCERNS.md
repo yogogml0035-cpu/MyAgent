@@ -1,170 +1,54 @@
-# Codebase Concerns
+# 前端风险和关注点
 
-**Analysis Date:** 2026-05-19
+**分析日期：** 2026-05-19
 
-## Tech Debt
+## 技术债
 
-**State normalization and view projection are oversized:**
-- Issue: `frontend/app/task-state.ts` and `frontend/app/workspace-view.ts` contain many backend schema translations, event metadata normalizers, artifact trust checks, progress-log grouping, diagnostics JSON shaping, and conversation ordering rules.
-- Files: `frontend/app/task-state.ts`, `frontend/app/workspace-view.ts`, `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_workspace_view.test.ts`.
-- Impact: Event payload changes can require edits across several dense sections and large tests.
-- Fix approach: Keep behavior stable, then extract smaller modules by concern: wire normalization, artifact security, live metadata, run grouping, diagnostics rendering, and conversation ordering.
+- `frontend/app/task-state.ts` 承担大量后端字段、事件、artifact URL 和安全归一化。
+- `frontend/app/workspace-view.ts` 承担日志分组、对话排序、诊断 JSON 和展示标签，文件偏重。
+- 全局 CSS 与组件 class name 耦合较紧，改 markup 或 class 容易影响多处状态。
+- 浏览器 E2E 入口不完全统一，有 standalone 脚本不是标准 Playwright spec。
 
-**Visual behavior is tightly coupled to global CSS class names:**
-- Issue: Components rely on large global CSS selectors in `frontend/app/globals.css`.
-- Files: `frontend/components/chat/*.tsx`, `frontend/app/globals.css`, `frontend/tests/workspace/test_frontend_architecture.test.ts`.
-- Impact: Renaming a class or moving markup can silently affect multiple states and responsive views.
-- Fix approach: Preserve class/test invariants when refactoring and add Playwright screenshots for visual changes.
+## 已知问题
 
-**Runtime E2E scripts have mixed shapes:**
-- Issue: Most browser specs are Playwright `*.spec.mjs`, but `frontend/e2e-playwright/test_storage_memory_e2e.mjs` launches Chromium directly and is not in `package.json`.
-- Files: `frontend/e2e-playwright/test_storage_memory_e2e.mjs`, `frontend/package.json`, `frontend/e2e-playwright/README.md`.
-- Impact: Maintainers can assume every `test_*` file is a normal Playwright spec and skip this script accidentally.
-- Fix approach: Convert it to a Playwright spec or move it to a clearly named manual tools directory.
+- 暂未发现明确的前端-only 功能 bug。
+- 系统层面仍需关注 SSE 恢复、artifact URL 安全、history 菜单、上传预览和视觉回归。
 
-## Known Bugs
+## 安全关注
 
-**No confirmed frontend-only functional bug is documented in source comments:**
-- Symptoms: None documented as a current open frontend bug in code comments.
-- Trigger: N/A.
-- Workaround: N/A.
-- Root cause: N/A.
-- Note: System-level concerns still exist around E2E discoverability, SSE recovery, and event projection.
+- `NEXT_PUBLIC_MYAGENT_TOKEN` 会暴露在浏览器中。
+- SSE token 放在 query 参数中，可能出现在日志或诊断。
+- artifact URL 必须保持同源、当前任务范围和可信路径。
+- HTML artifact 预览虽然 sandbox，但仍是不可信内容。
+- 上传扩展名过滤只是体验，不是安全边界。
 
-## Security Considerations
+## 性能关注
 
-**Browser-visible token and SSE query token are sensitive:**
-- Risk: `NEXT_PUBLIC_MYAGENT_TOKEN` is exposed to browser JavaScript, and SSE sends it as a query parameter.
-- Files: `frontend/lib/task-api.ts`, `frontend/app/task-state.ts`.
-- Current mitigation: Token use is centralized and artifact URLs are restricted before token attachment.
-- Recommendations: Never put provider keys, customer data, database URLs, or private examples in `NEXT_PUBLIC_*`. Avoid logging full SSE URLs.
+- 大量事件会让状态归一化和 view projection 变慢。
+- live log diagnostics 会重复排序、合并和序列化。
+- 当前没有任务历史分页或前端虚拟列表。
+- E2E 本地证据目录长期积累会占磁盘。
 
-**Artifact URLs must stay first-party and task-scoped:**
-- Risk: A malicious backend payload or future bug could try to send artifact requests to external origins with the token attached.
-- Files: `frontend/app/task-state.ts`, `frontend/lib/task-api.ts`, `frontend/tests/state/test_task_state.test.ts`.
-- Current mitigation: `buildArtifactRequest()` checks origin, path shape, task ID, run ID, artifact name, query, and hash.
-- Recommendations: Keep all artifact fetches behind `buildArtifactRequest()`.
+## 脆弱区域
 
-**HTML artifact preview is sandboxed but still untrusted content:**
-- Risk: Large or misleading HTML artifacts can still consume resources or visually impersonate trusted UI inside the iframe.
-- Files: `frontend/hooks/use-task-workspace.ts`.
-- Current mitigation: Preview wrapper uses a sandboxed iframe with no scripts and a restrictive CSP.
-- Recommendations: Keep sandbox empty and add size/type controls if large HTML artifacts become common.
+- 后端事件 schema 变化会影响 `task-state.ts` 和 `workspace-view.ts`。
+- SSE 重连和事件轮询依赖事件 ID 去重。
+- artifact 打开下载涉及 URL 校验、token、object URL 生命周期、弹窗和 sandbox。
+- history rename/delete 菜单依赖局部状态、outside click、Escape 和 `window.confirm`。
+- upload composer 在文件输入、模型选择、发送/停止按钮和响应式布局之间存在耦合。
 
-**Upload filtering is client-side convenience, not security:**
-- Risk: Browser extension filtering in `frontend/app/file-upload.ts` can be bypassed.
-- Files: `frontend/app/file-upload.ts`, `frontend/hooks/use-task-workspace.ts`.
-- Current mitigation: Backend performs authoritative extension and size validation.
-- Recommendations: Treat frontend upload checks as UX only.
+## 扩展限制
 
-## Performance Bottlenecks
+- 无前端侧分页或虚拟列表。
+- 只支持单个后端 origin。
+- 无登录、账号、session 或多用户界面。
+- 无 retention、quota 或批量清理 UI。
+- 浏览器 E2E 不是默认 CI 全量 gate。
 
-**Live-log projection rebuilds large diagnostics repeatedly:**
-- Problem: `buildLiveLogItems()` sorts logs, merges diagnostics, serializes JSON, and caps tool-result display on each projection.
-- Files: `frontend/app/workspace-view.ts`, `frontend/components/chat/TaskConversation.tsx`.
-- Cause: Pure rebuilds are easy to test but not incremental.
-- Improvement path: Memoize by run/log IDs and consider virtualizing diagnostics for long-running tasks.
+## 建议优先级
 
-**Task state normalization scales with full event history:**
-- Problem: `normalizeTaskState()` maps all events and messages in a task response.
-- Files: `frontend/app/task-state.ts`, `frontend/lib/task-api.ts`, `frontend/hooks/use-task-workspace.ts`.
-- Cause: Backend `get_task()` can return full event history by default.
-- Improvement path: Prefer `includeEvents=false` for lightweight refreshes and add pagination if task histories grow.
-
-**Many ignored evidence folders exist locally:**
-- Problem: `frontend/e2e-playwright/e2e-*` evidence folders accumulate screenshots and logs.
-- Files: `frontend/e2e-playwright/`, `.gitignore`.
-- Cause: Evidence is intentionally local and ignored.
-- Improvement path: Add a local cleanup command or retention guidance if disk usage grows.
-
-## Fragile Areas
-
-**Backend event schema projection:**
-- Why fragile: Frontend projections depend on `type`, `payload.live`, run IDs, seq values, tool names, answer/thinking stream chunks, and final-answer boundaries.
-- Files: `frontend/app/task-state.ts`, `frontend/app/workspace-view.ts`, `backend/app/streaming/event_converter.py`.
-- Safe modification: Add backend converter tests and frontend state/view tests for every new event shape.
-- Test coverage: Strong Node tests; choose Playwright coverage by affected user-visible path.
-
-**SSE retry and polling recovery:**
-- Why fragile: Event replay can duplicate records, so merging by ID and last-event polling must remain aligned with backend cursor behavior.
-- Files: `frontend/hooks/use-task-workspace.ts`, `frontend/lib/task-api.ts`, `frontend/e2e-playwright/test_event_cursor_recovery.spec.mjs`.
-- Safe modification: Preserve `mergeExecutionLogs()` de-duplication and re-run cursor recovery E2E when changing stream behavior.
-
-**Artifact open/download flow:**
-- Why fragile: It combines backend URL shape, token attachment, object URL lifecycle, popup behavior, sandboxed preview, and downloads.
-- Files: `frontend/app/task-state.ts`, `frontend/lib/task-api.ts`, `frontend/hooks/use-task-workspace.ts`.
-- Safe modification: Keep `buildArtifactRequest()` as the only URL builder and update browser runtime-contract E2E for URL shape changes.
-
-**History rename/delete menu:**
-- Why fragile: Sidebar menu uses local open/rename/action state, outside-click/Escape listeners, `window.confirm`, and active-task delete guards.
-- Files: `frontend/components/chat/ChatSidebar.tsx`, `frontend/hooks/use-task-workspace.ts`.
-- Safe modification: Re-run history-menu Playwright spec and source invariant tests after changes.
-
-**Upload preview and composer layout:**
-- Why fragile: File input state, hidden input reset, replace/remove controls, model picker, send/stop button, and responsive CSS interact in a compact surface.
-- Files: `frontend/components/chat/ChatComposer.tsx`, `frontend/app/globals.css`, `frontend/e2e-playwright/test_upload_preview_design.spec.mjs`.
-- Safe modification: Use desktop and narrow screenshots for any visual or interaction change.
-
-## Scaling Limits
-
-**No frontend-side pagination or virtualization:**
-- Current capacity: Local single-user task history and moderate log volume.
-- Limit: Large histories or long-running event streams can slow render/projection.
-- Symptoms at limit: Slow task switching, large log panels, expensive diagnostics JSON generation.
-- Scaling path: Backend pagination plus frontend virtualization/memoization.
-
-**Frontend assumes a single backend origin:**
-- Current capacity: One configured backend base URL.
-- Limit: Multi-tenant/multi-user or multiple backend environments require explicit routing/account model.
-- Scaling path: Add login/session and environment selection before multi-user deployment.
-
-## Dependencies at Risk
-
-**Next/React major behavior changes:**
-- Risk: App router, typegen, strict TypeScript, and React 19 behavior can change with upgrades.
-- Files: `frontend/package.json`, `frontend/package-lock.json`, `frontend/app/`.
-- Migration plan: Run typecheck, Node tests, lint, build, and selected Playwright specs after upgrades.
-
-**Playwright specs depend on local service/env setup:**
-- Risk: Specs fail or are skipped if backend/frontend services, Postgres container, tokens, or evidence dir env vars are missing.
-- Files: `frontend/e2e-playwright/README.md`, `frontend/e2e-playwright/test_*.spec.mjs`.
-- Migration plan: Keep README commands current and add helper scripts only if they preserve screenshot evidence requirements.
-
-## Missing Critical Features
-
-**Browser E2E is not a default frontend CI gate:**
-- Problem: `frontend/package.json` exposes `e2e:runtime-contracts`, but the normal CI-oriented scripts are typecheck, Node tests, lint, and build.
-- Blocks: Browser regressions can pass automated frontend CI unless manually selected E2E runs are performed.
-- Implementation complexity: Medium; needs reliable service orchestration, env, and artifact handling.
-
-**No user/session UI:**
-- Problem: Frontend has no login or account model and uses one optional public token.
-- Blocks: Multi-user task isolation, per-user history, role-based artifact access, and token rotation UX.
-- Implementation complexity: High and coupled to backend auth changes.
-
-**No retention/cleanup UI for local history/artifacts:**
-- Problem: Users can delete individual conversations, but there is no quota, retention, bulk cleanup, or evidence cleanup UI.
-- Blocks: Long-running local deployments with many tasks and artifacts.
-- Implementation complexity: Medium.
-
-## Test Coverage Gaps
-
-**Real browser E2E remains manual/selected:**
-- What's not tested by `npm test`: Actual browser flows for task creation, upload, SSE, artifacts, history menus, responsive layout, and screenshots.
-- Risk: Node/source tests can pass while browser behavior regresses.
-- Priority: High.
-
-**Large log/task performance is not measured:**
-- What's not tested: Thousands of events/messages/artifacts in a single task.
-- Risk: Projection and rendering slowdowns can appear only in long-running sessions.
-- Priority: Medium.
-
-**Standalone storage-memory E2E is outside normal spec discovery:**
-- What's not tested by standard Playwright commands: `frontend/e2e-playwright/test_storage_memory_e2e.mjs`.
-- Risk: Storage/memory browser behavior covered there can be skipped.
-- Priority: Medium.
-
----
-
-*Concerns audit: 2026-05-19*
-*Update as frontend risks are fixed or newly discovered*
+1. 将状态归一化、artifact 安全和 view projection 按关注点拆小。
+2. 把关键浏览器路径纳入更明确的 E2E 命令或 CI 策略。
+3. 为长事件流增加分页、虚拟化或 memoization。
+4. 增加本地 E2E 证据清理说明或脚本。
+5. 任何视觉改动都保持 `DESIGN.md` 和截图证据同步。

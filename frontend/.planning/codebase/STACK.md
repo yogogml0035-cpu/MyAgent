@@ -1,94 +1,58 @@
-# Technology Stack
+# 前端技术栈
 
-**Analysis Date:** 2026-05-19
+**分析日期：** 2026-05-19
 
-## Languages
+## 语言和运行时
 
-**Primary:**
-- TypeScript/TSX - Next.js app router UI, React components, workspace hook, API adapter, state normalization, and unit tests under `frontend/app/`, `frontend/components/`, `frontend/hooks/`, `frontend/lib/`, and `frontend/tests/`.
+- TypeScript/TSX：应用、组件、hook、状态转换和测试。
+- JavaScript ES modules：Playwright specs。
+- CSS：全局设计系统和组件样式。
+- Node.js 20：前端运行和 CI 目标。
+- npm：依赖管理，锁文件是 `frontend/package-lock.json`。
 
-**Secondary:**
-- JavaScript ES modules - Playwright browser E2E specs in `frontend/e2e-playwright/*.mjs`.
-- CSS - Global design system and application styling in `frontend/app/globals.css`.
-- JSON - `frontend/package.json`, `frontend/package-lock.json`, and `frontend/tsconfig.json`.
+## 主要框架和库
 
-## Runtime
+- Next.js app router：页面、构建和开发服务。
+- React / React DOM：聊天工作区 UI。
+- TypeScript strict mode：类型检查。
+- react-markdown：Markdown 渲染。
+- remark-gfm：GitHub-flavored Markdown 支持。
+- Playwright：浏览器 E2E。
+- tsx + Node `node:test`：TypeScript 单元测试。
+- ESLint + eslint-config-next：lint。
 
-**Environment:**
-- Node.js target is 20 from root `.nvmrc` and project CI assumptions.
-- Next.js app router runs on port 3001 by default.
-- Browser runtime uses `fetch`, `EventSource`, `FormData`, `Blob`, object URLs, and `window.open()` for artifacts.
+## 脚本
 
-**Package Manager:**
-- npm with lockfile `frontend/package-lock.json`.
-- Exact package versions are resolved in `frontend/package-lock.json`; dependency constraints are in `frontend/package.json`.
+```bash
+cd frontend
+npm run dev
+npm run typecheck
+npm test
+npm run lint
+npm run build
+npm run e2e:runtime-contracts
+```
 
-## Frameworks
+## 配置文件
 
-**Core:**
-- Next.js 15.5.18 - App router application mounted by `frontend/app/page.tsx`.
-- React 19.2.5 and React DOM 19.2.5 - Chat workspace components in `frontend/components/chat/`.
-- TypeScript 5.9.3 - Strict mode source and test typing through `frontend/tsconfig.json`.
+- `frontend/package.json`：scripts 和依赖。
+- `frontend/package-lock.json`：依赖锁定。
+- `frontend/tsconfig.json`：TypeScript strict 配置。
+- `frontend/eslint.config.mjs`：ESLint 配置和忽略目录。
+- `frontend/next.config.mjs`：Next `distDir` 和 watcher 配置。
+- `frontend/.env.example`：浏览器安全 env 示例。
 
-**Rendering:**
-- `react-markdown` 10.1.0 - Markdown rendering in conversation components.
-- `remark-gfm` 4.0.1 - GitHub-flavored Markdown support.
+## 环境变量
 
-**Testing:**
-- Node built-in `node:test` with `tsx` 4.21.0 - Unit/source tests under `frontend/tests/`.
-- Playwright 1.60.0 - Browser E2E specs under `frontend/e2e-playwright/`.
+- `NEXT_PUBLIC_MYAGENT_API_BASE_URL`：后端 API base URL。
+- `NEXT_PUBLIC_API_BASE_URL`：旧版 API base URL。
+- `NEXT_PUBLIC_MYAGENT_TOKEN`：浏览器可见访问 token。
+- `NEXT_PUBLIC_AGENT_CHAT_TOKEN`：旧版浏览器 token。
+- `MYAGENT_E2E_BASE_URL`、`MYAGENT_E2E_API_URL`、`MYAGENT_E2E_EVIDENCE_DIR`：E2E 运行配置。
 
-**Build/Dev:**
-- ESLint 9.39.4 with `eslint-config-next` 15.5.15 - Linting through `frontend/eslint.config.mjs`.
-- Next typegen plus `tsc --noEmit` - Typecheck command in `frontend/package.json`.
-- Next dev output is isolated with `NEXT_DIST_DIR=.next-dev`; E2E dev output is expected under `.next-dev-e2e`.
+## 注意事项
 
-## Key Dependencies
-
-**Critical:**
-- `next` - App routing, build/dev server, typegen, and production build.
-- `react` / `react-dom` - UI component runtime.
-- `react-markdown` and `remark-gfm` - Assistant Markdown and artifact text rendering.
-- `@playwright/test` - Browser E2E runner and screenshot evidence.
-- `tsx` - Runs TypeScript test files with Node's test runner.
-
-**Infrastructure:**
-- FastAPI backend - Browser calls task, model, upload, artifact, cancel, events, and SSE endpoints through `frontend/lib/task-api.ts`.
-- Browser EventSource - Streaming connection from `createTaskEventSource()` in `frontend/lib/task-api.ts`.
-- Local evidence folders - Playwright screenshots and downloaded artifacts under ignored `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`.
-
-## Configuration
-
-**Environment:**
-- `NEXT_PUBLIC_MYAGENT_API_BASE_URL` or legacy `NEXT_PUBLIC_API_BASE_URL` configures backend origin; `auto` resolves to the current browser hostname on port 8001 in `frontend/app/task-state.ts`.
-- `NEXT_PUBLIC_MYAGENT_TOKEN` or legacy `NEXT_PUBLIC_AGENT_CHAT_TOKEN` attaches browser-visible token credentials in `frontend/lib/task-api.ts`.
-- `MYAGENT_E2E_*` variables configure Playwright specs; examples are documented in `frontend/e2e-playwright/README.md`.
-- `frontend/.env.local` is ignored and must contain only browser-safe `NEXT_PUBLIC_*` values.
-
-**Build:**
-- `frontend/package.json` scripts:
-  - `npm run dev` - Next dev on port 3001 with polling and `.next-dev`.
-  - `npm run typecheck` - `next typegen && tsc --noEmit`.
-  - `npm test` - `node --test --import tsx tests/*/test_*.test.ts`.
-  - `npm run lint` - ESLint with `--max-warnings=0`.
-  - `npm run build` - Production Next build.
-- `frontend/next.config.mjs` uses `NEXT_DIST_DIR` and polling watch options.
-- `frontend/eslint.config.mjs` ignores `.next/`, `.next-dev/`, `.next-dev-e2e/`, `node_modules/`, and generated Next env types.
-
-## Platform Requirements
-
-**Development:**
-- Install with `cd frontend && npm ci`.
-- Run with `cd frontend && npm run dev`.
-- Backend is expected on `http://127.0.0.1:8001` or a configured API base.
-- For WSL/mounted drives, polling watchers are enabled by default.
-
-**Production:**
-- Built with `npm run build`; served with `npm run start` on port 3001.
-- Browser-facing env values must remain safe because `NEXT_PUBLIC_*` is exposed to users.
-- The frontend has no server-side API routes of its own; backend availability is required for task workflows.
-
----
-
-*Stack analysis: 2026-05-19*
-*Update after major dependency, runtime, build, or browser support changes*
+- `NEXT_PUBLIC_*` 会暴露给浏览器，不能保存 provider key、数据库 URL 或客户资料。
+- 前端没有自己的 API route；任务能力依赖后端。
+- 本地 dev 默认端口是 `3001`。
+- E2E 截图证据保存到 ignored 目录，不提交 git。
