@@ -24,7 +24,7 @@ def test_searxng_search_formats_infoboxes_when_regular_results_are_empty(monkeyp
                     {
                         "infobox": "OpenAI",
                         "content": "Research organization",
-                        "urls": [{"title": "Wikipedia", "url": "https://example.test/openai"}],
+                        "urls": [{"title": "Wikipedia", "url": "https://example.test/reference"}],
                     }
                 ],
             }
@@ -43,7 +43,7 @@ def test_searxng_search_formats_infoboxes_when_regular_results_are_empty(monkeyp
 
     assert "直接答案：Direct answer" in result
     assert "信息框：OpenAI" in result
-    assert "Wikipedia: https://example.test/openai" in result
+    assert "Wikipedia: https://example.test/reference" in result
 
 
 def test_searxng_search_returns_error_string_when_request_fails(monkeypatch):

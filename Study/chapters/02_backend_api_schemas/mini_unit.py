@@ -22,6 +22,7 @@ KNOWN_STATUSES = {
     "needs_input",
     "interrupted",
 }
+DEFAULT_MODE = "auto"
 
 
 def normalize_task_state(raw: dict) -> dict:
@@ -34,6 +35,14 @@ def normalize_task_state(raw: dict) -> dict:
 
 def validate_model(model_id: str, registry: set[str]) -> bool:
     return model_id in registry
+
+def build_message_request_payload(message: str, model: str, mode: str = DEFAULT_MODE) -> dict:
+    return {
+        "content": message,
+        "message": message,
+        "model": model,
+        "mode": mode,
+    }
 
 
 def assert_source_contracts() -> None:
@@ -50,7 +59,11 @@ def assert_source_contracts() -> None:
     assert "async def send_message" in tasks_api
     assert "_validate_runnable_model" in tasks_api
     assert "include_events: bool = True" in tasks_api
+    assert 'mode: TaskMode = "auto"' in schemas
+    assert 'input_scope: InputScope = "auto"' in schemas
     assert "record.id ?? record.task_id ?? record.taskId" in task_state
+    assert "buildMessageRequestPayload" in task_state
+    assert "mode: options.mode ?? DEFAULT_MESSAGE_MODE" in task_state
     assert "MODEL_REGISTRY" in config
 
 
@@ -67,9 +80,12 @@ if __name__ == "__main__":
     assert frontend_state["id"] == "task-1"
     assert frontend_state["activeRunId"] == "run-1"
     assert frontend_state["uploadCount"] == 2
-    assert validate_model("deepseek:deepseek-chat", {"deepseek:deepseek-chat"})
-    assert not validate_model("fake:model", {"deepseek:deepseek-chat"})
+    payload = build_message_request_payload("请分析这些文件", "deepseek-v4-flash")
+    assert payload["mode"] == "auto"
+    assert validate_model("deepseek-v4-flash", {"deepseek-v4-flash"})
+    assert not validate_model("fake:model", {"deepseek-v4-flash"})
     assert_source_contracts()
 
     print(frontend_state)
+    print(payload)
     print("OK: 你已经理解了后端 schema 到前端状态的基本映射。")

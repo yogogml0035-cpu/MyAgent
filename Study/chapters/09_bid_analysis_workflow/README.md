@@ -59,6 +59,25 @@
 
 ## 结合项目分析
 
+如果把业务知识和平台代码映射起来，最适合初学者记住的是这条“平台先行”的路径：
+
+```text
+上传招标/投标文件
+-> 平台把它们保存成 task-scoped uploads
+-> Agent 通过 resource tools 按需读取
+-> 知识包提供“如何分类、如何比较、如何做证据锚点”的业务规则
+-> 分析结果写成 artifact
+-> 前端只负责展示报告和过程日志
+```
+
+所以这一章的学习重点不是“把知识包当代码背”，而是理解：
+
+- 平台已经给了什么能力
+- 业务层还需要补什么模块
+- 哪些判断现在只能写“需要结合源码进一步确认”
+
+## 当前源码能确认什么
+
 目前能从源码可靠确认：
 
 - 通用上传格式支持 `.md`、`.json`、`.txt`、`.docx`、`.xlsx`、`.xlsm`。
@@ -83,12 +102,20 @@
 
 结构化证据能追溯来源、生成报告、做测试断言，也能避免只输出一段“看起来很像”的主观描述。
 
+## 为什么本章放在最后
+
+因为只有先学完 `Task / Run / Event / Resource / Artifact / SSE` 这些平台概念，你才看得懂：
+
+- 为什么业务规则优先沉淀在知识包
+- 为什么 PDF compare 不是“写个 prompt”就算落地
+- 为什么证据锚点、artifact、人工复核这些边界要分开设计
+
 ## 动手练习
 
 运行：
 
 ```bash
-python3 Study/chapters/09_bid_analysis_workflow/mini_unit.py
+python Study/chapters/09_bid_analysis_workflow/mini_unit.py
 ```
 
 尝试把 `requires_at_least_two_bidders` 改成允许 1 份投标文件，再运行。你会看到失败。这个失败说明“对比分析”至少需要两个投标主体。

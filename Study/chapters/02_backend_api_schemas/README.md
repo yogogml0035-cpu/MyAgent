@@ -45,6 +45,8 @@
 | `EventRecord` | 进度日志和 SSE 的基本单元 |
 | `ModelOption` | 模型选择器和可用性提示 |
 
+还有一个容易被忽略的点：后端的 `MessageRequest` 不只包含 `message` 和 `model`，还包含 `mode`、`input_scope` 这类“如何理解这条消息”的合同字段。学这一章时，不要只看“字段长什么样”，还要看“哪些字段当前前端真的会发，哪些字段只是后端先保留了合同”。
+
 ### API 层做什么？
 
 以 `send_message` 为例：
@@ -58,6 +60,27 @@
 7. 调用 `runner.start_background()`。
 8. 返回最新 `TaskState`。
 
+### API 支持的路径，不等于前端当前默认路径
+
+当前后端支持两种常见入口：
+
+- `POST /api/tasks`：可以只创建空 task，也可以创建时直接带第一条消息。
+- `POST /api/tasks/{id}/messages`：给已有 task 追加一轮运行。
+
+而当前前端默认走的是：
+
+```text
+ensureTask()
+-> createTask(model) 只创建空 task
+-> uploadTaskFiles()
+-> postTaskMessage()
+```
+
+也就是说，这一章要同时分清：
+
+- 后端合同“允许什么”
+- 当前前端“实际怎么用”
+
 ### 常见错误码
 
 - 400：模型不允许、模型服务未配置、上传类型不支持。
@@ -65,6 +88,29 @@
 - 409：任务运行中，不能重复发送、删除或上传。
 - 413：上传文件或请求体超过限制。
 - 422：请求体格式不符合 schema。
+
+## 结合项目分析
+
+把这章和真实项目代码连起来，可以顺着这条链路读：
+
+```text
+useTaskWorkspace.handleSubmit()
+-> task-api.ts 的 postTaskMessage()
+-> task-state.ts 的 buildMessageRequestPayload()
+-> POST /api/tasks/{id}/messages
+-> api/tasks.py 的 send_message()
+-> _validate_runnable_model()
+-> storage.start_run()
+-> runner.start_background()
+```
+
+当前源码里有一个很值得初学者注意的小细节：
+
+- `MessageRequest` schema 里有 `mode` 和 `input_scope`
+- 当前前端 `buildMessageRequestPayload()` 会显式发送 `mode`
+- `input_scope` 这个字段目前还没有在前端表单里被单独暴露出来
+
+所以如果你问“`input_scope` 现在到底在哪个产品入口被用到”，答案应该是：需要结合源码进一步确认，不能只看 schema 就脑补完整交互。
 
 ## 你可能卡住的问题
 
@@ -81,12 +127,12 @@
 运行：
 
 ```bash
-python3 Study/chapters/02_backend_api_schemas/mini_unit.py
+python Study/chapters/02_backend_api_schemas/mini_unit.py
 ```
 
 尝试把 `BACKEND_TO_FRONTEND_FIELD["task_id"]` 改成 `"taskId"`，再运行。你会看到失败，因为本项目前端把后端 `task_id` 统一映射成 `id`。
 
-练习会同时读取 `schemas.py`、`api/tasks.py` 和 `task-state.ts`，确认字段、状态、模型校验函数在源码中存在。
+练习会同时读取 `schemas.py`、`api/tasks.py` 和 `task-state.ts`，确认字段、状态、默认 `mode`、模型校验函数在源码中存在。
 
 ## 自测题
 
@@ -94,6 +140,7 @@ python3 Study/chapters/02_backend_api_schemas/mini_unit.py
 2. API 层为什么要在启动 Runner 前校验模型可用性？
 3. `include_events=false` 有什么用？
 4. 为什么 `TaskCreateRequest.message` 可以是空，而 `MessageRequest.message` 不可以是空？
+5. 当前前端实际会显式发送哪些消息字段？`input_scope` 现在应该如何理解？
 
 ## 常见误区
 

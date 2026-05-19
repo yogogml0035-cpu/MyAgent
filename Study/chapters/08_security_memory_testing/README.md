@@ -64,6 +64,34 @@ SSE 有个特殊点：浏览器 `EventSource` 不能自定义 header，所以 to
 
 行为变更不能只靠“看代码没问题”。必须有对应测试，前端关键流程还要实际浏览器 E2E 和截图证据。
 
+## 结合项目分析
+
+把这章和真实代码路径连起来，可以先看两条线：
+
+### 安全线
+
+```text
+main.py 的 authorize_task_request()
+-> loopback 允许本机直连
+-> 非本机访问要求 token
+-> SSE 因为 EventSource 限制，从 query param 取 token
+```
+
+### 记忆线
+
+```text
+memory.py 提取候选记忆
+-> scanner.py 做敏感扫描 / 脱敏
+-> 只允许 MEMORY_TYPES 白名单
+-> 写入 Postgres + Qdrant
+```
+
+如果你以后改这里，测试思路也应该跟着分层：
+
+- 改 API 或 auth 中间件：看后端单元 / 安全测试
+- 改记忆抽取和过滤：看 memory / scanner 测试
+- 改用户可见交互：再补前端测试和浏览器 E2E
+
 ## 你可能卡住的问题
 
 ### 为什么长期记忆不能存完整报告？
@@ -79,7 +107,7 @@ SSE 有个特殊点：浏览器 `EventSource` 不能自定义 header，所以 to
 运行：
 
 ```bash
-python3 Study/chapters/08_security_memory_testing/mini_unit.py
+python Study/chapters/08_security_memory_testing/mini_unit.py
 ```
 
 尝试把 `ALLOWED_MEMORY_TYPES` 加上 `"temporary_fact"`，再运行。你会看到失败。这个失败说明临时事实不应该进入长期记忆。

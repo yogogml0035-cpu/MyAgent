@@ -112,7 +112,7 @@ def test_remember_completed_run_persists_canonical_memory_and_qdrant_index(monke
         (),
         {
             "default_user_id": "user-1",
-            "default_model": "deepseek:deepseek-chat",
+            "default_model": "deepseek-v4-flash",
             "memory_min_score": 0.7,
         },
     )()

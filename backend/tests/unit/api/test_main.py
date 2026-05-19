@@ -96,7 +96,7 @@ def test_multipart_content_length_limit_rejects_before_storage(tmp_path, monkeyp
     storage = InMemoryTaskStorage(settings.task_root)
     app = create_app(settings, storage=storage)
     client = TestClient(app)
-    task_id = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()["task_id"]
+    task_id = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()["task_id"]
     called = False
 
     def fail_if_called(*args, **kwargs):

@@ -351,7 +351,7 @@ function seedCompletedProgressLogTask(taskId, title) {
 UPDATE tasks
 SET status = 'complete',
     title = ${sqlString(title)},
-    model = 'deepseek:deepseek-chat',
+    model = 'deepseek-v4-flash',
     updated_at = ${sqlString(completedAt)},
     error = NULL,
     needs_input = NULL,
@@ -367,7 +367,7 @@ VALUES (
   ${sqlString(runId)},
   'complete',
   ${sqlString(title)},
-  'deepseek:deepseek-chat',
+  'deepseek-v4-flash',
   ${sqlString(startedAt)},
   ${sqlString(completedAt)},
   NULL,
@@ -401,7 +401,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
   const title = `进度日志验收-${randomUUID().slice(0, 8)}`;
   const createdResponse = await request.post(`${API_URL}/api/tasks`, {
     headers: authHeaders(),
-    data: { model: "deepseek:deepseek-chat" },
+    data: { model: "deepseek-v4-flash" },
   });
   expect(createdResponse.status()).toBe(201);
   const createdTask = await createdResponse.json();

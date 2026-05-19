@@ -58,7 +58,7 @@ Copy `.env.example` to `.env` and configure:
 - `MYAGENT_CORS_ORIGINS`
 - `MYAGENT_TASK_ROOT`
 
-The default model registry exposes `deepseek:deepseek-chat`.
+The default model registry exposes `deepseek-v4-flash` and `deepseek-v4-flash-thinking`.
 The backend loads `backend/.env` on startup before reading process environment values.
 Current documentation assumes local same-machine access over `localhost` or `127.0.0.1`.
 Browser callers must use an origin listed in `MYAGENT_CORS_ORIGINS`, which defaults to

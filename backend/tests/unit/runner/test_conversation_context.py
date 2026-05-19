@@ -13,11 +13,11 @@ def test_context_builder_injects_previous_messages_without_current_tail(tmp_path
         recent_message_limit=12,
     )
     storage = InMemoryTaskStorage(settings.task_root)
-    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+    state = storage.create_task(message=None, model="deepseek-v4-flash")
     run = storage.start_run(
         state.task_id,
         message="上海今日天气",
-        model="deepseek:deepseek-chat",
+        model="deepseek-v4-flash",
         expected_statuses={"idle"},
     )
     assert run is not None
@@ -34,7 +34,7 @@ def test_context_builder_injects_previous_messages_without_current_tail(tmp_path
     followup = storage.start_run(
         state.task_id,
         message="我刚才问了什么？",
-        model="deepseek:deepseek-chat",
+        model="deepseek-v4-flash",
         expected_statuses={"complete"},
     )
     assert followup is not None
@@ -58,12 +58,12 @@ def test_context_builder_summarizes_long_history(tmp_path):
         recent_message_limit=2,
     )
     storage = InMemoryTaskStorage(settings.task_root)
-    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+    state = storage.create_task(message=None, model="deepseek-v4-flash")
     for index in range(4):
         run = storage.start_run(
             state.task_id,
             message=f"历史问题 {index}",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle", "complete"},
         )
         assert run is not None
@@ -80,7 +80,7 @@ def test_context_builder_summarizes_long_history(tmp_path):
     storage.start_run(
         state.task_id,
         message="继续",
-        model="deepseek:deepseek-chat",
+        model="deepseek-v4-flash",
         expected_statuses={"complete"},
     )
 
@@ -101,7 +101,7 @@ def test_context_builder_injects_fresh_tool_cache_unless_refresh_requested(tmp_p
         recent_message_limit=12,
     )
     storage = InMemoryTaskStorage(settings.task_root)
-    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+    state = storage.create_task(message=None, model="deepseek-v4-flash")
     storage.cache_tool_result(
         state.task_id,
         tool_name="searxng_search",

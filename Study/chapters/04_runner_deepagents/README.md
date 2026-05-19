@@ -74,6 +74,29 @@ Runner 组装 messages 时大致是：
 
 上传资源 manifest 只包含文件名、格式、大小、digest，不包含文件正文。
 
+## 结合项目分析
+
+如果你把 `TaskRunner.start_background()` 和 `TaskRunner.start()` 连起来看，这章的主调用链其实是：
+
+```text
+API 已经给出 run_id
+-> start_background(task_id, message, run_id)
+-> start(task_id, message, run_id)
+-> build_agent(...)
+-> stream_agent(...)
+-> convert_stream_event(...)
+-> storage.append_event(...)
+-> extract_final_answer(final_state)
+-> update_task_if_status_and_append_event(...)
+```
+
+还有两个很容易忽略、但在前端日志里会看到的特殊事件：
+
+- `context_loaded`：表示短期会话上下文已载入
+- `memory_recalled`：表示长期记忆已载入
+
+它们帮助你在第 06 章理解：为什么有些日志是“系统准备过程”，而不是模型最终回答的一部分。
+
 ## 你可能卡住的问题
 
 ### 为什么 `start_background()` 要接收 run_id？
@@ -93,7 +116,7 @@ Runner 组装 messages 时大致是：
 运行：
 
 ```bash
-python3 Study/chapters/04_runner_deepagents/mini_unit.py
+python Study/chapters/04_runner_deepagents/mini_unit.py
 ```
 
 尝试把 `extract_final_answer` 改成返回最后一条 AI 消息，不过滤 `tool_calls`，再运行。你会看到失败。这个失败说明工具调用中间消息不能当最终回答。

@@ -113,7 +113,7 @@ function seedCompletedArtifactTask(taskRoot, taskId) {
 UPDATE tasks
 SET status = 'complete',
     title = ${sqlString(uniqueTitle)},
-    model = 'deepseek:deepseek-chat',
+    model = 'deepseek-v4-flash',
     updated_at = ${sqlString(timestamp)},
     error = NULL,
     needs_input = NULL,
@@ -129,7 +129,7 @@ VALUES (
   ${sqlString(runId)},
   'complete',
   ${sqlString(userMessage)},
-  'deepseek:deepseek-chat',
+  'deepseek-v4-flash',
   ${sqlString(timestamp)},
   ${sqlString(timestamp)},
   NULL,
@@ -210,7 +210,7 @@ test("runtime task contracts expose artifacts and upload errors in the browser",
 
   const createdResponse = await request.post(`${API_URL}/api/tasks`, {
     headers: authHeaders(),
-    data: { model: "deepseek:deepseek-chat" },
+    data: { model: "deepseek-v4-flash" },
   });
   expect(createdResponse.status()).toBe(201);
   const createdTask = await createdResponse.json();
@@ -235,14 +235,19 @@ test("runtime task contracts expose artifacts and upload errors in the browser",
   await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "01-history-loaded.png") });
 
   await expect(page.locator(".modelPickerTrigger")).toHaveCount(1);
-  await page.getByRole("button", { name: /DeepSeek Chat/ }).click();
-  await expect(page.getByRole("option", { name: /DeepSeek Chat/ })).toHaveCount(1);
-  await expect(page.getByRole("option", { name: /DeepSeek Reasoner/ })).toHaveCount(1);
+  await page.getByRole("button", { name: "DeepSeek V4 Flash" }).click();
+  await expect(page.locator(".modelOption")).toHaveCount(2);
+  await expect(page.locator(".modelOptionTitle").getByText("DeepSeek V4 Flash", { exact: true })).toHaveCount(1);
+  await expect(
+    page.locator(".modelOptionTitle").getByText("DeepSeek V4 Flash Thinking", { exact: true }),
+  ).toHaveCount(1);
   await expect(page.getByText("GPT-4o")).toHaveCount(0);
   await expect(page.getByText("Claude Sonnet")).toHaveCount(0);
-  await page.getByRole("option", { name: /DeepSeek Reasoner/ }).click();
-  await expect(page.getByRole("button", { name: /DeepSeek Reasoner/ })).toBeVisible();
-  await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "02-deepseek-chat-reasoner-picker.png") });
+  await page.locator(".modelOption").filter({
+    has: page.locator(".modelOptionTitle").getByText("DeepSeek V4 Flash Thinking", { exact: true }),
+  }).click();
+  await expect(page.getByRole("button", { name: "DeepSeek V4 Flash Thinking" })).toBeVisible();
+  await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "02-deepseek-v4-flash-picker.png") });
 
   await page.getByRole("button", { name: uniqueTitle, exact: true }).click();
   await expect(page.getByText(artifactName)).toBeVisible();

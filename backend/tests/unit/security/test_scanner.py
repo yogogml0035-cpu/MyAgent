@@ -25,11 +25,11 @@ class TestScanTextForSecrets:
         )
         assert any(f.pattern == "bearer-token" for f in results)
 
-    def test_detects_openai_style_secret(self):
+    def test_detects_provider_style_secret(self):
         results = scan_text_for_secrets(  # ggignore
             "key=sk-00000000FAKE00000000000000", source="test.txt"  # ggignore
         )
-        assert any(f.pattern == "openai-style-secret" for f in results)
+        assert any(f.pattern == "provider-style-secret" for f in results)
 
     def test_detects_memory_customer_canary(self):
         results = scan_text_for_secrets(  # ggignore

@@ -39,6 +39,7 @@ ChatComposer 点击发送
 -> useTaskWorkspace.handleSubmit()
 -> ensureTask()
 -> uploadTaskFiles()
+-> 生成真正要发送的 taskContent
 -> postTaskMessage()
 -> refreshTask()/refreshTaskSummaries()
 ```
@@ -55,6 +56,7 @@ handleSubmit:
   校验模型可运行
   ensureTask
   uploadTaskFiles
+  生成 taskContent
   postTaskMessage
   refreshTask
   refreshTaskSummaries
@@ -69,6 +71,37 @@ handleSubmit:
 ### UI 状态来自投影
 
 后端原始 EventRecord 不直接等于 UI。`workspace-view.ts` 把日志、消息、run、artifact 组合成页面上可渲染的 conversation stream。
+
+### 只上传文件、不输入文字时也会发送一条默认消息
+
+这是当前源码里一个很容易忽略、但非常重要的产品行为：
+
+- 如果用户输入框有文字，就发送用户输入
+- 如果用户没有输入文字，但选择了文件，前端不会发空消息
+- 它会改发一条默认提示词：`DEFAULT_FILE_PROMPT`
+
+这样做的目的，是保证后端收到的仍然是一条“可以触发分析”的消息，而不是只有文件没有任务意图。
+
+## 结合项目分析
+
+当前真实代码的 `handleSubmit` 主路径可以更精确地写成：
+
+```text
+if (!canSend || isBusy || activeTask) return
+-> guardModel
+-> ensureTask()
+-> uploadTaskFiles()
+-> const taskContent = input.trim() || DEFAULT_FILE_PROMPT
+-> postTaskMessage(id, taskContent, model)
+-> refreshTask(id)
+-> refreshTaskSummaries()
+```
+
+这里最适合初学者抓住的，不是 React 语法，而是“为什么这一行必须放在这里”：
+
+- `guardModel` 先于创建 task / 上传文件
+- `ensureTask` 先于 upload / post message
+- `DEFAULT_FILE_PROMPT` 让文件-only 场景也能进入标准消息流
 
 ## 你可能卡住的问题
 
@@ -90,7 +123,9 @@ node Study/chapters/07_frontend_workspace/mini_unit.mjs
 
 尝试把 `submitPlan` 中 `guardModel` 移到 `uploadFiles` 后面，再运行。你会看到失败。这个失败对应真实代码中“模型不可用要先于创建任务/上传文件阻断”。
 
-练习还会读取 `use-task-workspace.ts` 和 `TaskWorkspace.tsx`，确认 handler、组件分工和 artifact sandbox 逻辑在源码中存在。
+你也可以再做一个小实验：把 mini unit 里的 `chooseTaskContent("   ")` 改成返回空字符串，再运行。你会看到失败，因为文件-only 场景不应该发送空消息。
+
+练习还会读取 `use-task-workspace.ts` 和 `TaskWorkspace.tsx`，确认 handler、组件分工、默认提示词和 artifact sandbox 逻辑在源码中存在。
 
 ## 自测题
 
@@ -98,6 +133,7 @@ node Study/chapters/07_frontend_workspace/mini_unit.mjs
 2. `task-api.ts` 为什么要处理非 JSON 的 200 响应？
 3. `buildSandboxedArtifactPreviewDocument` 解决了什么风险？
 4. 为什么历史列表、会话流、进度日志不是直接在组件里临时拼？
+5. 为什么“只上传文件、不输入文字”时，前端仍然要构造一条默认消息？
 
 ## 常见误区
 

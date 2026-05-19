@@ -66,13 +66,13 @@ void describe("use-task-workspace exports", () => {
     );
 
     assert.strictEqual(source.includes("selectedModelRunnable"), true);
-    assert.strictEqual(source.includes('const DEFAULT_MODEL_ID = "deepseek:deepseek-chat";'), true);
+    assert.strictEqual(source.includes('const DEFAULT_MODEL_ID = "deepseek-v4-flash";'), true);
     assert.strictEqual(source.includes("当前模型服务未配置，请先在后端配置对应 API Key 后再发送。"), true);
     assert.ok(source.indexOf("if (!selectedModelRunnable)") < source.indexOf("setIsBusy(true)"));
     assert.ok(source.indexOf("if (!selectedModelRunnable)") < source.indexOf("ensureTask()"));
   });
 
-  void it("should keep the model picker UI and expose only DeepSeek chat/reasoner options", () => {
+  void it("should keep the model picker UI and expose only DeepSeek V4 Flash options", () => {
     const source = readFileSync(
       new URL("../../components/chat/ChatComposer.tsx", import.meta.url),
       "utf-8",
@@ -86,8 +86,8 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(source.includes("aria-haspopup=\"listbox\""), true);
     assert.strictEqual(source.includes("onModelChange"), true);
     assert.strictEqual(workspaceSource.includes("const ALLOWED_MODEL_IDS = new Set(["), true);
-    assert.strictEqual(workspaceSource.includes('"deepseek:deepseek-chat"'), true);
-    assert.strictEqual(workspaceSource.includes('"deepseek:deepseek-reasoner"'), true);
+    assert.strictEqual(workspaceSource.includes('"deepseek-v4-flash"'), true);
+    assert.strictEqual(workspaceSource.includes('"deepseek-v4-flash-thinking"'), true);
     assert.strictEqual(workspaceSource.includes("options.filter((option) => ALLOWED_MODEL_IDS.has(option.id))"), true);
     assert.strictEqual(source.includes("!selectedModelRunnable"), true);
   });

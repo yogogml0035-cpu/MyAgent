@@ -12,8 +12,6 @@ dependencies = [
   "langchain>=0.3,<2.0.0",
   "langgraph>=0.3,<2.0.0",
   "deepagents>=0.5,<2.0.0",
-  "langchain-openai>=0.3,<2.0.0",
-  "langchain-anthropic>=0.3,<2.0.0",
   "langchain-deepseek>=0.1,<2.0.0",
   "langgraph-checkpoint",
   "psycopg[binary]>=3.2,<4.0",

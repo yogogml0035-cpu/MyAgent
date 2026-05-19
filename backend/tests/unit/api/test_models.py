@@ -6,7 +6,7 @@ from app.config import Settings
 from app.main import create_app
 
 
-def test_get_models_preserves_available_flag(tmp_path):
+def test_get_models_returns_only_deepseek_v4_flash_options(tmp_path):
     settings = Settings(
         task_root=tmp_path / "tasks",
         workspace_root=tmp_path / "tasks",
@@ -18,9 +18,9 @@ def test_get_models_preserves_available_flag(tmp_path):
 
     assert response.status_code == 200
     models = response.json()
-    deepseek = [model for model in models if model["provider"] == "deepseek"]
-    openai = [model for model in models if model["provider"] == "openai"]
-    assert deepseek
-    assert all(model["available"] is True for model in deepseek)
-    assert all(model["available"] is False for model in openai)
-
+    assert [model["id"] for model in models] == [
+        "deepseek-v4-flash",
+        "deepseek-v4-flash-thinking",
+    ]
+    assert all(model["provider"] == "deepseek" for model in models)
+    assert all(model["available"] is True for model in models)

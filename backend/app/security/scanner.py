@@ -6,10 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 PROVIDER_SECRET_ENV_NAMES = (
-    "ANTHROPIC_API_KEY",
     "DASHSCOPE_API_KEY",
     "DEEPSEEK_API_KEY",
-    "OPENAI_API_KEY",
     "TAVILY_API_KEY",
 )
 
@@ -27,7 +25,7 @@ SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("customer-canary", CUSTOMER_CANARY_PATTERN),
     ("authorization-header", re.compile(r"\bAuthorization\b", re.IGNORECASE)),
     ("bearer-token", re.compile(r"\bBearer\s+\S+", re.IGNORECASE)),
-    ("openai-style-secret", re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b", re.IGNORECASE)),
+    ("provider-style-secret", re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b", re.IGNORECASE)),
     ("api-key-field", re.compile(r"\bapi[_-]?key\b", re.IGNORECASE)),
     ("access-token-field", re.compile(r"\baccess[_-]?token\b", re.IGNORECASE)),
     ("refresh-token-field", re.compile(r"\brefresh[_-]?token\b", re.IGNORECASE)),
@@ -58,7 +56,7 @@ SENSITIVE_REDACTION_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
         ),
     ),
     ("bearer-token", re.compile(r"\bBearer\s+\S+", re.IGNORECASE)),
-    ("openai-style-secret", re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b", re.IGNORECASE)),
+    ("provider-style-secret", re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b", re.IGNORECASE)),
     ("provider-env-name", re.compile(rf"\b(?:{'|'.join(PROVIDER_SECRET_ENV_NAMES)})\b")),
     ("customer-canary", CUSTOMER_CANARY_PATTERN),
     ("authorization-header", re.compile(r"\bAuthorization\b", re.IGNORECASE)),

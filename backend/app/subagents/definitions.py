@@ -10,7 +10,7 @@ RESEARCHER: SubAgent = {
         "并将发现整理成清晰、结构化的摘要。始终注明来源。"
         "如果现有信息不足，必须明确说明。"
     ),
-    "model": "openai:gpt-4o-mini",
+    "model": "deepseek-v4-flash-thinking",
 }
 
 CODER: SubAgent = {

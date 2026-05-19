@@ -18,6 +18,7 @@ from fastapi import UploadFile
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
+from .config import DEEPSEEK_V4_FLASH_MODEL_ID
 from .contracts import (
     EventLevel,
     NewSessionEvent,
@@ -917,7 +918,7 @@ class PostgresTaskStorage:
         return events
 
     def create_session(self, metadata: dict[str, Any]) -> SessionSnapshot:
-        model = str(metadata.get("model") or "deepseek:deepseek-chat")
+        model = str(metadata.get("model") or DEEPSEEK_V4_FLASH_MODEL_ID)
         state = self.create_task(None, model)
         return self.get_session(state.task_id)
 

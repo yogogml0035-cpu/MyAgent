@@ -108,7 +108,7 @@ class TestGetPlatformTools:
 
         monkeypatch.setattr("app.tools.searxng_search._run_searxng_search", fake_run)
         storage = InMemoryTaskStorage(tmp_path / "tasks")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         settings = Settings(
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",

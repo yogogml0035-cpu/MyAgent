@@ -46,19 +46,19 @@ import {
   uploadTaskFiles,
 } from "../lib/task-api";
 
-const DEFAULT_MODEL_ID = "deepseek:deepseek-chat";
+const DEFAULT_MODEL_ID = "deepseek-v4-flash";
 const ALLOWED_MODEL_IDS = new Set([
-  "deepseek:deepseek-chat",
-  "deepseek:deepseek-reasoner",
+  "deepseek-v4-flash",
+  "deepseek-v4-flash-thinking",
 ]);
 const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
   {
-    id: "deepseek:deepseek-chat",
-    label: "DeepSeek Chat",
+    id: "deepseek-v4-flash",
+    label: "DeepSeek V4 Flash",
   },
   {
-    id: "deepseek:deepseek-reasoner",
-    label: "DeepSeek Reasoner",
+    id: "deepseek-v4-flash-thinking",
+    label: "DeepSeek V4 Flash Thinking",
   },
 ];
 

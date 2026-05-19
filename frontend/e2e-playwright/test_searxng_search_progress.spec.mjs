@@ -168,7 +168,7 @@ function seedSearxngSearchTask(taskId, title) {
 UPDATE tasks
 SET status = 'complete',
     title = ${sqlString(title)},
-    model = 'deepseek:deepseek-chat',
+    model = 'deepseek-v4-flash',
     updated_at = ${sqlString(completedAt)},
     error = NULL,
     needs_input = NULL,
@@ -184,7 +184,7 @@ VALUES (
   ${sqlString(runId)},
   'complete',
   ${sqlString(title)},
-  'deepseek:deepseek-chat',
+  'deepseek-v4-flash',
   ${sqlString(startedAt)},
   ${sqlString(completedAt)},
   NULL,
@@ -213,7 +213,7 @@ test("browser progress log displays SearXNG search tool activity", async ({ page
   const title = `SearXNG验收-${randomUUID().slice(0, 8)}`;
   const createdResponse = await request.post(`${API_URL}/api/tasks`, {
     headers: authHeaders(),
-    data: { model: "deepseek:deepseek-chat" },
+    data: { model: "deepseek-v4-flash" },
   });
   expect(createdResponse.status()).toBe(201);
   const createdTask = await createdResponse.json();

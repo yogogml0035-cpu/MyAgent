@@ -13,15 +13,11 @@ type ModelPresentation = {
 };
 
 const MODEL_PRESENTATION: Record<string, ModelPresentation> = {
-  "deepseek:deepseek-chat": {
-    description: "通用对话与任务处理",
+  "deepseek-v4-flash": {
+    description: "快速响应，默认关闭思考模式",
   },
-  "deepseek:deepseek-reasoner": {
-    description: "多轮推理，回答复杂问题",
-  },
-  "deepseek-reasoner": {
-    label: "Deepseek",
-    description: "多轮推理，回答复杂问题",
+  "deepseek-v4-flash-thinking": {
+    description: "开启思考模式，适合复杂问题",
   },
 };
 

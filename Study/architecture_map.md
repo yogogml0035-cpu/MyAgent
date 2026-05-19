@@ -73,6 +73,33 @@ sequenceDiagram
 - 如果自动标题生成失败，API 只记录 warning，不能阻止 `runner.start_background()`。
 - SSE 断线时，前端会用 `/api/tasks/{id}/events?after_id=...` 补事件。
 
+## 两条最容易混淆的发送路径
+
+第一次读代码时，很多人会把“API 支持的能力”和“当前前端实际怎么走”混在一起。可以先分成这两条：
+
+### 路径 A：当前前端默认路径
+
+```text
+ensureTask()
+-> POST /api/tasks 只创建空 task
+-> POST /api/tasks/{id}/files 上传文件（如果有）
+-> POST /api/tasks/{id}/messages 真正启动 run
+```
+
+### 路径 B：后端 API 还支持的简化路径
+
+```text
+POST /api/tasks 直接带第一条 message
+-> create_task() 内部 start_run()
+-> runner.start_background()
+```
+
+理解这两个分支之后，你就不会困惑：
+
+- 为什么 `create_task()` 支持 `message` 为空
+- 为什么 `send_message()` 又单独存在
+- 为什么前端的 `ensureTask()` 和后端的 `create_task()` 不是一回事
+
 ## 四个最重要的边界
 
 1. API 边界：外部只通过 `/api/tasks...` 操作任务，不直接改 storage。
@@ -107,6 +134,15 @@ sequenceDiagram
 | `backend/app/tools/registry.py` | 有 task_id 时注册上传资源工具；只要 `settings.searxng_url` 非空就注册 `searxng_search`，默认指向本地 SearXNG。 |
 | `backend/app/storage.py` | `start_run()` 创建 run 记录、写入用户消息、设置 task 为 `running` 和 `active_run_id`；`append_event()` 追加事件并递增 `seq`；artifact 通过 run-scoped artifact 目录、artifact names 和下载解析方法暴露；终态通过 `update_task_if_status_and_append_event()` 等方法在状态更新时一起写事件。 |
 | `frontend/app/workspace-view.ts` | 原始 `ExecutionLog` 会先按展示顺序处理，`buildRunActivityGroups()` 把 logs/artifacts 按 run 分组，`buildLiveLogItems()` 把工具调用、工具结果、思考流、回答流、状态更新折叠成用户可读进度行，`buildConversationStreamItems()` 再把消息、run 进度和产物组织成会话流。 |
+
+## 这页怎么验证
+
+这张地图本身不带独立 `mini_unit`，但你可以用下面两个动作快速验证它没讲偏：
+
+1. 打开 `frontend/hooks/use-task-workspace.ts`，确认当前前端确实先 `ensureTask()`，再 `uploadTaskFiles()`，再 `postTaskMessage()`。
+2. 打开 `backend/app/api/tasks.py`，确认后端确实是 `storage.start_run()` 先创建 run，再把同一个 `run_id` 交给 `runner.start_background()`。
+
+如果你只想先跑一个最短验证，再回来看这张图，建议先跑 `Study/chapters/00_minimal_runnable_example/mini_unit.py` 和 `Study/chapters/01_big_picture/mini_unit.py`。
 
 ## 已实现与规划边界
 

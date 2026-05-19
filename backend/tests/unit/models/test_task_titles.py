@@ -49,9 +49,9 @@ async def test_generate_task_title_uses_configured_model(monkeypatch, tmp_path):
         deepseek_api_key="sk-test",
     )
 
-    title = await generate_task_title("请分析这批投标文件", "deepseek:deepseek-chat", settings)
+    title = await generate_task_title("请分析这批投标文件", "deepseek-v4-flash", settings)
 
     assert title == "投标文件分析报告"
-    assert calls["model"] == "deepseek:deepseek-chat"
+    assert calls["model"] == "deepseek-v4-flash"
     assert calls["temperature"] == 0.0
     assert len(calls["messages"]) == 2

@@ -31,7 +31,7 @@ def app_client(tmp_path):
 
 @pytest.fixture
 def create_idle_task(app_client):
-    def _create(model="deepseek:deepseek-chat"):
+    def _create(model="deepseek-v4-flash"):
         response = app_client.post(
             "/api/tasks",
             json={"model": model},
@@ -44,15 +44,15 @@ def create_idle_task(app_client):
 
 class TestCreateTask:
     def test_create_task_returns_201(self, app_client):
-        response = app_client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"})
+        response = app_client.post("/api/tasks", json={"model": "deepseek-v4-flash"})
         assert response.status_code == 201
         data = response.json()
         assert data["status"] == "idle"
         assert data["task_id"]
-        assert data["model"] == "deepseek:deepseek-chat"
+        assert data["model"] == "deepseek-v4-flash"
 
     def test_create_task_without_message_is_idle(self, app_client):
-        response = app_client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"})
+        response = app_client.post("/api/tasks", json={"model": "deepseek-v4-flash"})
         data = response.json()
         assert data["status"] == "idle"
         assert data["messages"] == []
@@ -61,21 +61,21 @@ class TestCreateTask:
         settings = Settings(
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
-            default_model="openai:gpt-4o",
-            openai_api_key="sk-test",
+            default_model="deepseek-v4-flash-thinking",
+            deepseek_api_key="sk-test",
         )
         client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
 
         response = client.post("/api/tasks", json={})
 
         assert response.status_code == 201
-        assert response.json()["model"] == "openai:gpt-4o"
+        assert response.json()["model"] == "deepseek-v4-flash-thinking"
 
     def test_create_task_with_message_without_model_requires_default_provider_key(self, tmp_path):
         settings = Settings(
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
-            default_model="openai:gpt-4o",
+            default_model="deepseek-v4-flash-thinking",
         )
         client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
 
@@ -99,7 +99,7 @@ class TestCreateTask:
 
         response = client.post(
             "/api/tasks",
-            json={"message": "hello", "model": "deepseek:deepseek-chat"},
+            json={"message": "hello", "model": "deepseek-v4-flash"},
         )
 
         assert response.status_code == 400
@@ -131,7 +131,7 @@ class TestCreateTask:
         try:
             response = client.post(
                 "/api/tasks",
-                json={"message": "请帮我总结用户消息并命名", "model": "deepseek:deepseek-chat"},
+                json={"message": "请帮我总结用户消息并命名", "model": "deepseek-v4-flash"},
             )
         finally:
             runner.start_background = original_start
@@ -143,7 +143,7 @@ class TestCreateTask:
         assert summaries[0]["title"] == "需求命名"
         assert generated == {
             "message": "请帮我总结用户消息并命名",
-            "model": "deepseek:deepseek-chat",
+            "model": "deepseek-v4-flash",
         }
 
     def test_create_task_with_message_starts_runner_when_auto_title_fails(self, tmp_path):
@@ -183,7 +183,7 @@ class TestCreateTask:
                 "/api/tasks",
                 json={
                     "message": "标题生成失败也必须启动任务",
-                    "model": "deepseek:deepseek-chat",
+                    "model": "deepseek-v4-flash",
                 },
             )
         finally:
@@ -196,7 +196,7 @@ class TestCreateTask:
         assert started == {
             "task_id": data["task_id"],
             "message": "标题生成失败也必须启动任务",
-            "model": "deepseek:deepseek-chat",
+            "model": "deepseek-v4-flash",
             "run_id": data["active_run_id"],
         }
 
@@ -213,7 +213,7 @@ class TestGetTask:
         assert response.status_code == 404
 
     def test_newly_created_task_is_accessible(self, app_client):
-        create_resp = app_client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"})
+        create_resp = app_client.post("/api/tasks", json={"model": "deepseek-v4-flash"})
         task_id = create_resp.json()["task_id"]
         get_resp = app_client.get(f"/api/tasks/{task_id}")
         assert get_resp.status_code == 200
@@ -243,7 +243,7 @@ class TestTaskHistoryActions:
         try:
             message_response = app_client.post(
                 f"/api/tasks/{task_id}/messages",
-                json={"message": "原始标题内容", "model": "deepseek:deepseek-chat"},
+                json={"message": "原始标题内容", "model": "deepseek-v4-flash"},
             )
         finally:
             runner.start_background = original_start
@@ -289,7 +289,7 @@ class TestTaskHistoryActions:
         assert storage.start_run(
             task_id,
             message="hello",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
 
@@ -351,7 +351,7 @@ class TestSendMessage:
         try:
             response = app_client.post(
                 f"/api/tasks/{created['task_id']}/messages",
-                json={"message": "hello", "model": "deepseek:deepseek-chat"},
+                json={"message": "hello", "model": "deepseek-v4-flash"},
             )
         finally:
             runner.start_background = original_start
@@ -364,7 +364,7 @@ class TestSendMessage:
     def test_send_message_to_nonexistent_task_404(self, app_client):
         response = app_client.post(
             "/api/tasks/nonexistent-id/messages",
-            json={"message": "hello", "model": "deepseek:deepseek-chat"},
+            json={"message": "hello", "model": "deepseek-v4-flash"},
         )
         assert response.status_code == 404
 
@@ -380,7 +380,7 @@ class TestSendMessage:
         try:
             response = app_client.post(
                 f"/api/tasks/{created['task_id']}/messages",
-                json={"message": "test message content", "model": "deepseek:deepseek-chat"},
+                json={"message": "test message content", "model": "deepseek-v4-flash"},
             )
         finally:
             runner.start_background = original_start
@@ -399,7 +399,7 @@ class TestSendMessage:
         try:
             response = app_client.post(
                 f"/api/tasks/{created['task_id']}/messages",
-                json={"message": "请总结左侧历史会话标题", "model": "deepseek:deepseek-chat"},
+                json={"message": "请总结左侧历史会话标题", "model": "deepseek-v4-flash"},
             )
         finally:
             runner.start_background = original_start
@@ -438,7 +438,7 @@ class TestSendMessage:
         try:
             response = app_client.post(
                 f"/api/tasks/{task_id}/messages",
-                json={"message": "标题写入失败也必须启动任务", "model": "deepseek:deepseek-chat"},
+                json={"message": "标题写入失败也必须启动任务", "model": "deepseek-v4-flash"},
             )
         finally:
             storage.set_task_title_if_empty = original_set_title
@@ -451,7 +451,7 @@ class TestSendMessage:
         assert started == {
             "task_id": task_id,
             "message": "标题写入失败也必须启动任务",
-            "model": "deepseek:deepseek-chat",
+            "model": "deepseek-v4-flash",
             "run_id": data["active_run_id"],
         }
 
@@ -468,7 +468,7 @@ class TestSendMessage:
             )
             message_response = app_client.post(
                 f"/api/tasks/{task_id}/messages",
-                json={"message": "这条消息不应覆盖标题", "model": "deepseek:deepseek-chat"},
+                json={"message": "这条消息不应覆盖标题", "model": "deepseek-v4-flash"},
             )
         finally:
             runner.start_background = original_start
@@ -483,11 +483,11 @@ class TestSendMessage:
             workspace_root=tmp_path / "tasks",
         )
         client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
-        created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+        created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
 
         response = client.post(
             f"/api/tasks/{created['task_id']}/messages",
-            json={"message": "hello", "model": "deepseek:deepseek-chat"},
+            json={"message": "hello", "model": "deepseek-v4-flash"},
         )
 
         assert response.status_code == 400
@@ -497,8 +497,8 @@ class TestSendMessage:
         settings = Settings(
             task_root=tmp_path / "tasks",
             workspace_root=tmp_path / "tasks",
-            default_model="openai:gpt-4o",
-            openai_api_key="sk-test",
+            default_model="deepseek-v4-flash-thinking",
+            deepseek_api_key="sk-test",
         )
         client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
         created = client.post("/api/tasks", json={}).json()
@@ -519,8 +519,8 @@ class TestSendMessage:
             runner.start_background = original_start
 
         assert response.status_code == 200
-        assert response.json()["runs"][0]["model"] == "openai:gpt-4o"
-        assert started["model"] == "openai:gpt-4o"
+        assert response.json()["runs"][0]["model"] == "deepseek-v4-flash-thinking"
+        assert started["model"] == "deepseek-v4-flash-thinking"
 
 
 class TestUploadFiles:
@@ -635,7 +635,7 @@ class TestUploadFiles:
             max_upload_files=1,
         )
         client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
-        created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+        created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
 
         response = client.post(
             f"/api/tasks/{created['task_id']}/files",
@@ -655,7 +655,7 @@ class TestUploadFiles:
             max_upload_file_bytes=4,
         )
         client = TestClient(create_app(settings, storage=InMemoryTaskStorage(settings.task_root)))
-        created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+        created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
 
         response = client.post(
             f"/api/tasks/{created['task_id']}/files",

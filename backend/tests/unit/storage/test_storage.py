@@ -28,15 +28,15 @@ class TestTaskStorageInit:
 class TestTaskStorageCreateTask:
     def test_create_task_returns_idle_state(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         assert state.status == "idle"
         assert state.task_id
-        assert state.model == "deepseek:deepseek-chat"
+        assert state.model == "deepseek-v4-flash"
 
     def test_create_task_rejects_initial_message(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
         try:
-            storage.create_task(message="hello", model="deepseek:deepseek-chat")
+            storage.create_task(message="hello", model="deepseek-v4-flash")
         except ValueError:
             pass
         else:
@@ -44,18 +44,18 @@ class TestTaskStorageCreateTask:
 
     def test_create_task_persists_directories(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         task_dir = storage.task_dir(state.task_id)
         assert sorted(path.name for path in task_dir.iterdir()) == ["uploads"]
 
     def test_start_run_does_not_create_artifact_directory_before_writes(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
 
         run_result = storage.start_run(
             state.task_id,
             message="hello",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
 
@@ -67,14 +67,14 @@ class TestTaskStorageCreateTask:
 class TestTaskStorageAppendEvent:
     def test_append_and_read_events(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         storage.append_event(state.task_id, "test_event", "something happened")
         events = storage.read_events(state.task_id)
         assert any(e.type == "test_event" for e in events)
 
     def test_read_events_after_known_id_returns_later_events(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         first = storage.append_event(state.task_id, "first_event", "first")
         second = storage.append_event(state.task_id, "second_event", "second")
 
@@ -84,7 +84,7 @@ class TestTaskStorageAppendEvent:
 
     def test_read_events_after_unknown_id_recovers_with_full_event_stream(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         storage.append_event(state.task_id, "test_event", "something happened")
 
         events = storage.read_events(state.task_id, after_id="missing-event-id")
@@ -93,7 +93,7 @@ class TestTaskStorageAppendEvent:
 
     def test_large_event_append_keeps_continuous_seq(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         for index in range(250):
             storage.append_event(state.task_id, "assistant_answer_delta", f"chunk {index}")
         events = storage.read_events(state.task_id)
@@ -103,7 +103,7 @@ class TestTaskStorageAppendEvent:
 class TestTaskStorageGetTask:
     def test_get_task_roundtrip(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         fetched = storage.get_task(state.task_id)
         assert fetched.task_id == state.task_id
         assert fetched.status == "idle"
@@ -112,7 +112,7 @@ class TestTaskStorageGetTask:
 class TestTaskStorageHistoryActions:
     def test_rename_task_sets_custom_title(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
 
         renamed = storage.rename_task(state.task_id, "  新标题  ")
 
@@ -120,7 +120,7 @@ class TestTaskStorageHistoryActions:
 
     def test_set_task_title_if_empty_only_sets_blank_title(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
 
         titled = storage.set_task_title_if_empty(state.task_id, "  自动标题  ")
         preserved = storage.set_task_title_if_empty(state.task_id, "另一个标题")
@@ -130,7 +130,7 @@ class TestTaskStorageHistoryActions:
 
     def test_delete_task_removes_state_and_files(self, tmp_path):
         storage = InMemoryTaskStorage(tmp_path / "sessions")
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         task_dir = storage.task_dir(state.task_id)
 
         storage.delete_task(state.task_id)

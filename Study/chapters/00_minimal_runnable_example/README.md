@@ -43,7 +43,7 @@
 运行：
 
 ```bash
-python3 Study/chapters/00_minimal_runnable_example/mini_unit.py
+python Study/chapters/00_minimal_runnable_example/mini_unit.py
 ```
 
 你会看到：
@@ -291,7 +291,7 @@ frontend_send_message
 运行：
 
 ```bash
-python3 Study/chapters/00_minimal_runnable_example/mini_unit.py
+python Study/chapters/00_minimal_runnable_example/mini_unit.py
 ```
 
 然后尝试做两个小实验：

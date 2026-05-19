@@ -222,11 +222,11 @@ class TestTaskRunnerTerminalEvents:
     ):
         storage = InMemoryTaskStorage(test_settings.task_root)
         runner = TaskRunner(test_settings, storage)
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         run_result = storage.start_run(
             state.task_id,
             message="hello",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
         assert run_result is not None
@@ -237,7 +237,7 @@ class TestTaskRunnerTerminalEvents:
 
         monkeypatch.setattr(runner, "start", fake_start)
 
-        runner.start_background(state.task_id, "hello", model="deepseek:deepseek-chat", run_id=run_id)
+        runner.start_background(state.task_id, "hello", model="deepseek-v4-flash", run_id=run_id)
         await _wait_for_runner(runner, state.task_id)
 
         events = storage.read_events(state.task_id)
@@ -261,11 +261,11 @@ class TestTaskRunnerTerminalEvents:
     ):
         storage = InMemoryTaskStorage(test_settings.task_root)
         runner = TaskRunner(test_settings, storage)
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         run_result = storage.start_run(
             state.task_id,
             message="hello",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
         assert run_result is not None
@@ -276,7 +276,7 @@ class TestTaskRunnerTerminalEvents:
 
         monkeypatch.setattr(runner, "start", fake_start)
 
-        runner.start_background(state.task_id, "hello", model="deepseek:deepseek-chat", run_id=run_id)
+        runner.start_background(state.task_id, "hello", model="deepseek-v4-flash", run_id=run_id)
         await _wait_for_runner(runner, state.task_id)
 
         failed = [event for event in storage.read_events(state.task_id) if event.type == "task_failed"]
@@ -314,11 +314,11 @@ class TestTaskRunnerTerminalEvents:
 
         memory_service = FailingMemoryService()
         runner = TaskRunner(test_settings, storage, memory_service=memory_service)
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         run_result = storage.start_run(
             state.task_id,
             message="hello",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
         assert run_result is not None
@@ -329,7 +329,7 @@ class TestTaskRunnerTerminalEvents:
 
         monkeypatch.setattr(runner, "start", fake_start)
 
-        runner.start_background(state.task_id, "hello", model="deepseek:deepseek-chat", run_id=run_id)
+        runner.start_background(state.task_id, "hello", model="deepseek-v4-flash", run_id=run_id)
         await _wait_for_runner(runner, state.task_id)
         assert await asyncio.to_thread(memory_service.called.wait, 1)
         await _wait_for_memory_tasks(runner)
@@ -368,11 +368,11 @@ class TestTaskRunnerTerminalEvents:
 
         memory_service = BlockingMemoryService()
         runner = TaskRunner(test_settings, storage, memory_service=memory_service)
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         run_result = storage.start_run(
             state.task_id,
             message="hello",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
         assert run_result is not None
@@ -383,7 +383,7 @@ class TestTaskRunnerTerminalEvents:
 
         monkeypatch.setattr(runner, "start", fake_start)
 
-        runner.start_background(state.task_id, "hello", model="deepseek:deepseek-chat", run_id=run_id)
+        runner.start_background(state.task_id, "hello", model="deepseek-v4-flash", run_id=run_id)
         await _wait_for_runner(runner, state.task_id)
 
         assert storage.get_task(state.task_id).status == "complete"
@@ -399,11 +399,11 @@ class TestTaskRunnerTerminalEvents:
     ):
         storage = InMemoryTaskStorage(test_settings.task_root)
         runner = TaskRunner(test_settings, storage)
-        state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
         run_result = storage.start_run(
             state.task_id,
             message="hello",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
         assert run_result is not None
@@ -415,7 +415,7 @@ class TestTaskRunnerTerminalEvents:
 
         monkeypatch.setattr(runner, "start", fake_start)
 
-        runner.start_background(state.task_id, "hello", model="deepseek:deepseek-chat", run_id=run_id)
+        runner.start_background(state.task_id, "hello", model="deepseek-v4-flash", run_id=run_id)
         await asyncio.sleep(0)
         await runner.cancel(state.task_id)
 

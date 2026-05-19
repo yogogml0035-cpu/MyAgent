@@ -76,7 +76,7 @@ test("history menu trigger opens without the circular selected border", async ({
   const title = `历史菜单验收-${randomUUID().slice(0, 8)}`;
   const createdResponse = await request.post(`${API_URL}/api/tasks`, {
     headers: authHeaders(),
-    data: { model: "deepseek:deepseek-chat" },
+    data: { model: "deepseek-v4-flash" },
   });
   expect(createdResponse.status()).toBe(201);
   const createdTask = await createdResponse.json();

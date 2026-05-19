@@ -59,6 +59,25 @@
 - 指数退避重连。
 - 达到最大次数后提示错误。
 
+## 结合项目分析
+
+当前项目里，“事件进页面”的真实路径可以粗略记成：
+
+```text
+backend/app/api/streaming.py
+-> createTaskEventSource()
+-> onmessage 里 JSON.parse(event.data)
+-> normalizeEventRecords()
+-> mergeExecutionLogs()
+-> workspace-view.ts 的排序与投影
+-> TaskConversation 展示给用户
+```
+
+这也是为什么本章一定要分清两件事：
+
+- `task-state.ts` 负责把后端记录变成前端可处理的数据
+- `workspace-view.ts` 负责把前端数据变成“人能读懂”的界面元素
+
 ## 你可能卡住的问题
 
 ### 为什么 `assistant_thinking_delta` 不显示成 AI 回复？
@@ -77,7 +96,7 @@
 node Study/chapters/06_streaming_frontend_state/mini_unit.mjs
 ```
 
-尝试把 `mergeExecutionLogs` 里的排序改成只按 `createdAt`，再运行。你会看到失败，因为同秒事件会乱序。
+尝试把 mini unit 里的 `orderForDisplay` 改成只按 `createdAt`，再运行。你会看到失败，因为同秒事件会乱序。
 
 准确地说，本练习模拟的是 `workspace-view.ts` 展示排序，不是 `task-state.ts` 的去重合并函数。练习也会读取源码确认这两个职责没有混在一起。
 

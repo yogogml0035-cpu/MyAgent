@@ -55,6 +55,29 @@ Runner 假设 storage 提供这些能力：
 
 如果 storage 的实现变了，Runner、API、SSE 和测试 fake 都要一起检查。
 
+## 结合项目分析
+
+把这章和真实代码对上，最值得抓的是三个函数：
+
+```text
+storage.start_run()
+-> 把 task 状态改成 running
+-> 写入这次用户消息
+-> 创建 run_id 和 active_run_id
+
+storage.append_event()
+-> 给 event 分配递增 seq
+-> 持久化过程日志
+
+storage.read_events(after_id)
+-> 找到游标就返回后续事件
+-> 找不到游标就 fail open 返回完整事件流
+```
+
+这一章读懂之后，下一章 `Runner` 就不会再像“黑盒子”。
+
+因为你已经知道：Runner 不是随便往外吐字符串，它依赖 storage 提供 run_id、事件顺序和终态保护。
+
 ## 你可能卡住的问题
 
 ### 为什么不每次读文件目录来判断任务状态？
@@ -70,7 +93,7 @@ Runner 假设 storage 提供这些能力：
 运行：
 
 ```bash
-python3 Study/chapters/03_storage_event_log/mini_unit.py
+python Study/chapters/03_storage_event_log/mini_unit.py
 ```
 
 尝试把 `read_events` 里未知 `after_id` 的返回值改成 `[]`，再运行。你会看到失败。这个失败模拟了浏览器恢复时丢事件的风险。

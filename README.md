@@ -330,7 +330,7 @@ git diff --check
 ## 运行边界
 
 - Provider 凭据只能作为后端 `.env` 值保存。
-- 前端只发送安全模型 ID，例如 `deepseek:deepseek-chat`。
+- 前端只发送安全模型 ID，例如 `deepseek-v4-flash` 或 `deepseek-v4-flash-thinking`。
 - 任务状态、运行、消息和事件日志写入 Postgres；上传文件、任务计划、证据、摘要和 HTML 报告等文件产物保存在本地任务目录中。
 - Qdrant 是长期记忆的语义索引，Postgres 是 canonical store。长期记忆只保留成功运行后抽取出的高层白名单记忆，并按默认用户 ID 隔离；它不保存上传原文、完整产物正文、流式 token、工具原始日志或敏感内容。
 - 可用 `cd backend && uv run python -m app.memory_admin rebuild-qdrant --yes` 显式清空并从 Postgres canonical store 重建当前 Qdrant 记忆 collection。这个命令只影响配置中的记忆 collection，不会动任务 Postgres 或本地文件产物。

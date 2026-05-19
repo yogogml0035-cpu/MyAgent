@@ -41,7 +41,7 @@ def _collect_sse(client, url):
 
 class TestSSEStreamingE2E:
     def test_sse_sends_full_event_records(self, app_client):
-        create_resp = app_client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"})
+        create_resp = app_client.post("/api/tasks", json={"model": "deepseek-v4-flash"})
         task_id = create_resp.json()["task_id"]
         storage = app_client.app.state.storage
         run_id = "run-test-001"
@@ -106,14 +106,14 @@ class TestSSEStreamingE2E:
                 assert event.get("run_id") == run_id
 
     def test_sse_done_after_runner_stops(self, app_client):
-        create_resp = app_client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"})
+        create_resp = app_client.post("/api/tasks", json={"model": "deepseek-v4-flash"})
         task_id = create_resp.json()["task_id"]
         storage = app_client.app.state.storage
 
         state, run_id = storage.start_run(
             task_id,
             message="test done signal",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
 
@@ -146,7 +146,7 @@ class TestSSEStreamingE2E:
             assert "payload" in event
 
     def test_sse_drains_remaining_events_before_done(self, app_client):
-        create_resp = app_client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"})
+        create_resp = app_client.post("/api/tasks", json={"model": "deepseek-v4-flash"})
         task_id = create_resp.json()["task_id"]
         storage = app_client.app.state.storage
         runner = app_client.app.state.runner
@@ -154,7 +154,7 @@ class TestSSEStreamingE2E:
         state, run_id = storage.start_run(
             task_id,
             message="concurrent test",
-            model="deepseek:deepseek-chat",
+            model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
 

@@ -19,9 +19,9 @@ def main() -> None:
     js_units = sorted(ROOT.glob("chapters/*/mini_unit.mjs"))
 
     for path in python_units:
-        python = sys.executable or shutil.which("python3")
+        python = sys.executable or shutil.which("python") or shutil.which("python3")
         if not python:
-            raise RuntimeError("python3 not found")
+            raise RuntimeError("python not found")
         run([python, str(path)], ROOT.parent)
 
     node = shutil.which("node")

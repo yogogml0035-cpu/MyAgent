@@ -1,12 +1,12 @@
-"""Application configuration for the DeepAgents-powered MyAgent platform.
-
-Supersedes the old settings.py with multi-model support and DeepAgents-specific settings.
-"""
+"""Application configuration for the DeepSeek V4 Flash-powered MyAgent platform."""
 from __future__ import annotations
 
 import os
 from dataclasses import dataclass
 from pathlib import Path
+
+DEEPSEEK_V4_FLASH_MODEL_ID = "deepseek-v4-flash"
+DEEPSEEK_V4_FLASH_THINKING_MODEL_ID = "deepseek-v4-flash-thinking"
 
 
 @dataclass(frozen=True)
@@ -20,11 +20,9 @@ class Settings:
     qdrant_collection: str = "myagent_memories"
     default_user_id: str = "local-user"
 
-    # Model provider keys
+    # Model provider key
     deepseek_api_key: str | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
-    openai_api_key: str | None = None
-    anthropic_api_key: str | None = None
     searxng_url: str = "http://127.0.0.1:8181/"
     dashscope_api_key: str | None = None
     embedding_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
@@ -32,7 +30,7 @@ class Settings:
     embedding_dimensions: int = 1024
 
     # Agent defaults
-    default_model: str = "deepseek:deepseek-chat"
+    default_model: str = DEEPSEEK_V4_FLASH_MODEL_ID
     skills_dirs: tuple[str, ...] = ("./skills",)
     max_concurrent_subagents: int = 3
     agent_timeout_seconds: float = 300.0
@@ -53,16 +51,20 @@ class Settings:
 
 MODEL_REGISTRY = [
     {
-        "id": "deepseek:deepseek-chat",
-        "label": "DeepSeek Chat",
+        "id": DEEPSEEK_V4_FLASH_MODEL_ID,
+        "label": "DeepSeek V4 Flash",
         "provider": "deepseek",
+        "provider_model": "deepseek-v4-flash",
+        "thinking_mode": "disabled",
         "supports_files": True,
         "supports_images": False,
     },
     {
-        "id": "deepseek:deepseek-reasoner",
-        "label": "DeepSeek Reasoner",
+        "id": DEEPSEEK_V4_FLASH_THINKING_MODEL_ID,
+        "label": "DeepSeek V4 Flash Thinking",
         "provider": "deepseek",
+        "provider_model": "deepseek-v4-flash",
+        "thinking_mode": "enabled",
         "supports_files": True,
         "supports_images": False,
     }
@@ -96,8 +98,6 @@ def load_settings() -> Settings:
         default_user_id=os.getenv("MYAGENT_DEFAULT_USER_ID", "local-user"),
         deepseek_api_key=os.getenv("DEEPSEEK_API_KEY") or None,
         deepseek_base_url=os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
-        openai_api_key=os.getenv("OPENAI_API_KEY") or None,
-        anthropic_api_key=os.getenv("ANTHROPIC_API_KEY") or None,
         searxng_url=os.getenv("MYAGENT_SEARXNG_URL") or "http://127.0.0.1:8181/",
         dashscope_api_key=os.getenv("DASHSCOPE_API_KEY") or None,
         embedding_base_url=os.getenv(
@@ -106,7 +106,7 @@ def load_settings() -> Settings:
         ),
         embedding_model=os.getenv("MYAGENT_EMBEDDING_MODEL", "text-embedding-v3"),
         embedding_dimensions=read_int_env("MYAGENT_EMBEDDING_DIMENSIONS", 1024),
-        default_model=os.getenv("MYAGENT_DEFAULT_MODEL", "deepseek:deepseek-chat"),
+        default_model=os.getenv("MYAGENT_DEFAULT_MODEL", DEEPSEEK_V4_FLASH_MODEL_ID),
         skills_dirs=skills_dirs,
         max_concurrent_subagents=read_int_env("MYAGENT_MAX_CONCURRENT_SUBAGENTS", 3),
         agent_timeout_seconds=read_float_env("MYAGENT_AGENT_TIMEOUT_SECONDS", 300.0),

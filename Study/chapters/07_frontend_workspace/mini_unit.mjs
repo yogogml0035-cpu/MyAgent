@@ -3,12 +3,14 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
+const DEFAULT_FILE_PROMPT = "请分析已上传文件，先按需读取资源内容，再总结关键差异。";
 
 const submitPlan = [
   "checkCanSend",
   "guardModel",
   "ensureTask",
   "uploadFiles",
+  "chooseTaskContent",
   "postMessage",
   "refreshTask",
   "refreshHistory",
@@ -25,6 +27,11 @@ function assertSubmitPlan(plan) {
   if (position.ensureTask > position.postMessage) {
     throw new Error("发送消息前必须先有 task id");
   }
+}
+
+function chooseTaskContent(input) {
+  const content = input.trim();
+  return content || DEFAULT_FILE_PROMPT;
 }
 
 function buildSandboxedPreview(name, blobUrl) {
@@ -45,8 +52,9 @@ function assertSourceContracts() {
   const guardIndex = submitBody.indexOf("if (!selectedModelRunnable)");
   const ensureIndex = submitBody.indexOf("ensureTask()");
   const uploadIndex = submitBody.indexOf("uploadTaskFiles");
-  if (guardIndex < 0 || ensureIndex < 0 || uploadIndex < 0) {
-    throw new Error("handleSubmit 应包含模型可用性检查、ensureTask 和 uploadTaskFiles");
+  const defaultPromptIndex = submitBody.indexOf("const taskContent = content || DEFAULT_FILE_PROMPT");
+  if (guardIndex < 0 || ensureIndex < 0 || uploadIndex < 0 || defaultPromptIndex < 0) {
+    throw new Error("handleSubmit 应包含模型可用性检查、ensureTask、uploadTaskFiles 和默认文件提示词");
   }
   if (!(guardIndex < ensureIndex && guardIndex < uploadIndex)) {
     throw new Error("模型不可用必须在创建 task 和上传文件前拦截");
@@ -65,6 +73,9 @@ function assertSourceContracts() {
 }
 
 assertSubmitPlan(submitPlan);
+if (chooseTaskContent("   ") !== DEFAULT_FILE_PROMPT) {
+  throw new Error("只上传文件时，前端应改发默认文件分析提示词");
+}
 const preview = buildSandboxedPreview("report.html", "blob:http://localhost/report");
 if (!preview.includes('sandbox=""')) {
   throw new Error("HTML artifact 必须在禁用脚本的 sandbox iframe 中预览");

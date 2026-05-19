@@ -57,7 +57,7 @@ class TestAccessTokenAuth:
         client = _make_app_with_token(tmp_path)
         create_resp = client.post(
             "/api/tasks?token=test-secret",
-            json={"model": "deepseek:deepseek-chat"},
+            json={"model": "deepseek-v4-flash"},
         )
         assert create_resp.status_code == 201
         task_id = create_resp.json()["task_id"]
@@ -70,7 +70,7 @@ class TestAccessTokenAuth:
         client = _make_app_with_token(tmp_path)
         create_resp = client.post(
             "/api/tasks?token=test-secret",
-            json={"model": "deepseek:deepseek-chat"},
+            json={"model": "deepseek-v4-flash"},
         )
         task_id = create_resp.json()["task_id"]
         resp = client.get(f"/api/tasks/{task_id}/stream")

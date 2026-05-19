@@ -13,11 +13,11 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - `build_agent_with_middleware()` is an alternative builder that also assembles extra middleware (SkillsMiddleware, SubAgentMiddleware) via `agent/middleware.py` before calling `create_deep_agent()`. **Do NOT use `build_agent_with_middleware()` to add `SummarizationMiddleware`** — it is already auto-injected by `create_deep_agent()`.
 - `create_deep_agent()` auto-injects `TodoListMiddleware`, `FilesystemMiddleware`, `SummarizationMiddleware`, and `PatchToolCallsMiddleware`. Do NOT pass these via the `middleware` parameter — it causes duplicate middleware assertion errors.
 - Skills and SubAgents are passed via `create_deep_agent(skills=..., subagents=...)` keyword arguments, not via the middleware parameter.
-- Multi-model support uses `langchain.chat_models.init_chat_model` with `provider:model-name` format (e.g., `deepseek:deepseek-chat`, `openai:gpt-4o`, `anthropic:claude-sonnet-4-20250514`).
-- The model provider parses the provider prefix, validates the API key is configured, and creates the appropriate `BaseChatModel` instance.
-- `MODEL_REGISTRY` in `config.py` lists all supported models. The `/api/models` endpoint returns models with an `available` flag based on whether the provider API key is configured. Task creation and message sending accept an optional `model`; the API layer resolves missing values from `settings.default_model`, validates registry membership, and rejects unavailable provider-backed models before scheduling a run. Draft task creation without a message only needs registry validation.
-- Frontend model IDs must also use the provider-prefixed registry format. The current product keeps the composer on a DeepSeek-only path: the model picker button remains visible, but the menu is filtered to `deepseek:deepseek-chat` and `deepseek:deepseek-reasoner` only. The browser may still read `/api/models` to learn whether either DeepSeek option is marked `available=false`; when that happens, task creation/upload/message submission must be blocked before a run starts for that option.
-- Default model is `deepseek:deepseek-chat` (configurable via `MYAGENT_DEFAULT_MODEL` env var).
+- The platform is DeepSeek-only. Runtime chat models are created through `langchain_deepseek.ChatDeepSeek`, and the app-level safe model IDs are limited to `deepseek-v4-flash` and `deepseek-v4-flash-thinking`.
+- The model provider validates `DEEPSEEK_API_KEY`, maps the safe app-level ID to the provider model `deepseek-v4-flash`, and toggles thinking mode via the request `thinking` field.
+- `MODEL_REGISTRY` in `config.py` lists the only two supported models. The `/api/models` endpoint returns those two options with an `available` flag based on whether `DEEPSEEK_API_KEY` is configured. Task creation and message sending accept an optional `model`; the API layer resolves missing values from `settings.default_model`, validates registry membership, and rejects unavailable models before scheduling a run. Draft task creation without a message only needs registry validation.
+- Frontend model IDs are the same two safe app-level IDs: `deepseek-v4-flash` and `deepseek-v4-flash-thinking`. The browser may still read `/api/models` to learn whether either DeepSeek option is marked `available=false`; when that happens, task creation/upload/message submission must be blocked before a run starts for that option.
+- Default model is `deepseek-v4-flash` (configurable via `MYAGENT_DEFAULT_MODEL` env var).
 - Automatic history naming happens at the backend task API boundary when the first user message starts a run. `task_titles.generate_task_title()` calls the selected chat model with a compact naming prompt, sanitizes the output to a non-empty title of at most 10 visible characters, and falls back to a deterministic first-message slice if the provider fails or times out. The API layer treats both title generation and `set_task_title_if_empty()` writes as best-effort: once `storage.start_run()` succeeds, title failures must be logged and must not block `runner.start_background()`. The storage method `set_task_title_if_empty()` must only fill a blank title so a user rename remains authoritative across later messages.
 - Tools are LangChain `@tool` decorated functions: deepagents filesystem tools, task-scoped resource tools, and `searxng_search` (conditional on `settings.searxng_url`, defaulting to the local engine at `http://127.0.0.1:8181/`). SearXNG must be called through the settings-bound URL; do not register the tool from settings and then read only `os.environ` at runtime.
 - Conversation context is assembled deterministically on every run by `ConversationContextBuilder`: it reads the current task's Postgres message history, injects a bounded session summary plus the most recent messages, and can add 10-minute tool-cache context before the current HumanMessage. The runner then appends long-term memory recall and resource manifest messages after that deterministic session layer.
@@ -63,9 +63,9 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 
 ## Input And Output Examples
 
-- Create task: `POST /api/tasks` → `{"task_id": "...", "status": "idle", "model": "deepseek:deepseek-chat", ...}`
+- Create task: `POST /api/tasks` → `{"task_id": "...", "status": "idle", "model": "deepseek-v4-flash", ...}`
 - Lightweight task refresh: `GET /api/tasks/{id}?include_events=false` → same task state shape with `"events": []`
-- Send message: `POST /api/tasks/{id}/messages` body: `{"message": "搜索最新的AI新闻", "model": "deepseek:deepseek-chat"}`
+- Send message: `POST /api/tasks/{id}/messages` body: `{"message": "搜索最新的AI新闻", "model": "deepseek-v4-flash"}`
 - Auto-generated history title: first `POST /api/tasks/{id}/messages` response includes `"title": "AI新闻搜索"` (non-empty, ≤10 visible characters) and `GET /api/tasks` returns the same title for the left history list unless the user has renamed it.
 - Rename history item: `PATCH /api/tasks/{id}` body: `{"title": "项目复盘"}` updates the custom title used by `GET /api/tasks`.
 - Delete history item: `DELETE /api/tasks/{id}` removes a non-running task and its local task files; running tasks must be cancelled or completed before deletion.
@@ -73,7 +73,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Build agent: `build_agent(settings, tools=get_platform_tools(settings), skills=["./skills"])`
 - Resource tool result: `{"ok": true, "data": {"schema_version": 1, "resources": [{"name": "brief.docx", "format": "word"}]}}`
 - Resource tool error: `{"ok": false, "error": {"code": "resource_not_found", "message": "...", "retryable": false}}`
-- Model ID format: `"deepseek:deepseek-chat"`, `"openai:gpt-4o"`, `"anthropic:claude-sonnet-4-20250514"`
+- Model ID format: `"deepseek-v4-flash"`, `"deepseek-v4-flash-thinking"`
 - SSE event: `event: message\ndata: {"type": "agent_message", "text": "..."}\n\n`
 - Context event: `{"type": "context_loaded", "payload": {"summary_present": true, "recent_message_count": 2, "cached_tool_result_count": 1, "live": {"display_text": "已载入会话上下文"}}}`
 - Memory event: `{"type": "memory_recalled", "payload": {"user_id": "local-user", "memory_count": 1, "live": {"display_text": "已载入长期记忆"}}}`
@@ -84,7 +84,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - `storage.py` still depends on compatibility shims in `app/contracts/__init__.py` and `app/reasoning_trace.py` for session events, resource refs, and reasoning trace payloads. Do not remove the shims until those contracts are replaced across storage, streaming, and tools.
 - `schemas.py` inlines `TaskMode` and `InputScope` Literal types (previously from deleted `intent.py`).
 - Missing API keys cause graceful errors in provider (not crashes). The SearXNG search tool returns an error string if the configured local engine is unavailable.
-- Missing provider API keys make affected models unavailable at `/api/models` and must block run-starting requests before background scheduling. This avoids creating task runs that are guaranteed to fail only after storage state changes. The browser must honor DeepSeek `available=false` before task creation, upload, or send starts, even though the picker still renders only DeepSeek Chat / Reasoner options.
+- Missing provider API keys make affected models unavailable at `/api/models` and must block run-starting requests before background scheduling. This avoids creating task runs that are guaranteed to fail only after storage state changes. The browser must honor DeepSeek `available=false` before task creation, upload, or send starts, even though the picker still renders only the DeepSeek V4 Flash / Thinking options.
 - History rename/delete are real task API operations, not frontend-only state. Rename stores a bounded custom task title; delete must reject running tasks to avoid orphaning an active in-process runner.
 - Automatic history naming is best-effort and must not block the task lifecycle indefinitely. Provider errors or timeout fall back to the local first-message title; unexpected title generator or storage write errors are logged and bypassed so the already-started run is still handed to `TaskRunner.start_background()`. Model output is still normalized server-side to remove prefixes/quotes/newlines and enforce the 10-character display contract. Do not overwrite an existing custom title when later messages are sent.
 - Task file workspaces are not a second state store. Postgres owns lifecycle state; local task directories own only uploaded bytes and generated artifact bytes. `run.json` manifests, when used for artifact refs, live under `artifacts/runs/{run_id}/` rather than the task root.
@@ -101,7 +101,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 ## Known Pitfalls
 
 - **Middleware duplication**: Never pass `TodoListMiddleware`, `FilesystemMiddleware`, `SummarizationMiddleware`, or `PatchToolCallsMiddleware` via the `middleware` param — `create_deep_agent` auto-injects them.
-- **Provider prefix**: Model IDs must include provider prefix (`deepseek:`, `openai:`, `anthropic:`). Raw model names will fail.
+- **Two-model boundary**: The product only supports `deepseek-v4-flash` and `deepseek-v4-flash-thinking`. Any other model ID must fail validation.
 - **EventSource auth**: Browser `EventSource` API doesn't support custom headers; token must be passed as query parameter `?token=xxx` for SSE. Backend `authorize_task_request` reads token from headers (`X-MyAgent-Token`, `X-Agent-Chat-Token`, `Authorization: Bearer`) and query param.
 - **SSE frontend backoff**: Browser-side SSE reconnect must be capped and use exponential backoff. Any backend SSE payload shaped as `{type: "error", detail: "..."}` is user-visible and should stop normal event processing for that message, then refresh task state defensively.
 - **Run-scoped terminal events**: Do not append terminal events from API endpoints after calling the runner. The runner owns terminal status plus terminal event writes so the `run_id` stays consistent and duplicate unscoped events are not produced.
@@ -153,7 +153,7 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Frontend type generation and ignore rules: `frontend/package.json`, `frontend/.gitignore`, `frontend/tsconfig.json`
 - Frontend artifact state/API/security: `frontend/app/task-state.ts`, `frontend/lib/task-api.ts`, `frontend/hooks/use-task-workspace.ts`
 - Frontend progress-log projection/UI: `frontend/app/workspace-view.ts`, `frontend/components/chat/TaskConversation.tsx`, `frontend/app/globals.css`
-- Frontend DeepSeek Chat / Reasoner model picker and availability guard: `frontend/components/chat/ChatComposer.tsx`, `frontend/hooks/use-task-workspace.ts`, `frontend/lib/task-api.ts`
+- Frontend DeepSeek V4 Flash / Thinking model picker and availability guard: `frontend/components/chat/ChatComposer.tsx`, `frontend/hooks/use-task-workspace.ts`, `frontend/lib/task-api.ts`
 - Frontend selected upload preview UI: `frontend/components/chat/ChatComposer.tsx`, `frontend/app/globals.css`
 - Local dev scripts: `scripts/start-dev-wsl.ps1`, `scripts/dev-terminal-runner.sh`, `scripts/stop-dev-ports.sh`
 - Browser E2E acceptance evidence: `frontend/e2e-playwright/README.md`
@@ -268,7 +268,7 @@ If the task includes pushing a branch, opening/updating a PR, or merging a PR, a
 - Memory privacy regression if Qdrant receives raw uploads, full reports, stream deltas, or tool logs instead of bounded high-level completed-task summaries.
 - Memory terminal-state regression if Qdrant or embedding failures during recall/write block the event loop, delay final answer delivery, or convert an otherwise successful run to `failed`.
 - Startup reliability regression if Postgres/Qdrant/embedding checks are bypassed while production code assumes those services exist.
-- Model format mismatch if frontend sends old-style `deepseek-reasoner` instead of `deepseek:deepseek-chat`.
+- Model format mismatch if frontend sends malformed or non-registry IDs; only `deepseek-v4-flash` and `deepseek-v4-flash-thinking` are valid.
 - Model availability regression if `/api/models` stops exposing `available` or task/message endpoints schedule runs for unavailable providers.
 - Automatic title regression if first-message runs stop calling the selected model for a compact history title, provider failures block message submission instead of falling back, model output can exceed 10 visible characters, or later auto-title attempts overwrite a user's manual rename.
 - Artifact download regression if `ArtifactRecord.url` no longer matches FastAPI routes or run-scoped artifacts fall back to the latest legacy artifact.

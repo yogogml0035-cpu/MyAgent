@@ -8,7 +8,7 @@ import {
 
 test("buildModelDisplayOptions adds compact model descriptions for the picker", () => {
   const options = buildModelDisplayOptions([
-    { id: "deepseek:deepseek-reasoner", label: "DeepSeek Reasoner" },
+    { id: "deepseek-v4-flash-thinking", label: "DeepSeek V4 Flash Thinking" },
     { id: "k26-agent-cluster", label: "K2.6 Agent 集群" },
     { id: "k26-quick", label: "K2.6 快速" },
   ]);
@@ -22,8 +22,8 @@ test("buildModelDisplayOptions adds compact model descriptions for the picker", 
     [
       {
         badge: undefined,
-        description: "多轮推理，回答复杂问题",
-        label: "DeepSeek Reasoner",
+        description: "开启思考模式，适合复杂问题",
+        label: "DeepSeek V4 Flash Thinking",
       },
       {
         badge: "测试",
@@ -48,7 +48,7 @@ test("selectedModelDisplayOption keeps a readable fallback for unknown selected 
 
 test("buildModelDisplayOptions annotates unavailable models with a disabled reason", () => {
   const [option] = buildModelDisplayOptions([
-    { id: "openai:gpt-4o", label: "GPT-4o", available: false },
+    { id: "deepseek-v4-flash-thinking", label: "DeepSeek V4 Flash Thinking", available: false },
   ]);
 
   assert.equal(option.available, false);

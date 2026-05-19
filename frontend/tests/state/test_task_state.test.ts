@@ -194,23 +194,23 @@ test("buildArtifactRequest rejects same-origin URLs outside current task artifac
 });
 
 test("buildMessageRequestPayload sends the default mode without a file-scope toggle", () => {
-  assert.deepEqual(buildMessageRequestPayload("请分析这些文件", "deepseek:deepseek-chat"), {
+  assert.deepEqual(buildMessageRequestPayload("请分析这些文件", "deepseek-v4-flash"), {
     content: "请分析这些文件",
     message: "请分析这些文件",
-    model: "deepseek:deepseek-chat",
+    model: "deepseek-v4-flash",
     mode: "auto",
   });
 });
 
 test("buildMessageRequestPayload allows explicit mode overrides", () => {
   assert.deepEqual(
-    buildMessageRequestPayload("继续分析这些文件", "deepseek:deepseek-chat", {
+    buildMessageRequestPayload("继续分析这些文件", "deepseek-v4-flash", {
       mode: "analysis",
     }),
     {
       content: "继续分析这些文件",
       message: "继续分析这些文件",
-      model: "deepseek:deepseek-chat",
+      model: "deepseek-v4-flash",
       mode: "analysis",
     },
   );
@@ -219,21 +219,28 @@ test("buildMessageRequestPayload allows explicit mode overrides", () => {
 test("normalizeModelOption preserves backend availability metadata", () => {
   assert.deepEqual(
     normalizeModelOption({
-      id: "deepseek:deepseek-chat",
-      label: "DeepSeek Chat",
+      id: "deepseek-v4-flash",
+      label: "DeepSeek V4 Flash",
       available: false,
     }),
     {
-      id: "deepseek:deepseek-chat",
-      label: "DeepSeek Chat",
+      id: "deepseek-v4-flash",
+      label: "DeepSeek V4 Flash",
       available: false,
     },
   );
 });
 
 test("isModelRunnable blocks only explicitly unavailable backend models", () => {
-  assert.equal(isModelRunnable({ id: "openai:gpt-4o", label: "GPT-4o", available: false }), false);
-  assert.equal(isModelRunnable({ id: "deepseek:deepseek-chat", label: "DeepSeek" }), true);
+  assert.equal(
+    isModelRunnable({
+      id: "deepseek-v4-flash-thinking",
+      label: "DeepSeek V4 Flash Thinking",
+      available: false,
+    }),
+    false,
+  );
+  assert.equal(isModelRunnable({ id: "deepseek-v4-flash", label: "DeepSeek" }), true);
   assert.equal(isModelRunnable(null), true);
 });
 

@@ -32,7 +32,7 @@ test("events endpoint replays the ordered stream when the cursor is unknown", as
 
   const createdResponse = await request.post(`${API_URL}/api/tasks`, {
     headers: authHeaders(),
-    data: { model: "deepseek:deepseek-chat" },
+    data: { model: "deepseek-v4-flash" },
   });
   expect(createdResponse.status()).toBe(201);
   const createdTask = await createdResponse.json();

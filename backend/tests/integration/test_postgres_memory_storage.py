@@ -27,7 +27,7 @@ def test_postgres_event_seq_survives_storage_reinstantiation(tmp_path):
     assert database_url is not None
     storage = PostgresTaskStorage(tmp_path / "tasks", database_url)
     storage.initialize()
-    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+    state = storage.create_task(message=None, model="deepseek-v4-flash")
     for index in range(50):
         storage.append_event(state.task_id, "assistant_answer_delta", f"chunk {index}")
 
@@ -45,7 +45,7 @@ def test_postgres_rename_and_delete_task(tmp_path):
     assert database_url is not None
     storage = PostgresTaskStorage(tmp_path / "tasks", database_url)
     storage.initialize()
-    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+    state = storage.create_task(message=None, model="deepseek-v4-flash")
 
     renamed = storage.rename_task(state.task_id, "  历史菜单验收  ")
 
@@ -76,11 +76,11 @@ def test_memory_service_writes_and_recalls_completed_task_memory_v2(tmp_path, mo
     )
     storage = PostgresTaskStorage(settings.task_root, settings.database_url or "")
     storage.initialize()
-    state = storage.create_task(message=None, model="deepseek:deepseek-chat")
+    state = storage.create_task(message=None, model="deepseek-v4-flash")
     run = storage.start_run(
         state.task_id,
         message="记住我喜欢先做架构边界再写实现",
-        model="deepseek:deepseek-chat",
+        model="deepseek-v4-flash",
         expected_statuses={"idle"},
     )
     assert run is not None

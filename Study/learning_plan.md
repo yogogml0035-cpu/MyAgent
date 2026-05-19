@@ -19,6 +19,12 @@
 - 为什么最终回答不是简单等于所有流式 token 拼接？
 - 前端为什么需要同时处理 HTTP 刷新和 SSE？
 
+阶段验收动作：
+
+- 跑完 `00` 和 `01` 两个 mini unit。
+- 不看文档，口头解释一次 `task` 和 `run` 的区别。
+- 能说出“为什么前端不直接调模型”。
+
 ## 第 2 阶段：理解后端主链路
 
 建议用时：3-5 天。
@@ -47,6 +53,11 @@ POST /api/tasks 带 message 或 POST /api/tasks/{id}/messages
   -> final_answer 事件和可选长期记忆写入
 ```
 
+阶段验收动作：
+
+- 把 `02`、`03`、`04` 的 mini unit 至少各改坏并修回一次。
+- 能从 `api/tasks.py` 跳到 `storage.py`、`runner/core.py`，解释一条消息如何变成 run。
+
 ## 第 3 阶段：理解文件、工具、前端状态
 
 建议用时：3-5 天。
@@ -65,6 +76,11 @@ POST /api/tasks 带 message 或 POST /api/tasks/{id}/messages
 - 前端为什么要把后端 `snake_case` 转成 `camelCase`？
 - 进度日志为什么主要按 `seq` 排序？
 
+阶段验收动作：
+
+- 能不看文档，画出一次“先上传文件、再发送消息、再接 SSE”的前端链路。
+- 能区分 `mergeExecutionLogs` 和 `workspace-view.ts` 的职责。
+
 ## 第 4 阶段：理解安全、记忆、业务扩展
 
 建议用时：2-4 天。
@@ -80,6 +96,11 @@ POST /api/tasks 带 message 或 POST /api/tasks/{id}/messages
 - 为什么本项目默认只允许 loopback 访问？
 - 招投标分析应该沉淀在哪个知识包？
 - 行为变更为什么必须有浏览器 E2E 和截图证据？
+
+阶段验收动作：
+
+- 能说出长期记忆允许保存的四类内容。
+- 能解释“为什么招投标业务规则主要放知识包，而不是前端页面里”。
 
 ## 最终自测
 
@@ -102,3 +123,15 @@ POST /api/tasks 带 message 或 POST /api/tasks/{id}/messages
 - 判断某个文件读取需求是否越过 task workspace 安全边界。
 - 说清楚短期会话上下文、长期记忆、上传资源 manifest 的区别。
 - 分辨“当前源码已实现”和“知识包记录的未来业务边界”。
+
+## 卡住时回看哪里
+
+如果你在学习时出现下面这些典型卡点，可以直接回看对应章节：
+
+- 分不清 `task`、`run`、`event`：回看 `00`、`01`、`glossary.md`
+- 不知道消息为什么先过 API 再进 Runner：回看 `02`、`03`、`04`
+- 不知道日志为什么乱序或为什么要 SSE：回看 `06`
+- 不知道上传文件为什么不直接进 prompt：回看 `05`
+- 不知道页面为什么要 hook + task-api + task-state + workspace-view 四层：回看 `07`
+- 不知道什么能进长期记忆、什么绝对不能进：回看 `08`
+- 不知道业务知识和平台代码怎么分层：回看 `09`

@@ -18,7 +18,7 @@ def _client(tmp_path):
 
 def test_download_legacy_artifact(tmp_path):
     client = _client(tmp_path)
-    created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+    created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
     task_id = created["task_id"]
 
     storage = client.app.state.storage
@@ -33,14 +33,14 @@ def test_download_legacy_artifact(tmp_path):
 
 def test_download_run_scoped_artifact(tmp_path):
     client = _client(tmp_path)
-    created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+    created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
     task_id = created["task_id"]
 
     storage = client.app.state.storage
     _, run_id = storage.start_run(
         task_id,
         message="生成报告",
-        model="deepseek:deepseek-chat",
+        model="deepseek-v4-flash",
         expected_statuses={"idle"},
     )
     storage.write_run_text(task_id, run_id, "report.html", "<h1>本轮报告</h1>")
@@ -54,14 +54,14 @@ def test_download_run_scoped_artifact(tmp_path):
 
 def test_download_fixed_run_artifact_through_legacy_url_before_completion(tmp_path):
     client = _client(tmp_path)
-    created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+    created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
     task_id = created["task_id"]
 
     storage = client.app.state.storage
     _, run_id = storage.start_run(
         task_id,
         message="生成报告",
-        model="deepseek:deepseek-chat",
+        model="deepseek-v4-flash",
         expected_statuses={"idle"},
     )
     storage.write_run_text(task_id, run_id, "report.html", "<h1>镜像报告</h1>")
@@ -74,14 +74,14 @@ def test_download_fixed_run_artifact_through_legacy_url_before_completion(tmp_pa
 
 def test_download_latest_completed_run_artifact_through_compat_url(tmp_path):
     client = _client(tmp_path)
-    created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+    created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
     task_id = created["task_id"]
 
     storage = client.app.state.storage
     _, first_run_id = storage.start_run(
         task_id,
         message="第一次生成",
-        model="deepseek:deepseek-chat",
+        model="deepseek-v4-flash",
         expected_statuses={"idle"},
     )
     storage.write_run_text(task_id, first_run_id, "analysis-extra.json", '{"version": 1}')
@@ -89,7 +89,7 @@ def test_download_latest_completed_run_artifact_through_compat_url(tmp_path):
     _, second_run_id = storage.start_run(
         task_id,
         message="第二次生成",
-        model="deepseek:deepseek-chat",
+        model="deepseek-v4-flash",
         expected_statuses={"complete"},
     )
     storage.write_run_text(task_id, second_run_id, "analysis-extra.json", '{"version": 2}')
@@ -115,14 +115,14 @@ def test_download_latest_completed_run_artifact_through_compat_url(tmp_path):
 
 def test_run_scoped_download_requires_recorded_artifact(tmp_path):
     client = _client(tmp_path)
-    created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+    created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
     task_id = created["task_id"]
 
     storage = client.app.state.storage
     _, run_id = storage.start_run(
         task_id,
         message="生成隐藏文件",
-        model="deepseek:deepseek-chat",
+        model="deepseek-v4-flash",
         expected_statuses={"idle"},
     )
     raw_path = storage.run_artifact_dir(task_id, run_id) / "unrecorded.txt"
@@ -136,7 +136,7 @@ def test_run_scoped_download_requires_recorded_artifact(tmp_path):
 
 def test_download_missing_artifact_returns_404(tmp_path):
     client = _client(tmp_path)
-    created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+    created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
 
     response = client.get(f"/api/tasks/{created['task_id']}/artifacts/missing.html")
 
@@ -145,7 +145,7 @@ def test_download_missing_artifact_returns_404(tmp_path):
 
 def test_download_rejects_invalid_artifact_name(tmp_path):
     client = _client(tmp_path)
-    created = client.post("/api/tasks", json={"model": "deepseek:deepseek-chat"}).json()
+    created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
 
     response = client.get(f"/api/tasks/{created['task_id']}/artifacts/%2e%2e")
 

@@ -30,9 +30,9 @@ class TestBuildAgent:
         fake_graph = MagicMock(spec=CompiledStateGraph)
         mock_create.return_value = fake_graph
 
-        result = build_agent(test_settings, model="openai:gpt-4o")
+        result = build_agent(test_settings, model="deepseek-v4-flash-thinking")
         assert result is fake_graph
-        mock_model_fn.assert_called_once_with("openai:gpt-4o", test_settings)
+        mock_model_fn.assert_called_once_with("deepseek-v4-flash-thinking", test_settings)
 
     @patch("app.agent.factory._create_model", return_value=_mock_model())
     @patch("app.agent.factory.create_deep_agent")

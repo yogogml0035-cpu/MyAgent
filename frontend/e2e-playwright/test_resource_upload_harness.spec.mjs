@@ -105,7 +105,7 @@ VALUES (
   ${sqlString(runId)},
   'complete',
   ${sqlString(message)},
-  'deepseek:deepseek-chat',
+  'deepseek-v4-flash',
   ${sqlString(timestamp)},
   ${sqlString(timestamp)},
   NULL,
