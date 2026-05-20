@@ -1454,6 +1454,35 @@ test("workspace CSS aligns composer panel with the assistant message card column
   assert.match(cssSource, /\.isEmpty \.composerPanel\s*\{[\s\S]*?margin-left: 0;/);
 });
 
+test("workspace CSS defines dedicated warm-canvas skill picker and chip styles", () => {
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.match(cssSource, /\.skillChipShelf\s*\{[\s\S]*?flex-wrap: wrap;[\s\S]*?width: 100%;/);
+  assert.match(
+    cssSource,
+    /\.skillChip\s*\{[\s\S]*?max-width: min\(240px, 100%\);[\s\S]*?rgba\(204, 120, 92, 0\.34\);[\s\S]*?border-radius: var\(--radius-md\);[\s\S]*?line-height: 1\.2;/,
+  );
+  assert.match(
+    cssSource,
+    /\.skillPickerMenu\s*\{[\s\S]*?overflow: auto;[\s\S]*?overscroll-behavior: contain;[\s\S]*?background: var\(--surface\);[\s\S]*?border-radius: var\(--radius-lg\);/,
+  );
+  assert.match(cssSource, /\.skillOption\s*\{[\s\S]*?grid-template-columns: 24px minmax\(0, 1fr\);/);
+  assert.match(
+    cssSource,
+    /\.skillOption small\s*\{[\s\S]*?overflow: hidden;[\s\S]*?-webkit-line-clamp: 2;/,
+  );
+  assert.match(
+    cssSource,
+    /@media \(max-width: 760px\)[\s\S]*?\.skillPickerMenu\s*\{[\s\S]*?max-height: min\(220px, 38vh\);/,
+  );
+  assert.match(
+    cssSource,
+    /@media \(max-width: 520px\)[\s\S]*?\.skillChip\s*\{[\s\S]*?max-width: 100%;[\s\S]*?\.skillOption\s*\{[\s\S]*?grid-template-columns: 22px minmax\(0, 1fr\);/,
+  );
+  assert.equal(/\.modelPicker[^{,]*\s+\.skill/.test(cssSource), false);
+  assert.equal(/\.modelPickerMenu[^{,]*\s+\.skill/.test(cssSource), false);
+});
+
 test("workspace CSS keeps every live log row expandable with a left-aligned timestamp", () => {
   const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
   const conversationSource = readFileSync(

@@ -216,6 +216,21 @@ test("buildMessageRequestPayload allows explicit mode overrides", () => {
   );
 });
 
+test("buildMessageRequestPayload includes selected skills without changing message fields", () => {
+  assert.deepEqual(
+    buildMessageRequestPayload("hello", "deepseek-v4-flash", {
+      skills: ["web-research", " ", "code-review"],
+    }),
+    {
+      content: "hello",
+      message: "hello",
+      model: "deepseek-v4-flash",
+      mode: "auto",
+      skills: ["web-research", "code-review"],
+    },
+  );
+});
+
 test("normalizeModelOption preserves backend availability metadata", () => {
   assert.deepEqual(
     normalizeModelOption({

@@ -391,6 +391,150 @@ class TestSendMessage:
         assert len(user_messages) == 1
         assert user_messages[0]["content"] == "test message content"
 
+    def test_send_message_with_skills_formats_storage_title_and_runner(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        runner = app_client.app.state.runner
+        original_start = runner.start_background
+        captured: dict[str, str] = {}
+
+        async def title_generator(message: str, model: str, settings: Settings) -> str:
+            captured["title_message"] = message
+            captured["title_model"] = model
+            return "skill 会话名"
+
+        def mock_start_background(task_id: str, message: str, *, model: str, run_id: str) -> None:
+            captured.update(
+                {
+                    "runner_task_id": task_id,
+                    "runner_message": message,
+                    "runner_model": model,
+                    "runner_run_id": run_id,
+                }
+            )
+
+        app_client.app.state.title_generator = title_generator
+        runner.start_background = mock_start_background
+        try:
+            response = app_client.post(
+                f"/api/tasks/{task_id}/messages",
+                json={
+                    "message": "hello",
+                    "model": "deepseek-v4-flash",
+                    "skills": ["web-research"],
+                },
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert response.status_code == 200
+        data = response.json()
+        effective_message = "[$web-research]\n\nhello"
+        assert data["messages"][-1]["content"] == effective_message
+        assert data["runs"][-1]["message"] == effective_message
+        assert captured == {
+            "title_message": effective_message,
+            "title_model": "deepseek-v4-flash",
+            "runner_task_id": task_id,
+            "runner_message": effective_message,
+            "runner_model": "deepseek-v4-flash",
+            "runner_run_id": data["active_run_id"],
+        }
+
+    def test_send_message_with_multiple_skills_preserves_selection_order(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        runner = app_client.app.state.runner
+        original_start = runner.start_background
+        runner.start_background = lambda *args, **kwargs: None
+        try:
+            response = app_client.post(
+                f"/api/tasks/{created['task_id']}/messages",
+                json={
+                    "message": "review latest findings",
+                    "model": "deepseek-v4-flash",
+                    "skills": ["code-review", "web-research"],
+                },
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert response.status_code == 200
+        assert (
+            response.json()["messages"][-1]["content"]
+            == "[$code-review] [$web-research]\n\nreview latest findings"
+        )
+
+    def test_send_message_rejects_unknown_skill_before_starting_run(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+
+        response = app_client.post(
+            f"/api/tasks/{task_id}/messages",
+            json={
+                "message": "hello",
+                "model": "deepseek-v4-flash",
+                "skills": ["unknown-skill"],
+            },
+        )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "未知 skill：unknown-skill"
+        state = app_client.get(f"/api/tasks/{task_id}").json()
+        assert state["status"] == "idle"
+        assert state["messages"] == []
+        assert state["runs"] == []
+
+    def test_send_message_limits_skill_count(self, create_idle_task, app_client):
+        created = create_idle_task()
+
+        response = app_client.post(
+            f"/api/tasks/{created['task_id']}/messages",
+            json={
+                "message": "hello",
+                "model": "deepseek-v4-flash",
+                "skills": ["web-research"] * 9,
+            },
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "请求参数校验失败，请检查输入内容。"
+
+    def test_send_message_with_skill_and_default_file_prompt(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        upload_response = app_client.post(
+            f"/api/tasks/{task_id}/files",
+            files={"files": ("test.md", b"# test content", "text/markdown")},
+        )
+        assert upload_response.status_code == 201
+        runner = app_client.app.state.runner
+        original_start = runner.start_background
+        runner.start_background = lambda *args, **kwargs: None
+        try:
+            response = app_client.post(
+                f"/api/tasks/{task_id}/messages",
+                json={
+                    "message": "请分析已上传文件，先按需读取资源内容，再总结关键差异。",
+                    "model": "deepseek-v4-flash",
+                    "skills": ["web-research"],
+                },
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert response.status_code == 200
+        assert response.json()["messages"][-1]["content"].startswith(
+            "[$web-research]\n\n请分析已上传文件"
+        )
+
     def test_send_message_sets_model_generated_history_title(self, create_idle_task, app_client):
         created = create_idle_task()
         runner = app_client.app.state.runner

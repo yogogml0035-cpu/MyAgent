@@ -1,0 +1,141 @@
+## Codebase Patterns
+- Browser-safe project skill discovery lives behind `backend/app/skills/project.py` and locates `backend/skills` via `Path(__file__).resolve().parents[2] / "skills"`, not `settings.skills_dirs`, `MYAGENT_SKILLS_DIRS`, or the current working directory.
+- FastAPI feature routes use `APIRouter(prefix="/api", tags=[...])`, response models from `app.schemas`, and explicit registration in `backend/app/main.py`.
+- API tests can avoid external Postgres startup by creating `Settings(...)` with `InMemoryTaskStorage(settings.task_root)`.
+- LangChain DeepSeek model tests should treat captured API keys as `SecretStr` and compare with `get_secret_value()`.
+- Selected skill references are formatted at the backend task message boundary, then the same effective message must be passed to storage, auto-title generation, and `runner.start_background()`.
+- Frontend skill option normalization and slash-token helpers live in `frontend/app/skill-selection.ts`; `frontend/app/task-state.ts` re-exports them so API adapters keep using app-level payload helpers.
+- Workspace-owned composer state lives in `frontend/hooks/use-task-workspace.ts`; ChatComposer receives explicit props and sends selected skill names through `postTaskMessage`.
+- Skill options load as a non-blocking workspace side effect through `fetchSkillOptions()`, with failures surfaced as warning notices so normal text messages remain usable.
+- ChatComposer slash UI should stay textarea-based: use `findActiveSkillSlashToken()` / `replaceActiveSkillSlashToken()` for trigger handling, render selected skills as separate chip controls, and let Enter submit only when the skill picker is closed.
+- Skill selector styling should stay on dedicated `.skillPicker*` / `.skillChip*` classes with CSS regression assertions in `frontend/tests/workspace/test_workspace_view.test.ts`; do not couple it to `.modelPicker*`.
+- Custom local Next dist directories such as `.next-dev-*` must be ignored by both git and ESLint so `npm run lint` only scans source files.
+- Full skill selector send-loop E2E should use real frontend/backend HTTP services, inspect the actual browser `POST /api/tasks/{id}/messages` payload for `skills`, then verify persisted user-visible message content through `GET /api/tasks/{id}` and history reload.
+
+## 2026-05-20 19:18 - US-001
+- 实现了项目限定 skill 投影 helper，固定读取仓库 `backend/skills` 并只返回 `name` 和 `description`。
+- 新增 `GET /api/skills`，默认返回 `code-review` 和 `web-research`，并验证不会泄露 path、正文、环境变量或 settings/global skill。
+- 更改的文件
+  - `backend/app/skills/project.py`
+  - `backend/app/api/skills.py`
+  - `backend/app/schemas.py`
+  - `backend/app/main.py`
+  - `backend/tests/unit/skills/test_project_skills.py`
+  - `backend/tests/unit/api/test_skills.py`
+  - `backend/tests/unit/models/test_provider.py`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - `discover_skills()` 会返回 `path`，面向浏览器的投影必须显式剥离到安全字段。
+  - `/api/skills` 不应读取 `.agents/skills`、Codex 全局 skills 或 `MYAGENT_SKILLS_DIRS`，这些只属于运行时/本地工具边界。
+  - 后端全量 pytest 当前覆盖 provider 测试；DeepSeek provider 的 `api_key` 是 `SecretStr`。
+---
+## 2026-05-20 19:34 - US-002
+- 扩展了 `MessageRequest.skills`，限制单条消息最多携带 8 个 skill，同时保持省略 `skills` 的旧请求兼容。
+- 在任务消息提交前校验项目 skill 名称，未知 skill 返回 400，合法 skill 会按用户选择顺序格式化成可见的 `[$skill]` 前缀。
+- 让 `storage.start_run`、自动标题生成和 `runner.start_background` 使用同一个 effective message，覆盖默认文件 prompt 携带 skill 的路径。
+- 更改的文件
+  - `backend/app/skills/project.py`
+  - `backend/app/schemas.py`
+  - `backend/app/api/tasks.py`
+  - `backend/tests/unit/skills/test_project_skills.py`
+  - `backend/tests/unit/api/test_tasks.py`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - 后端消息可见内容和 runner 输入必须保持同源，避免存储、标题和后台运行看到不同文本。
+  - `MessageRequest.skills` 默认空数组，前端后续可以渐进接入而不破坏旧消息提交。
+  - 文件-only 发送由前端先转成默认文件 prompt，后端只负责对收到的最终 message 添加 skill 引用。
+---
+## 2026-05-20 19:57 - US-003
+- 新增前端 skill 数据 helper，覆盖浏览器安全字段归一化、大小写不敏感筛选、`/query` 查询、光标附近 slash token 识别和替换。
+- 扩展 `task-api`，通过现有 `requestTaskJson` 请求 `/api/skills`，并让 `postTaskMessage` 在保留既有 `message/model/mode/content` 字段的同时发送可选 `skills` 数组。
+- 补充前端 state 与 adapter 单测，验证 skill 归一化不会泄露 path/body、`/web` 和 `/code` 可筛选、普通正文 slash 不被替换、消息 payload 能携带选中 skill。
+- 验证通过：`cd frontend && npm test`、`cd frontend && npm run typecheck`、`cd frontend && npm run lint`、`git diff --check`。
+- 更改的文件
+  - `frontend/app/skill-selection.ts`
+  - `frontend/app/task-state.ts`
+  - `frontend/lib/task-api.ts`
+  - `frontend/tests/state/test_skill_selection.test.ts`
+  - `frontend/tests/state/test_task_state.test.ts`
+  - `frontend/tests/workspace/test_task_api.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - `postTaskMessage` 现在第四个参数接收 selected skill 名称数组；未传或空数组时保持旧消息 payload 形状。
+  - Slash token 只在起始位置或空白后的 `/query` 上激活，避免误处理 URL、文件路径和已经离开光标位置的普通正文。
+  - 本轮只建立 helper 和 API adapter，没有引入 composer 可见 UI；后续 UI story 应复用 `findActiveSkillSlashToken()` 和 `replaceActiveSkillSlashToken()`。
+---
+## 2026-05-20 20:13 - US-004
+- 在 `useTaskWorkspace` 中加载项目 skill options，失败时显示 warning notice 且不阻塞模型列表、历史加载或普通消息输入。
+- 新增 workspace 级 selected skill 状态和选择/删除 handler，TaskWorkspace 通过显式 props 把 skill options、selected skills 和 handlers 传给 ChatComposer。
+- 发送消息时把已选 skill 名称按选择顺序交给 `postTaskMessage`；发送成功后清空正文、文件和 skill，发送失败时保留正文和 skill 方便重试。
+- 更改的文件
+  - `frontend/hooks/use-task-workspace.ts`
+  - `frontend/components/chat/TaskWorkspace.tsx`
+  - `frontend/components/chat/ChatComposer.tsx`
+  - `frontend/tests/workspace/test_task_workspace.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - selected skill state belongs to the workspace hook, not the composer; UI stories should call `onSelectSkill`/`onRemoveSkill` instead of posting API requests directly from ChatComposer.
+  - Keep `setSelectedSkills([])` inside the successful send path only; the catch path should preserve selected skills for retry.
+  - The current story wires state and payload only; slash picker/chip rendering remains for the next ChatComposer UI story.
+---
+## 2026-05-20 21:01 - US-005
+- 在 `ChatComposer` 中实现了 `/` skill 选择器，支持名称/描述筛选、空状态、ArrowUp/ArrowDown、Enter 选择、Escape 和外部 pointer 关闭。
+- 新增 Codex 风格 skill chip shelf，选择 skill 时替换当前 slash token，chip 可删除且焦点回到 textarea；选择和删除过程不会发送消息。
+- 补充 composer 源码边界测试、workspace CSS 回归测试和真实 Playwright skill selector spec；使用 agent-browser 在隔离 3002/8002 服务上完成输入 `/`、选择 `web-research`、删除 chip、无消息请求和无控制台错误验证。
+- 验证通过：`cd frontend && npm test && npm run typecheck && npm run lint`、`MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260520204830/skill-selector npx playwright test e2e-playwright/test_skill_selector.spec.mjs --reporter=line`。
+- 更改的文件
+  - `frontend/components/chat/ChatComposer.tsx`
+  - `frontend/app/globals.css`
+  - `frontend/tests/workspace/test_task_workspace.test.ts`
+  - `frontend/tests/workspace/test_workspace_view.test.ts`
+  - `frontend/e2e-playwright/test_skill_selector.spec.mjs`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - `agent-browser fill` 会直接设置 textarea 值，某些 React selection/change 路径不如真实逐字输入稳定；验证 slash picker 触发时优先用 `focus` + `type`。
+  - 当前用户 3001 前端可访问但 8001 API 会超时；本轮浏览器验收改用隔离 3002/8002 服务，避免终止或重启用户已有服务。
+  - Skill picker 的样式使用专属 `.skillPicker*` / `.skillChip*` class，不耦合 model picker class；后续视觉 story 可在这些 class 上继续补响应式断言和文档。
+---
+## 2026-05-20 21:21 - US-006
+- 增强 skill chip 与 slash picker 的响应式样式约束，补充移动端尺寸、长文本截断、滚动约束和专属 CSS selector 回归断言。
+- 更新稳定接口文档、平台知识包和 E2E README，记录 `GET /api/skills`、消息 `skills` payload、项目限定 skill 投影和 skill selector 验收入口。
+- 修复 slash picker 在 Escape/外部关闭后被 textarea selection 事件重新打开的问题，并让 selector E2E 拦截非目标初始化 API，避免后端不可用时产生 console error。
+- 验证通过：`cd frontend && npm test`、`cd frontend && npm run typecheck`、`cd frontend && npm run lint`、`git diff --check`、`MYAGENT_E2E_BASE_URL=http://127.0.0.1:3003 MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260520211330/skill-selector npx playwright test e2e-playwright/test_skill_selector.spec.mjs --reporter=line`。
+- 更改的文件
+  - `.gitignore`
+  - `INTERFACES.md`
+  - `asset/deepagents_platform_knowledge_pack.md`
+  - `frontend/.gitignore`
+  - `frontend/app/globals.css`
+  - `frontend/components/chat/ChatComposer.tsx`
+  - `frontend/e2e-playwright/README.md`
+  - `frontend/e2e-playwright/test_skill_selector.spec.mjs`
+  - `frontend/eslint.config.mjs`
+  - `frontend/tests/workspace/test_task_workspace.test.ts`
+  - `frontend/tests/workspace/test_workspace_view.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - 关闭 slash picker 时需要记录 dismissed token；否则 textarea 的 selection/click 事件会重新识别同一个 `/query` 并再次打开菜单。
+  - 当前默认 `3001` 前端曾短暂可访问但后续断开，`8001` API 超时；本轮用临时 `3003` 前端服务完成浏览器验收，并在结束后关闭该服务。
+  - Skill selector E2E 如果只验证 composer UI，可以 route `/api/models`、`/api/tasks`、`/api/skills` 和 message API，让测试聚焦交互且不产生初始化 console error；完整后端闭环留给 US-007。
+---
+## 2026-05-20 21:59 - US-007
+- 新增真实前后端服务的 skill selector 完整闭环 E2E，覆盖 `/` 展示 `code-review`/`web-research`、选择 `web-research`、发送“搜索今天的 AI 新闻”、结构化 `skills` payload、后端持久化可见 `[$web-research]` 引用和历史重载后消息仍可见。
+- 更新 E2E README，记录 full-loop spec 的运行入口、所需 API URL/access token/evidence env，以及该 spec 不 mock `/api/skills`、`/api/tasks` 或消息提交的边界。
+- 使用 agent-browser 技能在临时真实服务上手动抽查 slash picker、chip、发送和控制台错误；截图证据由 Playwright 保存到 `frontend/e2e-playwright/e2e-20260520215700/skill-selector-full-loop/`。
+- 验证通过：`cd frontend && npm test`、`cd frontend && npm run typecheck`、`cd frontend && npm run lint`、`cd frontend && npm run build`、`cd backend && uv run pytest`、`cd backend && uv run ruff check .`、`cd backend && uv run mypy app tests`、`MYAGENT_E2E_BASE_URL=http://127.0.0.1:3004 MYAGENT_E2E_API_URL=http://127.0.0.1:8004 MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260520215700/skill-selector-full-loop npx playwright test e2e-playwright/test_skill_selector_full_loop.spec.mjs --reporter=line`、`git diff --check`。
+- 更改的文件
+  - `frontend/e2e-playwright/test_skill_selector_full_loop.spec.mjs`
+  - `frontend/e2e-playwright/README.md`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - Full-loop skill selector 验收不能复用 UI-only route mock；需要真实请求 `/api/skills` 和 `/api/tasks/{id}/messages`，并用浏览器 request 事件证明 `skills` 数组确实发出。
+  - 验证 slash picker 时继续优先 `focus` + 真实 typing；直接 `fill("/")` 可能只设置 textarea 值而不稳定触发 React selection/slash token 路径。
+  - 临时 E2E 前端使用自定义 `NEXT_DIST_DIR` 时 Next 可能写入 `tsconfig.json` include；结束前要恢复，避免提交本地 dev dist 类型路径。
+---

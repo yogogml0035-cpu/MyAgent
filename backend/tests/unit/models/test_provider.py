@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import SecretStr
 
 from app.config import DEEPSEEK_V4_FLASH_MODEL_ID, DEEPSEEK_V4_FLASH_THINKING_MODEL_ID, Settings
 from app.models import provider as provider_module
@@ -53,6 +54,8 @@ class TestCreateModelConfiguration:
         create_model(model_id, settings)
 
         assert captured["model"] == "deepseek-v4-flash"
-        assert captured["api_key"] == "sk-test"
+        api_key = captured["api_key"]
+        assert isinstance(api_key, SecretStr)
+        assert api_key.get_secret_value() == "sk-test"
         assert captured["api_base"] == "https://api.deepseek.com"
         assert captured["extra_body"] == {"thinking": {"type": thinking_mode}}

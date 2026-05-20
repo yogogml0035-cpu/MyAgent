@@ -13,8 +13,22 @@
 - 文件上传：multipart 上传到已存在且非运行中的任务。
 - 事件读取：REST 事件轮询和 SSE 实时事件流。
 - 产物读取：按 task/run 范围下载或打开 artifact blob。
+- 项目 Skill：读取当前仓库 `backend/skills` 的浏览器安全 skill 投影。
 
 后端路由位于 `backend/app/api/`，稳定公共 schema 位于 `backend/app/schemas.py`。
+
+### Project Skills
+
+- `GET /api/skills` 返回当前项目 skill 列表，响应为 `[{ "name": string, "description": string }]`。
+- Skill 列表固定由后端代码定位到仓库内 `backend/skills`，不读取 `settings.skills_dirs`、`MYAGENT_SKILLS_DIRS`、`.agents/skills`、Codex 全局 skills 或用户主目录。
+- 浏览器响应只能包含 `name` 和 `description`，不得包含本地路径、目录路径、环境变量、Markdown 正文或其他 frontmatter 字段。
+- 当前默认项目 skill 包括 `code-review` 和 `web-research`；无有效项目 skill 时返回空数组而不是 500。
+
+### Message Skills
+
+- `POST /api/tasks/{task_id}/messages` 接受可选 `skills: string[]` 字段，同时继续兼容省略该字段的旧请求。
+- 前端只发送已选 skill 名称；后端在创建 run 前校验这些名称是否属于当前项目 skill。未知名称返回 400。
+- 后端把已选 skill 按用户选择顺序格式化为用户可见前缀，例如 `[$web-research]` 或 `[$code-review] [$web-research]`，并将同一个 effective message 传给消息存储、自动标题生成和 runner。
 
 ### REST and SSE
 

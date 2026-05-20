@@ -4,11 +4,20 @@ import {
   type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
+  type SyntheticEvent,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
 import type { ModelDisplayOption } from "../../app/model-ui";
+import {
+  filterSkillOptions,
+  findActiveSkillSlashToken,
+  replaceActiveSkillSlashToken,
+  type ActiveSkillSlashToken,
+  type SkillOption,
+} from "../../app/task-state";
 import { FILE_INPUT_ACCEPT, SUPPORTED_UPLOAD_LABEL } from "../../app/file-upload";
 import { shouldSubmitComposerKey } from "../../app/workspace-view";
 
@@ -24,14 +33,22 @@ type ChatComposerProps = {
   selectedFiles: File[];
   selectedModelDisplay: ModelDisplayOption;
   selectedModelRunnable: boolean;
+  selectedSkills: SkillOption[];
+  skillOptions: SkillOption[];
   uploadCount: number;
   onFileSelection: (files: File[]) => void;
   onRemoveFile: (index: number) => void;
+  onRemoveSkill: (skillName: string) => void;
   onInputChange: (value: string) => void;
   onModelChange: (model: string) => void;
+  onSelectSkill: (skill: SkillOption) => void;
   onStop: () => Promise<void>;
   onSubmit: () => Promise<void>;
 };
+
+function buildSkillSlashTokenKey(value: string, token: ActiveSkillSlashToken) {
+  return `${token.start}:${token.end}:${value.slice(token.start, token.end)}`;
+}
 
 export function ChatComposer({
   activeTask,
@@ -43,23 +60,88 @@ export function ChatComposer({
   selectedFiles,
   selectedModelDisplay,
   selectedModelRunnable,
+  selectedSkills,
+  skillOptions,
   uploadCount,
   onFileSelection,
   onRemoveFile,
+  onRemoveSkill,
   onInputChange,
   onModelChange,
+  onSelectSkill,
   onStop,
   onSubmit,
 }: ChatComposerProps) {
   const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
+  const [isSkillPickerOpen, setIsSkillPickerOpen] = useState(false);
+  const [activeSkillIndex, setActiveSkillIndex] = useState(0);
+  const [activeSlashToken, setActiveSlashToken] = useState<ActiveSkillSlashToken | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const dismissedSkillSlashTokenRef = useRef<string | null>(null);
   const modelPickerRef = useRef<HTMLDivElement | null>(null);
+  const skillPickerRef = useRef<HTMLDivElement | null>(null);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const skillPickerEnabled = !activeTask && !isBusy && skillOptions.length > 0;
+  const filteredSkillOptions = useMemo(
+    () =>
+      isSkillPickerOpen && activeSlashToken
+        ? filterSkillOptions(skillOptions, activeSlashToken.query)
+        : [],
+    [activeSlashToken, isSkillPickerOpen, skillOptions],
+  );
+  const activeSkillOption = filteredSkillOptions[activeSkillIndex] ?? filteredSkillOptions[0];
 
   useEffect(() => {
     if (selectedFiles.length === 0 && fileInputRef.current) {
       fileInputRef.current.value = "";
     }
   }, [selectedFiles.length]);
+
+  useEffect(() => {
+    if (!skillPickerEnabled) {
+      setIsSkillPickerOpen(false);
+      setActiveSlashToken(null);
+    }
+  }, [skillPickerEnabled]);
+
+  useEffect(() => {
+    setActiveSkillIndex(0);
+  }, [activeSlashToken?.query]);
+
+  useEffect(() => {
+    if (activeSkillIndex >= filteredSkillOptions.length) {
+      setActiveSkillIndex(0);
+    }
+  }, [activeSkillIndex, filteredSkillOptions.length]);
+
+  useEffect(() => {
+    if (!isSkillPickerOpen) {
+      return;
+    }
+
+    function handlePointerDown(event: PointerEvent) {
+      const target = event.target;
+      if (
+        target instanceof Node &&
+        (skillPickerRef.current?.contains(target) || textareaRef.current?.contains(target))
+      ) {
+        return;
+      }
+      const cursorIndex = textareaRef.current?.selectionStart ?? input.length;
+      const token = activeSlashToken ?? findActiveSkillSlashToken(input, cursorIndex);
+      if (token) {
+        dismissedSkillSlashTokenRef.current = buildSkillSlashTokenKey(input, token);
+      }
+      setIsSkillPickerOpen(false);
+      setActiveSlashToken(null);
+    }
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+    };
+  }, [activeSlashToken, input, isSkillPickerOpen]);
 
   useEffect(() => {
     if (!isModelPickerOpen) {
@@ -97,7 +179,108 @@ export function ChatComposer({
     onFileSelection(Array.from(event.target.files ?? []));
   }
 
+  function syncSkillPicker(value: string, cursorIndex: number) {
+    if (!skillPickerEnabled) {
+      setIsSkillPickerOpen(false);
+      setActiveSlashToken(null);
+      dismissedSkillSlashTokenRef.current = null;
+      return;
+    }
+
+    const token = findActiveSkillSlashToken(value, cursorIndex);
+    if (!token) {
+      setActiveSlashToken(null);
+      setIsSkillPickerOpen(false);
+      dismissedSkillSlashTokenRef.current = null;
+      return;
+    }
+
+    setActiveSlashToken(token);
+    if (dismissedSkillSlashTokenRef.current === buildSkillSlashTokenKey(value, token)) {
+      setIsSkillPickerOpen(false);
+      return;
+    }
+
+    dismissedSkillSlashTokenRef.current = null;
+    setIsSkillPickerOpen(true);
+  }
+
+  function focusTextareaAt(cursorIndex: number) {
+    window.requestAnimationFrame(() => {
+      textareaRef.current?.focus();
+      textareaRef.current?.setSelectionRange(cursorIndex, cursorIndex);
+    });
+  }
+
+  function dismissSkillPicker() {
+    const cursorIndex = textareaRef.current?.selectionStart ?? input.length;
+    const token = activeSlashToken ?? findActiveSkillSlashToken(input, cursorIndex);
+    if (token) {
+      dismissedSkillSlashTokenRef.current = buildSkillSlashTokenKey(input, token);
+    }
+    setIsSkillPickerOpen(false);
+    setActiveSlashToken(null);
+  }
+
+  function handleSkillSelect(skill: SkillOption) {
+    const cursorIndex = textareaRef.current?.selectionStart ?? input.length;
+    const token = activeSlashToken ?? findActiveSkillSlashToken(input, cursorIndex);
+    const nextInput = replaceActiveSkillSlashToken(input, token);
+
+    onSelectSkill(skill);
+    onInputChange(nextInput.value);
+    dismissedSkillSlashTokenRef.current = null;
+    setIsSkillPickerOpen(false);
+    setActiveSlashToken(null);
+    setActiveSkillIndex(0);
+    focusTextareaAt(nextInput.cursor);
+  }
+
+  function handleInputChange(event: ChangeEvent<HTMLTextAreaElement>) {
+    const nextValue = event.target.value;
+    onInputChange(nextValue);
+    syncSkillPicker(nextValue, event.target.selectionStart);
+  }
+
+  function handleTextareaSelectionChange(event: SyntheticEvent<HTMLTextAreaElement>) {
+    syncSkillPicker(event.currentTarget.value, event.currentTarget.selectionStart);
+  }
+
   function handleComposerKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
+    if (isSkillPickerOpen) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveSkillIndex((current) =>
+          filteredSkillOptions.length === 0 ? 0 : (current + 1) % filteredSkillOptions.length,
+        );
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveSkillIndex((current) =>
+          filteredSkillOptions.length === 0
+            ? 0
+            : (current - 1 + filteredSkillOptions.length) % filteredSkillOptions.length,
+        );
+        return;
+      }
+
+      if (event.key === "Enter") {
+        event.preventDefault();
+        if (activeSkillOption) {
+          handleSkillSelect(activeSkillOption);
+        }
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dismissSkillPicker();
+        return;
+      }
+    }
+
     if (
       shouldSubmitComposerKey({
         key: event.key,
@@ -165,14 +348,88 @@ export function ChatComposer({
           </div>
         ) : null}
 
+        {selectedSkills.length > 0 ? (
+          <div
+            className="skillChipShelf"
+            aria-label="已选 Skill"
+            data-testid="selected-skill-shelf"
+          >
+            {selectedSkills.map((skill) => (
+              <button
+                aria-label={`移除 ${skill.name} skill`}
+                className="skillChip"
+                key={skill.name}
+                onClick={() => onRemoveSkill(skill.name)}
+                title={`移除 ${skill.name}`}
+                type="button"
+              >
+                <span className="skillChipMarker" aria-hidden="true">
+                  $
+                </span>
+                <span className="skillChipName">{skill.name}</span>
+                <span className="skillChipRemove" aria-hidden="true" />
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <textarea
+          aria-activedescendant={
+            isSkillPickerOpen && activeSkillOption
+              ? `skill-option-${activeSkillOption.name}`
+              : undefined
+          }
+          aria-controls={isSkillPickerOpen ? "skill-picker-options" : undefined}
+          aria-haspopup="listbox"
           className="promptTextarea"
-          onChange={(event) => onInputChange(event.target.value)}
+          onChange={handleInputChange}
+          onClick={handleTextareaSelectionChange}
           onKeyDown={handleComposerKeyDown}
+          onSelect={handleTextareaSelectionChange}
           placeholder={activeTask ? "回复生成中，请稍候..." : "尽管问..."}
+          ref={textareaRef}
           rows={2}
           value={input}
         />
+
+        {isSkillPickerOpen ? (
+          <div
+            aria-label="Skill 选择器"
+            className="skillPickerMenu"
+            id="skill-picker-options"
+            ref={skillPickerRef}
+            role="listbox"
+          >
+            {filteredSkillOptions.length > 0 ? (
+              filteredSkillOptions.map((skill, index) => (
+                <button
+                  aria-selected={index === activeSkillIndex}
+                  className={[
+                    "skillOption",
+                    index === activeSkillIndex ? "skillOption-active" : "",
+                  ].filter(Boolean).join(" ")}
+                  id={`skill-option-${skill.name}`}
+                  key={skill.name}
+                  onClick={() => handleSkillSelect(skill)}
+                  role="option"
+                  type="button"
+                >
+                  <span className="skillOptionMarker" aria-hidden="true">
+                    $
+                  </span>
+                  <span className="skillOptionCopy">
+                    <span className="skillOptionTitle">{skill.name}</span>
+                    <small>{skill.description || "项目 Skill"}</small>
+                  </span>
+                </button>
+              ))
+            ) : (
+              <div className="skillPickerEmpty" role="status">
+                没有匹配的 skill
+              </div>
+            )}
+          </div>
+        ) : null}
 
         <div className="composerControls">
           <label

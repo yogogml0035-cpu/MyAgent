@@ -5,6 +5,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 MAX_MESSAGE_CHARS = 8_000
+MAX_MESSAGE_SKILLS = 8
 
 TaskMode = Literal["auto", "chat", "analysis"]
 InputScope = Literal["auto", "documents_only", "chat_only"]
@@ -23,6 +24,12 @@ class MessageRequest(BaseModel):
     model: str | None = None
     mode: TaskMode = "auto"
     input_scope: InputScope = "auto"
+    skills: list[str] = Field(default_factory=list, max_length=MAX_MESSAGE_SKILLS)
+
+
+class SkillOption(BaseModel):
+    name: str
+    description: str
 
 
 class TaskRenameRequest(BaseModel):

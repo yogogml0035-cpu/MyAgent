@@ -41,13 +41,17 @@ export function TaskWorkspace() {
           modelDisplayOptions={workspace.modelDisplayOptions}
           onFileSelection={workspace.handleFileSelection}
           onRemoveFile={workspace.handleRemoveFile}
+          onRemoveSkill={workspace.handleRemoveSkill}
           onInputChange={workspace.setInput}
           onModelChange={workspace.setModel}
+          onSelectSkill={workspace.handleSelectSkill}
           onStop={workspace.handleStop}
           onSubmit={workspace.handleSubmit}
           selectedFiles={workspace.selectedFiles}
           selectedModelDisplay={workspace.selectedModelDisplay}
           selectedModelRunnable={workspace.selectedModelRunnable}
+          selectedSkills={workspace.selectedSkills}
+          skillOptions={workspace.skillOptions}
           uploadCount={workspace.uploadCount}
         />
       </section>
