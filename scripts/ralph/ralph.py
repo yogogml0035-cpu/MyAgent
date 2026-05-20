@@ -8,6 +8,9 @@ import sys
 import subprocess
 import time
 import os
+import platform
+import signal
+import shlex
 import shutil
 from pathlib import Path
 
@@ -22,6 +25,16 @@ TIMEOUT_SECONDS = 30 * 60
 AGENT = sys.argv[1] if len(sys.argv) > 1 else "claude"
 
 
+def is_windows() -> bool:
+    """当前 Python 是否运行在原生 Windows 上。"""
+    return os.name == "nt"
+
+
+def is_macos() -> bool:
+    """当前 Python 是否运行在 macOS 上。"""
+    return platform.system() == "Darwin"
+
+
 def resolve_executable(name: str) -> str:
     """
     在 Windows 上，很多 CLI 会以 .cmd/.bat 形式存在（例如 npm 全局安装的命令）。
@@ -31,7 +44,7 @@ def resolve_executable(name: str) -> str:
     if path:
         return path
 
-    if os.name == "nt":
+    if is_windows():
         for ext in (".cmd", ".exe", ".bat"):
             path = shutil.which(name + ext)
             if path:
@@ -55,9 +68,52 @@ def build_cmd(prompt: str) -> list[str]:
 def build_process_cmd(prompt: str) -> list[str]:
     """通过 script 提供 PTY，确保子进程输出实时显示到控制台"""
     # Windows 没有 script(1)，直接运行子命令即可
-    if os.name == "nt":
+    if is_windows():
         return build_cmd(prompt)
-    return ["script", "-q", "/dev/null"] + build_cmd(prompt)
+
+    cmd = build_cmd(prompt)
+    script = shutil.which("script")
+    if not script:
+        print("⚠️  未找到 script(1)，将直接运行 Agent；如果 Agent 要求 TTY，可能会失败。")
+        return cmd
+
+    # macOS/BSD script 支持：script -q /dev/null command args...
+    if is_macos():
+        return [script, "-q", "/dev/null"] + cmd
+
+    # Linux/WSL 的 util-linux script 不支持把 command args 直接追加在文件名后；
+    # 必须使用 -c，否则 Codex/Claude 的参数会被 script 当成自己的参数解析。
+    return [script, "-q", "-e", "-c", shlex.join(cmd), "/dev/null"]
+
+
+def stop_process(process: subprocess.Popen | None) -> None:
+    """跨平台停止 Ralph 启动的后台进程。"""
+    if process is None or process.poll() is not None:
+        return
+
+    try:
+        if is_windows():
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(process.pid)],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            return
+
+        os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+            process.wait()
+    except Exception:
+        process.terminate()
+        try:
+            process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
 
 # 目录配置
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -224,6 +280,7 @@ def main():
                 "npm run dev",
                 cwd=str(frontend_dir),
                 shell=True,
+                start_new_session=not is_windows(),
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
@@ -256,23 +313,20 @@ def main():
                 elapsed = time.time() - total_start_time
                 print("✅ 所有任务已完成或已标记为 BLOCKED!")
                 print(f"⏱️  总运行时间: {format_duration(elapsed)}")
-                if frontend_process:
-                    subprocess.run(f"taskkill /F /T /PID {frontend_process.pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                stop_process(frontend_process)
                 sys.exit(0)
 
         except KeyboardInterrupt:
             elapsed = time.time() - total_start_time
             print(f"\n\n⚠️  用户中断")
             print(f"⏱️  总运行时间: {format_duration(elapsed)}")
-            if frontend_process:
-                subprocess.run(f"taskkill /F /T /PID {frontend_process.pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            stop_process(frontend_process)
             sys.exit(130)
 
     elapsed = time.time() - total_start_time
     print(f"\n已达到最大迭代次数 ({MAX_ITERATIONS})")
     print(f"⏱️  总运行时间: {format_duration(elapsed)}")
-    if frontend_process:
-        subprocess.run(f"taskkill /F /T /PID {frontend_process.pid}", shell=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    stop_process(frontend_process)
     sys.exit(1)
 
 

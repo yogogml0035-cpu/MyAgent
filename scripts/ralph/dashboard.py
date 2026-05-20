@@ -5,6 +5,10 @@ Ralph Dashboard - 实时监控面板
 """
 
 import json
+import os
+import platform
+import shutil
+import subprocess
 import threading
 import webbrowser
 import time
@@ -25,6 +29,47 @@ _state: dict = {
     "started_at": None,
 }
 _state_lock = threading.Lock()
+
+
+def _is_wsl() -> bool:
+    """当前 Python 是否运行在 WSL 中。"""
+    if os.name != "posix" or platform.system() != "Linux":
+        return False
+    release = platform.release().lower()
+    if "microsoft" in release or "wsl" in release:
+        return True
+    try:
+        return "microsoft" in Path("/proc/version").read_text(encoding="utf-8").lower()
+    except Exception:
+        return False
+
+
+def _open_browser(url: str) -> bool:
+    """打开 Dashboard，WSL 下优先调用 Windows 侧浏览器。"""
+    if _is_wsl():
+        wslview = shutil.which("wslview")
+        if wslview:
+            subprocess.Popen([wslview, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+
+        cmd = shutil.which("cmd.exe")
+        if cmd:
+            subprocess.Popen([cmd, "/c", "start", "", url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return True
+
+        powershell = shutil.which("powershell.exe")
+        if powershell:
+            subprocess.Popen(
+                [powershell, "-NoProfile", "-Command", "Start-Process", url],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return True
+
+        print("⚠️  WSL 中未找到 wslview/cmd.exe/powershell.exe，请手动打开 Dashboard URL。")
+        return False
+
+    return webbrowser.open(url)
 
 
 def set_state(
@@ -144,4 +189,4 @@ def start(port: int = 7331, max_iterations: int = 50, open_browser: bool = True)
     print(f"🖥️  Dashboard: {url}")
 
     if open_browser:
-        threading.Timer(0.8, lambda: webbrowser.open(url)).start()
+        threading.Timer(0.8, lambda: _open_browser(url)).start()

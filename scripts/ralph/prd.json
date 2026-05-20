@@ -19,7 +19,7 @@
         "Typecheck passes"
       ],
       "priority": 1,
-      "passes": true,
+      "passes": false,
       "notes": "Implemented GET /api/skills with project-scoped backend/skills projection; backend pytest, ruff, mypy, and git diff --check pass.",
       "retryCount": 0,
       "blocked": false

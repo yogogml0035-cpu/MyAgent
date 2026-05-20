@@ -100,4 +100,3 @@
 在实现每个 story 前，先读取 `.agents/plans/frontend-skill-selector.md` 中与当前 `prd.json` 功能最相关的计划文件。
 我要做的这些story都是来自根路径下tasks/prd-frontend-skill-selector.md的这个需求，如果开发过程中有需求不明确的事情也可以去查看tasks/requirements.md
 最终完成标准仍以 `scripts/ralph/prd.json` 中该 story 的 acceptanceCriteria 为准。
-
