@@ -25,6 +25,11 @@ class MessageRequest(BaseModel):
     input_scope: InputScope = "auto"
 
 
+class SkillOption(BaseModel):
+    name: str
+    description: str
+
+
 class TaskRenameRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=80)
 

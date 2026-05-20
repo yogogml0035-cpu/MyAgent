@@ -1,0 +1,24 @@
+## Codebase Patterns
+- Browser-safe project skill discovery lives behind `backend/app/skills/project.py` and locates `backend/skills` via `Path(__file__).resolve().parents[2] / "skills"`, not `settings.skills_dirs`, `MYAGENT_SKILLS_DIRS`, or the current working directory.
+- FastAPI feature routes use `APIRouter(prefix="/api", tags=[...])`, response models from `app.schemas`, and explicit registration in `backend/app/main.py`.
+- API tests can avoid external Postgres startup by creating `Settings(...)` with `InMemoryTaskStorage(settings.task_root)`.
+- LangChain DeepSeek model tests should treat captured API keys as `SecretStr` and compare with `get_secret_value()`.
+
+## 2026-05-20 19:18 - US-001
+- 实现了项目限定 skill 投影 helper，固定读取仓库 `backend/skills` 并只返回 `name` 和 `description`。
+- 新增 `GET /api/skills`，默认返回 `code-review` 和 `web-research`，并验证不会泄露 path、正文、环境变量或 settings/global skill。
+- 更改的文件
+  - `backend/app/skills/project.py`
+  - `backend/app/api/skills.py`
+  - `backend/app/schemas.py`
+  - `backend/app/main.py`
+  - `backend/tests/unit/skills/test_project_skills.py`
+  - `backend/tests/unit/api/test_skills.py`
+  - `backend/tests/unit/models/test_provider.py`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - `discover_skills()` 会返回 `path`，面向浏览器的投影必须显式剥离到安全字段。
+  - `/api/skills` 不应读取 `.agents/skills`、Codex 全局 skills 或 `MYAGENT_SKILLS_DIRS`，这些只属于运行时/本地工具边界。
+  - 后端全量 pytest 当前覆盖 provider 测试；DeepSeek provider 的 `api_key` 是 `SecretStr`。
+---

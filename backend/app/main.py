@@ -18,6 +18,7 @@ from .agent_store import PostgresAgentStore
 from .api.artifacts import router as artifacts_router
 from .api.files import router as files_router
 from .api.models import router as models_router
+from .api.skills import router as skills_router
 from .api.streaming import router as streaming_router
 from .api.tasks import router as tasks_router
 from .config import Settings, enforce_single_process_runtime, load_settings
@@ -93,6 +94,7 @@ def create_app(
     app.include_router(artifacts_router)
     app.include_router(streaming_router)
     app.include_router(models_router)
+    app.include_router(skills_router)
 
     @app.exception_handler(RequestValidationError)
     async def request_validation_exception_handler(
