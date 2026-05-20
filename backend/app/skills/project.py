@@ -26,3 +26,17 @@ def list_project_skill_options() -> list[dict[str, str]]:
 def project_skill_names() -> set[str]:
     """Return the set of valid project skill names."""
     return {skill["name"] for skill in list_project_skill_options()}
+
+def validate_project_skill_names(names: list[str]) -> list[str]:
+    """Return skill names that are not available in the project skill set."""
+    valid_names = project_skill_names()
+    return [name for name in names if name not in valid_names]
+
+def format_message_with_skill_refs(message: str, skill_names: list[str]) -> str:
+    """Prefix a user-visible message with selected skill references."""
+    if not skill_names:
+        return message
+    prefix = " ".join(f"[${name}]" for name in skill_names)
+    if not message:
+        return prefix
+    return f"{prefix}\n\n{message}"

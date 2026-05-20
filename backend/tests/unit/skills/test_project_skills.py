@@ -56,3 +56,20 @@ def test_builtin_project_skills_include_code_review_and_web_research(monkeypatch
     names = project.project_skill_names()
 
     assert {"code-review", "web-research"}.issubset(names)
+
+def test_validate_project_skill_names_returns_unknown_names(monkeypatch) -> None:
+    monkeypatch.setattr(project, "project_skill_names", lambda: {"code-review", "web-research"})
+
+    assert project.validate_project_skill_names(["web-research", "missing"]) == ["missing"]
+
+def test_format_message_with_skill_refs_prefixes_message_in_order() -> None:
+    assert (
+        project.format_message_with_skill_refs("hello", ["code-review", "web-research"])
+        == "[$code-review] [$web-research]\n\nhello"
+    )
+
+def test_format_message_with_skill_refs_keeps_messages_without_skills() -> None:
+    assert project.format_message_with_skill_refs("hello", []) == "hello"
+
+def test_format_message_with_skill_refs_supports_empty_message() -> None:
+    assert project.format_message_with_skill_refs("", ["web-research"]) == "[$web-research]"

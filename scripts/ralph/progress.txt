@@ -3,6 +3,7 @@
 - FastAPI feature routes use `APIRouter(prefix="/api", tags=[...])`, response models from `app.schemas`, and explicit registration in `backend/app/main.py`.
 - API tests can avoid external Postgres startup by creating `Settings(...)` with `InMemoryTaskStorage(settings.task_root)`.
 - LangChain DeepSeek model tests should treat captured API keys as `SecretStr` and compare with `get_secret_value()`.
+- Selected skill references are formatted at the backend task message boundary, then the same effective message must be passed to storage, auto-title generation, and `runner.start_background()`.
 
 ## 2026-05-20 19:18 - US-001
 - 实现了项目限定 skill 投影 helper，固定读取仓库 `backend/skills` 并只返回 `name` 和 `description`。
@@ -21,4 +22,21 @@
   - `discover_skills()` 会返回 `path`，面向浏览器的投影必须显式剥离到安全字段。
   - `/api/skills` 不应读取 `.agents/skills`、Codex 全局 skills 或 `MYAGENT_SKILLS_DIRS`，这些只属于运行时/本地工具边界。
   - 后端全量 pytest 当前覆盖 provider 测试；DeepSeek provider 的 `api_key` 是 `SecretStr`。
+---
+## 2026-05-20 19:34 - US-002
+- 扩展了 `MessageRequest.skills`，限制单条消息最多携带 8 个 skill，同时保持省略 `skills` 的旧请求兼容。
+- 在任务消息提交前校验项目 skill 名称，未知 skill 返回 400，合法 skill 会按用户选择顺序格式化成可见的 `[$skill]` 前缀。
+- 让 `storage.start_run`、自动标题生成和 `runner.start_background` 使用同一个 effective message，覆盖默认文件 prompt 携带 skill 的路径。
+- 更改的文件
+  - `backend/app/skills/project.py`
+  - `backend/app/schemas.py`
+  - `backend/app/api/tasks.py`
+  - `backend/tests/unit/skills/test_project_skills.py`
+  - `backend/tests/unit/api/test_tasks.py`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - 后端消息可见内容和 runner 输入必须保持同源，避免存储、标题和后台运行看到不同文本。
+  - `MessageRequest.skills` 默认空数组，前端后续可以渐进接入而不破坏旧消息提交。
+  - 文件-only 发送由前端先转成默认文件 prompt，后端只负责对收到的最终 message 添加 skill 引用。
 ---

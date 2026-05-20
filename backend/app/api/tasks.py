@@ -16,6 +16,7 @@ from app.schemas import (
     TaskState,
     TaskSummary,
 )
+from app.skills.project import format_message_with_skill_refs, validate_project_skill_names
 
 router = APIRouter(prefix="/api/tasks", tags=["tasks"])
 logger = logging.getLogger(__name__)
@@ -150,19 +151,23 @@ async def send_message(task_id: str, body: MessageRequest, request: Request) -> 
     model = _resolve_request_model(body.model, settings)
     _validate_runnable_model(model, settings)
     _get_existing_task(storage, task_id, include_events=False)
+    unknown_skills = validate_project_skill_names(body.skills)
+    if unknown_skills:
+        raise HTTPException(status_code=400, detail=f"未知 skill：{', '.join(unknown_skills)}")
+    effective_message = format_message_with_skill_refs(body.message, body.skills)
     if runner.is_running(task_id):
         raise HTTPException(status_code=409, detail="任务运行中，请等待完成后再发送消息")
     run_result = storage.start_run(
         task_id,
-        message=body.message,
+        message=effective_message,
         model=model,
         expected_statuses={"idle", "complete", "failed", "cancelled", "needs_input", "interrupted"},
     )
     if run_result is None:
         raise HTTPException(status_code=409, detail="任务状态不允许发送消息")
     _, run_id = run_result
-    await _set_auto_title_if_empty(request, task_id, body.message, model, settings)
-    runner.start_background(task_id, body.message, model=model, run_id=run_id)
+    await _set_auto_title_if_empty(request, task_id, effective_message, model, settings)
+    runner.start_background(task_id, effective_message, model=model, run_id=run_id)
     return storage.get_task(task_id)
 
 
