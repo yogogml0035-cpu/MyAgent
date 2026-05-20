@@ -30,7 +30,10 @@ backend/storage/tasks/*
 
 .omx/
 .DS_Store
-
+.agents/
+.cursor/
+.claude/
+scripts/ralph
 audits/
 .playwright-mcp/
 frontend/.next-dev-e2e/
