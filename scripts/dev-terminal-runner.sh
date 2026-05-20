@@ -51,7 +51,6 @@ case "$SERVICE" in
     printf '[dev] starting frontend on http://localhost:%s (bind %s)\n\n' "$FRONTEND_PORT" "$FRONTEND_HOST"
 
     enable_polling_watchers
-    export NEXT_DIST_DIR="${NEXT_DIST_DIR:-.next-dev}"
     printf '[dev] frontend hot reload polling: WATCHPACK_POLLING=%s CHOKIDAR_USEPOLLING=%s CHOKIDAR_INTERVAL=%s\n\n' \
       "${WATCHPACK_POLLING:-false}" "${CHOKIDAR_USEPOLLING:-false}" "${CHOKIDAR_INTERVAL:-default}"
     if [[ "$FRONTEND_PORT" == "3001" && -z "$FRONTEND_HOST" ]]; then

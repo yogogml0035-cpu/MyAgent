@@ -16,7 +16,7 @@ htmlcov/
 
 node_modules/
 .next/
-.next-dev/
+.next-dev*/
 out/
 dist/
 coverage/
@@ -39,4 +39,4 @@ frontend/e2e-playwright/e2e-*/
 frontend/e2e-playwright/test-results/
 frontend/e2e-playwright/playwright-report/
 
-
+screenshots/

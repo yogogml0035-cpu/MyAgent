@@ -62,7 +62,7 @@ test("history sidebar exposes compact rename and delete actions", () => {
   assert.equal(cssSource.includes("#fff1f2"), false);
 });
 
-test("frontend dev server uses an isolated Next dist directory", () => {
+test("frontend dev server uses the default Next dist directory", () => {
   const nextConfigSource = readFileSync(
     new URL("../../next.config.mjs", import.meta.url),
     "utf-8",
@@ -88,21 +88,22 @@ test("frontend dev server uses an isolated Next dist directory", () => {
     "utf-8",
   );
 
-  assert.match(nextConfigSource, /distDir: process\.env\.NEXT_DIST_DIR \|\| "\.next"/);
+  assert.doesNotMatch(nextConfigSource, /NEXT_DIST_DIR/);
   assert.match(
     nextConfigSource,
     /watchOptions:\s*\{[\s\S]*?pollIntervalMs: Number\(process\.env\.NEXT_WATCH_POLL_INTERVAL_MS \|\| "300"\),/,
   );
   assert.match(
     packageSource,
-    /"dev": "NEXT_DIST_DIR=\.next-dev WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true CHOKIDAR_INTERVAL=300 next dev -p 3001"/,
+    /"dev": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true CHOKIDAR_INTERVAL=300 next dev -p 3001"/,
   );
   assert.match(packageSource, /"typecheck": "next typegen && tsc --noEmit"/);
-  assert.match(devRunnerSource, /export NEXT_DIST_DIR="\$\{NEXT_DIST_DIR:-\.next-dev\}"/);
+  assert.doesNotMatch(devRunnerSource, /NEXT_DIST_DIR/);
   assert.match(devRunnerSource, /WATCHFILES_FORCE_POLLING="\$\{WATCHFILES_FORCE_POLLING:-true\}"/);
   assert.match(devRunnerSource, /WATCHPACK_POLLING="\$\{WATCHPACK_POLLING:-true\}"/);
-  assert.match(eslintConfigSource, /"\.next-dev\/\*\*"/);
-  assert.match(tsconfigSource, /"\.next-dev\/types\/\*\*\/\*\.ts"/);
+  assert.match(eslintConfigSource, /"\.next\/\*\*"/);
+  assert.match(tsconfigSource, /"\.next\/types\/\*\*\/\*\.ts"/);
+  assert.doesNotMatch(tsconfigSource, /\.next-dev/);
   assert.match(gitignoreSource, /^next-env\.d\.ts$/m);
 });
 

@@ -13,7 +13,7 @@ cd /mnt/d/AgentProject/MyAgent/frontend
 Do not install dependencies or build Next output from Windows `D:\AgentProject\MyAgent\frontend`
 and then run the dev server from WSL `/mnt/d/AgentProject/MyAgent/frontend`. Mixing the two
 path styles can make Next.js generate a React Client Manifest with Windows paths while the
-server resolves WSL paths. The dev server writes `.next-dev`; production builds write `.next`.
+server resolves WSL paths. The dev server and production builds both write `.next`.
 Keep both directories environment-local and do not reuse them across Windows and WSL.
 
 Type checking runs `next typegen && tsc --noEmit`. The generated `next-env.d.ts` file is
@@ -22,7 +22,7 @@ ignored and should not be committed.
 If that has happened, clean and reinstall from WSL:
 
 ```bash
-rm -rf .next .next-dev node_modules
+rm -rf .next node_modules
 npm ci
 npm run dev
 ```

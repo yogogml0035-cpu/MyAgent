@@ -1,7 +1,6 @@
 node_modules/
 .next/
-.next-dev/
-.next-dev-e2e/
+.next-dev*/
 out/
 dist/
 coverage/

@@ -44,7 +44,7 @@ asset/                   面向后续智能体协作的长期知识包目录
 cd /mnt/d/AgentProject/MyAgent
 ```
 
-前端依赖、Next 缓存和开发服务应在同一个环境内生成和运行。开发服务使用 `.next-dev`，生产构建使用 `.next`，两者不要互相复用。不要在 Windows 的 `D:\AgentProject\MyAgent\frontend` 下安装依赖后，再从 WSL 的 `/mnt/d/AgentProject/MyAgent/frontend` 启动 `npm run dev`；反向混用也一样会让 Next.js 的 React Client Manifest 同时出现 Windows 路径和 WSL 路径。
+前端依赖、Next 缓存和开发服务应在同一个环境内生成和运行。开发服务和生产构建都使用 `.next`，不要在 Windows 的 `D:\AgentProject\MyAgent\frontend` 下安装依赖后，再从 WSL 的 `/mnt/d/AgentProject/MyAgent/frontend` 启动 `npm run dev`；反向混用也一样会让 Next.js 的 React Client Manifest 同时出现 Windows 路径和 WSL 路径。
 
 前端类型检查通过 `next typegen && tsc --noEmit` 生成 Next 路由类型；`frontend/next-env.d.ts` 属于生成文件，不再纳入版本控制。
 
@@ -52,7 +52,7 @@ cd /mnt/d/AgentProject/MyAgent
 
 ```bash
 cd /mnt/d/AgentProject/MyAgent/frontend
-rm -rf .next .next-dev node_modules
+rm -rf .next node_modules
 npm ci
 ```
 
@@ -168,9 +168,9 @@ cd D:\AgentProject\MyAgent
 脚本会先停止 WSL 内监听后端端口 `8001` 和前端端口 `3001` 的进程，然后通过 Windows Terminal 分别打开两个 WSL 窗口。Postgres、Qdrant 和 DashScope 配置由用户自管，脚本不会自动启动容器：
 
 - 后端：`WATCHFILES_FORCE_POLLING=true uv run uvicorn app.main:app --reload --reload-delay 0.25 --host 127.0.0.1 --port 8001`
-- 前端：`NEXT_DIST_DIR=.next-dev WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true CHOKIDAR_INTERVAL=300 next dev -p 3001 -H 127.0.0.1`
+- 前端：`WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true CHOKIDAR_INTERVAL=300 next dev -p 3001 -H 127.0.0.1`
 
-启动后可以在各自终端中用 `Ctrl+C` 停止单个服务，也可以回到 WSL 仓库路径运行 `./scripts/stop-dev-ports.sh` 统一释放端口。启动脚本依赖 Windows 侧可调用的 `wt.exe` 和 `wsl.exe`。前端开发服务写入 `.next-dev`，因此运行 `npm run build` 验证生产构建时写入 `.next`，不会再覆盖正在热更新的开发缓存。
+启动后可以在各自终端中用 `Ctrl+C` 停止单个服务，也可以回到 WSL 仓库路径运行 `./scripts/stop-dev-ports.sh` 统一释放端口。启动脚本依赖 Windows 侧可调用的 `wt.exe` 和 `wsl.exe`。前端开发服务和 `npm run build` 都写入 `.next`；运行生产构建前应先停止开发服务，避免两个 Next 进程同时写入同一缓存目录。
 
 当前仓库放在 `/mnt/d` 这类 Windows 挂载盘时，WSL 里的 Linux 进程经常收不到稳定的文件系统变更事件，表现为“刷新页面不生效，必须重启服务”。开发脚本默认开启轮询 watcher 来保证前端热更新和后端 `uvicorn --reload` 能感知修改。若仓库迁移到 WSL 原生路径（例如 `~/projects/MyAgent`）并确认热更新正常，可临时用 `MYAGENT_DEV_FORCE_POLLING=0` 关闭脚本里的轮询以降低 CPU 占用。
 
