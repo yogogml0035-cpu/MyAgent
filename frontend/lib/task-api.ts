@@ -2,6 +2,7 @@ import {
   type Artifact,
   type ExecutionLog,
   type ModelOption,
+  type SkillOption,
   type TaskState,
   type TaskSummary,
   buildArtifactRequest,
@@ -11,6 +12,7 @@ import {
   isRecord,
   normalizeEventRecords,
   normalizeModelOption,
+  normalizeSkillOptions,
   normalizeTaskState,
   normalizeTaskSummaries,
   readString,
@@ -67,6 +69,10 @@ export async function fetchModelOptions(fallbackOptions: ModelOption[]) {
     .filter((option): option is ModelOption => option !== null);
 
   return options.length > 0 ? options : fallbackOptions;
+}
+
+export async function fetchSkillOptions(): Promise<SkillOption[]> {
+  return normalizeSkillOptions(await requestTaskJson<unknown>("/api/skills"));
 }
 
 export async function fetchTaskSummaries(): Promise<TaskSummary[]> {
@@ -146,10 +152,15 @@ export async function uploadTaskFiles(id: string, files: File[]) {
   });
 }
 
-export async function postTaskMessage(id: string, content: string, model: string) {
+export async function postTaskMessage(
+  id: string,
+  content: string,
+  model: string,
+  skills: readonly string[] = [],
+) {
   await requestTaskJson<unknown>(`/api/tasks/${encodeURIComponent(id)}/messages`, {
     method: "POST",
-    body: JSON.stringify(buildMessageRequestPayload(content, model)),
+    body: JSON.stringify(buildMessageRequestPayload(content, model, { skills })),
   });
 }
 

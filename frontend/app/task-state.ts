@@ -1,3 +1,12 @@
+export type { ActiveSkillSlashToken, SkillOption } from "./skill-selection";
+export {
+  filterSkillOptions,
+  findActiveSkillSlashToken,
+  normalizeSkillOption,
+  normalizeSkillOptions,
+  replaceActiveSkillSlashToken,
+} from "./skill-selection";
+
 export type TaskStatus =
   | "idle"
   | "running"
@@ -212,6 +221,7 @@ export type MessageRequestPayload = {
   message: string;
   model: string;
   mode: MessageMode;
+  skills?: string[];
 };
 
 export type TaskRunRecord = {
@@ -305,14 +315,21 @@ export function resolveApiBaseUrl(configuredApiBaseUrl?: string, location?: Brow
 export function buildMessageRequestPayload(
   message: string,
   model: string,
-  options: { mode?: MessageMode } = {},
+  options: { mode?: MessageMode; skills?: readonly string[] } = {},
 ): MessageRequestPayload {
-  return {
+  const payload: MessageRequestPayload = {
     content: message,
     message,
     model,
     mode: options.mode ?? DEFAULT_MESSAGE_MODE,
   };
+
+  const skills = (options.skills ?? []).map((skill) => skill.trim()).filter(Boolean);
+  if (skills.length > 0) {
+    payload.skills = skills;
+  }
+
+  return payload;
 }
 
 export function isModelRunnable(option?: ModelOption | null) {

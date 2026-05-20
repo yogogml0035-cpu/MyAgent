@@ -4,6 +4,7 @@
 - API tests can avoid external Postgres startup by creating `Settings(...)` with `InMemoryTaskStorage(settings.task_root)`.
 - LangChain DeepSeek model tests should treat captured API keys as `SecretStr` and compare with `get_secret_value()`.
 - Selected skill references are formatted at the backend task message boundary, then the same effective message must be passed to storage, auto-title generation, and `runner.start_background()`.
+- Frontend skill option normalization and slash-token helpers live in `frontend/app/skill-selection.ts`; `frontend/app/task-state.ts` re-exports them so API adapters keep using app-level payload helpers.
 
 ## 2026-05-20 19:18 - US-001
 - 实现了项目限定 skill 投影 helper，固定读取仓库 `backend/skills` 并只返回 `name` 和 `description`。
@@ -39,4 +40,23 @@
   - 后端消息可见内容和 runner 输入必须保持同源，避免存储、标题和后台运行看到不同文本。
   - `MessageRequest.skills` 默认空数组，前端后续可以渐进接入而不破坏旧消息提交。
   - 文件-only 发送由前端先转成默认文件 prompt，后端只负责对收到的最终 message 添加 skill 引用。
+---
+## 2026-05-20 19:57 - US-003
+- 新增前端 skill 数据 helper，覆盖浏览器安全字段归一化、大小写不敏感筛选、`/query` 查询、光标附近 slash token 识别和替换。
+- 扩展 `task-api`，通过现有 `requestTaskJson` 请求 `/api/skills`，并让 `postTaskMessage` 在保留既有 `message/model/mode/content` 字段的同时发送可选 `skills` 数组。
+- 补充前端 state 与 adapter 单测，验证 skill 归一化不会泄露 path/body、`/web` 和 `/code` 可筛选、普通正文 slash 不被替换、消息 payload 能携带选中 skill。
+- 验证通过：`cd frontend && npm test`、`cd frontend && npm run typecheck`、`cd frontend && npm run lint`、`git diff --check`。
+- 更改的文件
+  - `frontend/app/skill-selection.ts`
+  - `frontend/app/task-state.ts`
+  - `frontend/lib/task-api.ts`
+  - `frontend/tests/state/test_skill_selection.test.ts`
+  - `frontend/tests/state/test_task_state.test.ts`
+  - `frontend/tests/workspace/test_task_api.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - `postTaskMessage` 现在第四个参数接收 selected skill 名称数组；未传或空数组时保持旧消息 payload 形状。
+  - Slash token 只在起始位置或空白后的 `/query` 上激活，避免误处理 URL、文件路径和已经离开光标位置的普通正文。
+  - 本轮只建立 helper 和 API adapter，没有引入 composer 可见 UI；后续 UI story 应复用 `findActiveSkillSlashToken()` 和 `replaceActiveSkillSlashToken()`。
 ---
