@@ -13,6 +13,14 @@ MyAgent 是一个本地优先的 DeepAgents 任务工作台：
 - `frontend/.planning/codebase/`：前端代码事实层，由 `$gsd-map-codebase` 生成。
 - `.planning/codebase/`：仓库级历史事实层。需要全仓旧事实时可参考；后续规划应优先读取子项目级事实文档。
 
+## 技术栈速览
+
+| 子系统 | 主要技术 | 验证入口 |
+| --- | --- | --- |
+| 后端 | Python 3.11、FastAPI、Pydantic、DeepAgents、LangGraph、Postgres、Qdrant、DashScope-compatible embeddings、SearXNG | `cd backend && uv run pytest && uv run ruff check . && uv run mypy app tests` |
+| 前端 | Next.js 15 app router、React 19、TypeScript 5、browser REST/SSE/blob adapters | `cd frontend && npm run typecheck && npm test && npm run lint && npm run build` |
+| 浏览器验收 | Playwright，基于实际前后端服务和截图证据 | `cd frontend && npm run e2e:runtime-contracts` 或按场景运行 spec |
+
 ## 文档分层
 
 - `AGENTS.md`：全局索引、阅读顺序、维护规则和最低执行边界。
@@ -24,6 +32,12 @@ MyAgent 是一个本地优先的 DeepAgents 任务工作台：
 - `DESIGN.md`：前端视觉和交互调整的必读设计依据。
 
 不要把 `.planning/codebase/` 的实现细节复制进 `AGENTS.md`；需要事实时直接读取对应事实文档。
+
+## 本地代理工具
+
+- `.agents/` 和 `scripts/ralph/` 是 `$auto-coding-init` 复制的本地 Auto-Coding 工具目录，必须保持在 `.gitignore` 中。
+- `.agents/skills/create-rules/SKILL.md` 是刷新本文件的本地规则入口；使用时应融合现有仍正确的仓库规则，删除过时命令、路径和假设。
+- 不要把 `.agents/` 中的模板内容当作产品实现事实；产品事实仍以 `ARCHITECTURE.md`、`INTERFACES.md`、子项目 `.planning/codebase/` 和 `asset/` 为准。
 
 ## 推荐阅读顺序
 
@@ -129,6 +143,7 @@ git diff --check
 ## 维护规则
 
 - 根 `AGENTS.md` 保持导航型，不承载接口明细、低层实现和频繁变化目录说明。
+- `.agents/` 和 `scripts/ralph/` 保持 ignored；除非任务明确要求初始化或维护本地 agent tooling，否则不要手改其中内容。
 - 系统边界变化时先更新 `ARCHITECTURE.md` 和 `INTERFACES.md`，再同步本文件入口。
 - 子系统事实变化时优先刷新对应的 `backend/.planning/codebase/` 或 `frontend/.planning/codebase/`，不要手工复制事实摘要到根文档。
 - 新增稳定业务规则或运行边界时同步 `asset/` 知识包；临时排障时间线和一次性脚本路径不进入长期文档。
