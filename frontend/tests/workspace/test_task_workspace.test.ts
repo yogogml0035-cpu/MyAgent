@@ -91,4 +91,69 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(workspaceSource.includes("options.filter((option) => ALLOWED_MODEL_IDS.has(option.id))"), true);
     assert.strictEqual(source.includes("!selectedModelRunnable"), true);
   });
+
+  void it("should load skill options without blocking existing workspace initialization", () => {
+    const source = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(source.includes("fetchModelOptions(DEFAULT_MODEL_OPTIONS)"), true);
+    assert.strictEqual(source.includes("refreshTaskSummaries().catch"), true);
+    assert.strictEqual(source.includes("fetchSkillOptions()"), true);
+    assert.strictEqual(source.includes("setSkillOptions(options)"), true);
+    assert.strictEqual(source.includes("Skill 列表加载失败："), true);
+    assert.ok(source.indexOf("fetchSkillOptions()") > source.indexOf("refreshTaskSummaries().catch"));
+  });
+
+  void it("should pass selected skill names with messages and clear them only after success", () => {
+    const source = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const submitStart = source.indexOf("const handleSubmit = useCallback");
+    const submitEnd = source.indexOf("const handleSelectSkill = useCallback");
+    const submitSource = source.slice(submitStart, submitEnd);
+    const trySource = submitSource.slice(
+      submitSource.indexOf("try {"),
+      submitSource.indexOf("} catch (caught)"),
+    );
+    const catchSource = submitSource.slice(submitSource.indexOf("} catch (caught)"));
+
+    assert.strictEqual(source.includes("const [selectedSkills, setSelectedSkills]"), true);
+    assert.strictEqual(source.includes("const selectedSkillNames = useMemo"), true);
+    assert.strictEqual(
+      submitSource.includes("postTaskMessage(id, taskContent, model, selectedSkillNames)"),
+      true,
+    );
+    assert.ok(trySource.indexOf("postTaskMessage") < trySource.indexOf("setSelectedSkills([])"));
+    assert.strictEqual(catchSource.includes("setSelectedSkills([])"), false);
+  });
+
+  void it("should expose skill state and handlers across the workspace source boundary", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const workspaceSource = readFileSync(
+      new URL("../../components/chat/TaskWorkspace.tsx", import.meta.url),
+      "utf-8",
+    );
+    const composerSource = readFileSync(
+      new URL("../../components/chat/ChatComposer.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(hookSource.includes("handleSelectSkill"), true);
+    assert.strictEqual(hookSource.includes("handleRemoveSkill"), true);
+    assert.strictEqual(hookSource.includes("activeTask || isBusy"), true);
+    assert.strictEqual(workspaceSource.includes("skillOptions={workspace.skillOptions}"), true);
+    assert.strictEqual(workspaceSource.includes("selectedSkills={workspace.selectedSkills}"), true);
+    assert.strictEqual(workspaceSource.includes("onSelectSkill={workspace.handleSelectSkill}"), true);
+    assert.strictEqual(workspaceSource.includes("onRemoveSkill={workspace.handleRemoveSkill}"), true);
+    assert.strictEqual(composerSource.includes("skillOptions: SkillOption[]"), true);
+    assert.strictEqual(composerSource.includes("selectedSkills: SkillOption[]"), true);
+    assert.strictEqual(composerSource.includes("onSelectSkill: (skill: SkillOption) => void"), true);
+    assert.strictEqual(composerSource.includes("onRemoveSkill: (skillName: string) => void"), true);
+  });
 });

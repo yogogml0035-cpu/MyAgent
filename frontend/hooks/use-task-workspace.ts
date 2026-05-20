@@ -6,6 +6,7 @@ import {
   type ChatMessage,
   type ExecutionLog,
   type ModelOption,
+  type SkillOption,
   type TaskState,
   type TaskStatus,
   type TaskSummary,
@@ -37,6 +38,7 @@ import {
   deleteTask,
   fetchArtifactBlob,
   fetchModelOptions,
+  fetchSkillOptions,
   fetchTask,
   fetchTaskEvents,
   fetchTaskSummaries,
@@ -175,6 +177,8 @@ export function useTaskWorkspace() {
   const [input, setInput] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
   const [model, setModel] = useState(DEFAULT_MODEL_ID);
+  const [skillOptions, setSkillOptions] = useState<SkillOption[]>([]);
+  const [selectedSkills, setSelectedSkills] = useState<SkillOption[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isBusy, setIsBusy] = useState(false);
   const [error, setError] = useState<string>("");
@@ -216,6 +220,10 @@ export function useTaskWorkspace() {
   const selectedModelOption = useMemo(
     () => modelOptions.find((option) => option.id === model) ?? null,
     [model, modelOptions],
+  );
+  const selectedSkillNames = useMemo(
+    () => selectedSkills.map((skill) => skill.name),
+    [selectedSkills],
   );
   const selectedModelRunnable = isModelRunnable(selectedModelOption);
   const runActivityGroups = useMemo(
@@ -271,6 +279,20 @@ export function useTaskWorkspace() {
         setError(formatTaskApiFailure(caught));
       }
     });
+
+    void fetchSkillOptions()
+      .then((options) => {
+        if (!cancelled) {
+          setSkillOptions(options);
+        }
+      })
+      .catch((caught) => {
+        if (!cancelled) {
+          setSkillOptions([]);
+          setErrorLevel("warning");
+          setError(`Skill 列表加载失败：${formatTaskApiFailure(caught)}`);
+        }
+      });
 
     return () => {
       cancelled = true;
@@ -430,9 +452,10 @@ export function useTaskWorkspace() {
       const id = await ensureTask();
       requestTaskId = id;
       await uploadTaskFiles(id, files);
-      await postTaskMessage(id, taskContent, model);
+      await postTaskMessage(id, taskContent, model, selectedSkillNames);
 
       setInput("");
+      setSelectedSkills([]);
       setSelectedFiles([]);
       await refreshTask(id);
       await refreshTaskSummaries();
@@ -459,9 +482,27 @@ export function useTaskWorkspace() {
     refreshTask,
     refreshTaskSummaries,
     selectedFiles,
+    selectedSkillNames,
     selectedModelRunnable,
     taskId,
   ]);
+
+  const handleSelectSkill = useCallback(
+    (skill: SkillOption) => {
+      if (activeTask || isBusy) {
+        return;
+      }
+
+      setSelectedSkills((current) =>
+        current.some((selected) => selected.name === skill.name) ? current : [...current, skill],
+      );
+    },
+    [activeTask, isBusy],
+  );
+
+  const handleRemoveSkill = useCallback((skillName: string) => {
+    setSelectedSkills((current) => current.filter((skill) => skill.name !== skillName));
+  }, []);
 
   const handleStop = useCallback(async () => {
     if (!taskId || isBusy) {
@@ -509,6 +550,7 @@ export function useTaskWorkspace() {
     setBackendError("");
     setNeedsInput(null);
     setInput("");
+    setSelectedSkills([]);
     setSelectedFiles([]);
     setError("");
   }, []);
@@ -521,6 +563,7 @@ export function useTaskWorkspace() {
 
       setError("");
       setInput("");
+      setSelectedSkills([]);
       setSelectedFiles([]);
       setIsBusy(true);
 
@@ -711,9 +754,13 @@ export function useTaskWorkspace() {
     noticeMessages,
     selectedModelRunnable,
     selectedFiles,
+    selectedSkills,
+    skillOptions,
     selectedModelDisplay,
     setInput,
     setModel,
+    handleSelectSkill,
+    handleRemoveSkill,
     status,
     uploadCount,
   };

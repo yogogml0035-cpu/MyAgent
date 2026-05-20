@@ -5,6 +5,8 @@
 - LangChain DeepSeek model tests should treat captured API keys as `SecretStr` and compare with `get_secret_value()`.
 - Selected skill references are formatted at the backend task message boundary, then the same effective message must be passed to storage, auto-title generation, and `runner.start_background()`.
 - Frontend skill option normalization and slash-token helpers live in `frontend/app/skill-selection.ts`; `frontend/app/task-state.ts` re-exports them so API adapters keep using app-level payload helpers.
+- Workspace-owned composer state lives in `frontend/hooks/use-task-workspace.ts`; ChatComposer receives explicit props and sends selected skill names through `postTaskMessage`.
+- Skill options load as a non-blocking workspace side effect through `fetchSkillOptions()`, with failures surfaced as warning notices so normal text messages remain usable.
 
 ## 2026-05-20 19:18 - US-001
 - 实现了项目限定 skill 投影 helper，固定读取仓库 `backend/skills` 并只返回 `name` 和 `description`。
@@ -59,4 +61,20 @@
   - `postTaskMessage` 现在第四个参数接收 selected skill 名称数组；未传或空数组时保持旧消息 payload 形状。
   - Slash token 只在起始位置或空白后的 `/query` 上激活，避免误处理 URL、文件路径和已经离开光标位置的普通正文。
   - 本轮只建立 helper 和 API adapter，没有引入 composer 可见 UI；后续 UI story 应复用 `findActiveSkillSlashToken()` 和 `replaceActiveSkillSlashToken()`。
+---
+## 2026-05-20 20:13 - US-004
+- 在 `useTaskWorkspace` 中加载项目 skill options，失败时显示 warning notice 且不阻塞模型列表、历史加载或普通消息输入。
+- 新增 workspace 级 selected skill 状态和选择/删除 handler，TaskWorkspace 通过显式 props 把 skill options、selected skills 和 handlers 传给 ChatComposer。
+- 发送消息时把已选 skill 名称按选择顺序交给 `postTaskMessage`；发送成功后清空正文、文件和 skill，发送失败时保留正文和 skill 方便重试。
+- 更改的文件
+  - `frontend/hooks/use-task-workspace.ts`
+  - `frontend/components/chat/TaskWorkspace.tsx`
+  - `frontend/components/chat/ChatComposer.tsx`
+  - `frontend/tests/workspace/test_task_workspace.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - selected skill state belongs to the workspace hook, not the composer; UI stories should call `onSelectSkill`/`onRemoveSkill` instead of posting API requests directly from ChatComposer.
+  - Keep `setSelectedSkills([])` inside the successful send path only; the catch path should preserve selected skills for retry.
+  - The current story wires state and payload only; slash picker/chip rendering remains for the next ChatComposer UI story.
 ---

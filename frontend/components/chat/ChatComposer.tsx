@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import type { ModelDisplayOption } from "../../app/model-ui";
+import type { SkillOption } from "../../app/task-state";
 import { FILE_INPUT_ACCEPT, SUPPORTED_UPLOAD_LABEL } from "../../app/file-upload";
 import { shouldSubmitComposerKey } from "../../app/workspace-view";
 
@@ -24,11 +25,15 @@ type ChatComposerProps = {
   selectedFiles: File[];
   selectedModelDisplay: ModelDisplayOption;
   selectedModelRunnable: boolean;
+  selectedSkills: SkillOption[];
+  skillOptions: SkillOption[];
   uploadCount: number;
   onFileSelection: (files: File[]) => void;
   onRemoveFile: (index: number) => void;
+  onRemoveSkill: (skillName: string) => void;
   onInputChange: (value: string) => void;
   onModelChange: (model: string) => void;
+  onSelectSkill: (skill: SkillOption) => void;
   onStop: () => Promise<void>;
   onSubmit: () => Promise<void>;
 };
