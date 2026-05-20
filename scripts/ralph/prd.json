@@ -1,0 +1,165 @@
+{
+  "project": "MyAgent 前端 Skill 选择器",
+  "branchName": "ralph/frontend-skill-selector",
+  "description": "在 MyAgent 聊天输入区增加当前项目范围内的斜杠 skill 选择器，让用户可以发现 backend/skills、插入 Codex 风格 skill chip，并在不暴露本地路径的前提下把已选 skill 名称发送给后端。",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "通过安全后端接口暴露项目 Skill 列表",
+      "description": "作为 MyAgent 本地用户，我希望浏览器只读取当前项目 backend/skills 下的 skill，以免私有全局 skill 和本地路径被暴露。",
+      "acceptanceCriteria": [
+        "创建后端项目 skill helper，使用代码定位 backend/skills，不依赖进程当前工作目录或 MYAGENT_SKILLS_DIRS",
+        "GET /api/skills 返回 HTTP 200，响应为对象数组，且每个对象只包含 name 和 description",
+        "当 backend/skills/code_review/SKILL.md 和 backend/skills/web_research/SKILL.md 存在时，默认响应包含 code-review 和 web-research",
+        "响应不包含 skill 文件路径、目录路径、环境变量、Markdown 正文，或除 name/description 以外的 frontmatter 字段",
+        "接口不返回 .agents/skills、Codex 全局 skills、用户主目录或 settings.skills_dirs 中的 skill",
+        "当项目 skill 目录下没有有效 skill 时，投影 helper 返回空列表，而不是触发类似 500 的错误",
+        "项目 skill 投影和 GET /api/skills 的后端测试通过",
+        "后端 ruff 和 mypy 检查通过",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": "Implemented GET /api/skills with project-scoped backend/skills projection; backend pytest, ruff, mypy, and git diff --check pass.",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-002",
+      "title": "把已选 Skill 引用附加到提交消息",
+      "description": "作为 MyAgent 本地用户，我希望已选 skill chip 以结构化 skill 名称提交，让后端存储和 runner 都能收到明确且用户可见的 skill 引用。",
+      "acceptanceCriteria": [
+        "MessageRequest 接受 skills 数组并限制数量，同时继续兼容省略 skills 的现有请求",
+        "POST /api/tasks/{task_id}/messages 在创建 run 之前拒绝未知 skill 名称，并返回 HTTP 400",
+        "当请求包含 skills [\"web-research\"] 且正文为 \"hello\" 时，存储和 runner 收到的消息正文前包含可见的 [$web-research] 引用",
+        "当选择多个 skill 时，可见 skill 引用前缀保持用户选择顺序",
+        "当选择了 skill 且正文为空但带有上传文件时，仍沿用现有默认文件 prompt 行为",
+        "storage.start_run、自动标题生成和 runner.start_background 都收到同一个 effective message 字符串",
+        "不带 skills 的现有消息提交流程保持不变",
+        "有效 skill、未知 skill 和无 skill 消息的后端任务 API 测试通过",
+        "后端 ruff 和 mypy 检查通过",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-003",
+      "title": "新增前端 Skill 数据 Helper 和 API Adapter",
+      "description": "作为前端维护者，我希望 skill option 解析、筛选、slash token 处理和 API 调用被隔离在纯 helper 与 adapter 中，避免 ChatComposer 猜测后端 payload 形状。",
+      "acceptanceCriteria": [
+        "前端定义 SkillOption 形状，并在归一化后端 skill 对象时只保留字符串类型的 name 和 description",
+        "前端筛选对 skill 名称和描述做大小写不敏感匹配，支持 /web 和 /code 等 slash 查询",
+        "Slash token helper 能识别光标附近活跃的 /query token，不替换普通消息正文",
+        "选择 skill 后替换当前活跃 slash token，而不是追加重复触发文本",
+        "task-api 通过现有 API adapter 路径请求 /api/skills，并使用与其他 API 调用一致的 token/header 约定",
+        "postTaskMessage 可以把已选 skill 名称作为 skills 数组发送，同时保留现有 model 和 message payload 行为",
+        "前端 helper 和 task-state 单测覆盖归一化、筛选、token 替换和消息 payload 构造",
+        "前端 npm test 通过",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-004",
+      "title": "在 Workspace 状态中加载并保留已选 Skill",
+      "description": "作为 MyAgent 本地用户，我希望工作区加载可用 skill，并在可重试失败后保留已选 chip，让 skill 选择像 composer 状态的一部分一样工作。",
+      "acceptanceCriteria": [
+        "useTaskWorkspace 在工作区初始化期间加载 skill options，且不阻塞现有模型列表或任务历史加载",
+        "skill 列表请求失败时展示可观察且不会崩溃的错误状态，同时 composer 仍可用于普通文本消息",
+        "TaskWorkspace 通过显式 props 把 skill options、selected skills 和 skill 选择 handler 传入 ChatComposer",
+        "发送消息时，请求 payload 包含已选 skill 名称",
+        "发送成功后，消息正文和已选 skill chip 一起清空",
+        "发送失败后，消息正文和已选 skill chip 保留，方便用户重试",
+        "当前任务运行中时，skill 选择不能绕过现有 composer 禁用体验",
+        "现有上传、模型选择、停止任务和会话历史流程仍由测试覆盖",
+        "前端 workspace 测试覆盖成功清空、发送失败保留和 source boundary 预期",
+        "前端 npm test 通过",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-005",
+      "title": "在 ChatComposer 中实现 Slash 选择器和 Codex 风格 Skill Chip",
+      "description": "作为 MyAgent 本地用户，我希望在 composer 中输入 / 后，可以用鼠标或键盘选择 skill，并在继续输入需求前看到一个可删除的 chip。",
+      "acceptanceCriteria": [
+        "打开 http://127.0.0.1:3001/ 并在聊天 textarea 中输入 / 后，composer 附近显示 skill 选择器",
+        "选择器展示每个可用 skill 的名称和描述，长描述受到布局约束，不会撑破 composer",
+        "输入 /web 时显示 web-research 并隐藏不匹配 skill；输入 /code 时显示 code-review 并隐藏不匹配 skill",
+        "无匹配查询显示轻量空状态，同时保留 textarea 内容",
+        "ArrowDown 和 ArrowUp 移动当前活跃选项，Enter 选择当前活跃选项，Escape 关闭选择器，外部 pointer 交互关闭选择器且不丢失文本",
+        "点击 web-research 会创建明确可删除的 skill chip，且不会发送消息、创建任务或上传文件",
+        "chip 创建后焦点回到 textarea，用户可以继续输入自然语言需求",
+        "删除 chip 后，该 skill 名称从待发送消息 payload 中移除",
+        "选择器关闭时，现有 Enter 发送行为保持兼容",
+        "使用 agent-browser 打开 /，输入 /，选择 web-research，删除 chip，并确认选择过程中没有发送用户消息",
+        "skill 选择器交互期间浏览器控制台无错误",
+        "前端 npm test 和 lint 通过",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-006",
+      "title": "应用响应式样式并更新稳定接口文档",
+      "description": "作为 MyAgent 维护者，我希望 skill 选择器和 chip 样式遵循现有暖色工作台设计，并把新的 API 边界记录到稳定文档中。",
+      "acceptanceCriteria": [
+        "Skill chip 和选择器样式使用 DESIGN.md 中现有暖色画布、珊瑚主色、间距、字体和克制圆角约定",
+        "桌面端 composer 布局中 chip shelf、textarea、上传控件、模型选择器、发送按钮和停止按钮互不重叠",
+        "移动端 composer 布局中 chip shelf 和选择器没有文本裁切、横向溢出或控件遮挡",
+        "Skill 选择器和 chip 样式不以耦合无关组件的方式复用 model picker selector",
+        "Workspace 视觉回归测试覆盖 skill chip 和选择器的 composer CSS 预期",
+        "INTERFACES.md 记录 GET /api/skills 和消息 skills payload 字段",
+        "asset/deepagents_platform_knowledge_pack.md 记录项目限定 skill 投影和浏览器安全边界",
+        "frontend/e2e-playwright/README.md 记录 skill selector E2E 入口和截图证据目录",
+        "git diff --check passes",
+        "前端 lint 通过",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-007",
+      "title": "在真实浏览器中验证完整 Skill 选择与发送闭环",
+      "description": "作为 MyAgent 本地用户，我希望从打开页面、选择 skill 到发送消息的完整路径在真实前后端服务上跑通。",
+      "acceptanceCriteria": [
+        "浏览器 E2E 基于真实本地前端和后端服务运行，不使用静态 mock 页面",
+        "使用 agent-browser 打开 http://127.0.0.1:3001/，输入 / 后确认 skill 选择器显示 code-review 和 web-research",
+        "选择 web-research，确认 skill chip 出现，输入“搜索今天的 AI 新闻”，然后点击发送",
+        "页面展示新的用户消息，消息中包含可见的 web-research skill 引用和输入的请求正文",
+        "后端以结构化消息 payload 数据收到已选 skill 名称，且持久化的用户可见消息包含 skill 引用",
+        "刷新页面或重新加载任务历史后，已发送用户消息仍可见，且保留 skill 引用",
+        "截图证据保存到 frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/，证据目录不提交 git",
+        "桌面端和移动端 skill selector 检查期间浏览器控制台无错误",
+        "前端 npm run build 通过",
+        "后端 pytest、ruff 和 mypy 检查通过",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    }
+  ]
+}
