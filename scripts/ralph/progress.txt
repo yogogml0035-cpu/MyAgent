@@ -10,6 +10,7 @@
 - ChatComposer slash UI should stay textarea-based: use `findActiveSkillSlashToken()` / `replaceActiveSkillSlashToken()` for trigger handling, render selected skills as separate chip controls, and let Enter submit only when the skill picker is closed.
 - Skill selector styling should stay on dedicated `.skillPicker*` / `.skillChip*` classes with CSS regression assertions in `frontend/tests/workspace/test_workspace_view.test.ts`; do not couple it to `.modelPicker*`.
 - Custom local Next dist directories such as `.next-dev-*` must be ignored by both git and ESLint so `npm run lint` only scans source files.
+- Full skill selector send-loop E2E should use real frontend/backend HTTP services, inspect the actual browser `POST /api/tasks/{id}/messages` payload for `skills`, then verify persisted user-visible message content through `GET /api/tasks/{id}` and history reload.
 
 ## 2026-05-20 19:18 - US-001
 - 实现了项目限定 skill 投影 helper，固定读取仓库 `backend/skills` 并只返回 `name` 和 `description`。
@@ -122,4 +123,19 @@
   - 关闭 slash picker 时需要记录 dismissed token；否则 textarea 的 selection/click 事件会重新识别同一个 `/query` 并再次打开菜单。
   - 当前默认 `3001` 前端曾短暂可访问但后续断开，`8001` API 超时；本轮用临时 `3003` 前端服务完成浏览器验收，并在结束后关闭该服务。
   - Skill selector E2E 如果只验证 composer UI，可以 route `/api/models`、`/api/tasks`、`/api/skills` 和 message API，让测试聚焦交互且不产生初始化 console error；完整后端闭环留给 US-007。
+---
+## 2026-05-20 21:59 - US-007
+- 新增真实前后端服务的 skill selector 完整闭环 E2E，覆盖 `/` 展示 `code-review`/`web-research`、选择 `web-research`、发送“搜索今天的 AI 新闻”、结构化 `skills` payload、后端持久化可见 `[$web-research]` 引用和历史重载后消息仍可见。
+- 更新 E2E README，记录 full-loop spec 的运行入口、所需 API URL/access token/evidence env，以及该 spec 不 mock `/api/skills`、`/api/tasks` 或消息提交的边界。
+- 使用 agent-browser 技能在临时真实服务上手动抽查 slash picker、chip、发送和控制台错误；截图证据由 Playwright 保存到 `frontend/e2e-playwright/e2e-20260520215700/skill-selector-full-loop/`。
+- 验证通过：`cd frontend && npm test`、`cd frontend && npm run typecheck`、`cd frontend && npm run lint`、`cd frontend && npm run build`、`cd backend && uv run pytest`、`cd backend && uv run ruff check .`、`cd backend && uv run mypy app tests`、`MYAGENT_E2E_BASE_URL=http://127.0.0.1:3004 MYAGENT_E2E_API_URL=http://127.0.0.1:8004 MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260520215700/skill-selector-full-loop npx playwright test e2e-playwright/test_skill_selector_full_loop.spec.mjs --reporter=line`、`git diff --check`。
+- 更改的文件
+  - `frontend/e2e-playwright/test_skill_selector_full_loop.spec.mjs`
+  - `frontend/e2e-playwright/README.md`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - Full-loop skill selector 验收不能复用 UI-only route mock；需要真实请求 `/api/skills` 和 `/api/tasks/{id}/messages`，并用浏览器 request 事件证明 `skills` 数组确实发出。
+  - 验证 slash picker 时继续优先 `focus` + 真实 typing；直接 `fill("/")` 可能只设置 textarea 值而不稳定触发 React selection/slash token 路径。
+  - 临时 E2E 前端使用自定义 `NEXT_DIST_DIR` 时 Next 可能写入 `tsconfig.json` include；结束前要恢复，避免提交本地 dev dist 类型路径。
 ---

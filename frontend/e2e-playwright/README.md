@@ -132,3 +132,15 @@ npx playwright test e2e-playwright/test_skill_selector.spec.mjs --reporter=line
 ```
 
 The skill selector spec opens the real frontend page, provides a bounded project skill response for `code-review` and `web-research`, verifies slash filtering, keyboard and pointer selection, removable chip behavior, no accidental message send, and captures screenshots for the open picker, selected chip, and removed-chip states.
+
+Run the full skill selector send-loop acceptance test when changing project skill payloads, message submission, task history reload, or the visible user-message contract:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_API_URL=http://127.0.0.1:8001 \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/skill-selector-full-loop \
+MYAGENT_E2E_ACCESS_TOKEN=... \
+npx playwright test e2e-playwright/test_skill_selector_full_loop.spec.mjs --reporter=line
+```
+
+The full-loop spec does not mock `/api/skills`, `/api/tasks`, or message submission. It opens the real frontend, verifies the backend exposes `code-review` and `web-research`, selects `web-research`, sends a user message with the structured `skills` payload, checks the persisted user-visible `[$web-research]` reference, reloads task history, and captures desktop plus mobile screenshots.
