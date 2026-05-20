@@ -122,3 +122,13 @@ npx playwright test e2e-playwright/test_upload_preview_design.spec.mjs --reporte
 ```
 
 The upload-preview spec uses the real browser file picker path for supported files, verifies separate selected-file cards, filename-only display, replace control, hover-revealed per-file removal, core design-token colors, and captures desktop plus narrow-screen screenshots of the changed preview card.
+
+Run the skill selector acceptance test from `frontend/` when changing the composer skill slash picker, chip shelf, keyboard selection, deletion behavior, or responsive skill selector styling:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/skill-selector \
+npx playwright test e2e-playwright/test_skill_selector.spec.mjs --reporter=line
+```
+
+The skill selector spec opens the real frontend page, provides a bounded project skill response for `code-review` and `web-research`, verifies slash filtering, keyboard and pointer selection, removable chip behavior, no accidental message send, and captures screenshots for the open picker, selected chip, and removed-chip states.

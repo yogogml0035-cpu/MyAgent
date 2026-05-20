@@ -156,4 +156,25 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(composerSource.includes("onSelectSkill: (skill: SkillOption) => void"), true);
     assert.strictEqual(composerSource.includes("onRemoveSkill: (skillName: string) => void"), true);
   });
+
+  void it("should render the slash skill picker and removable skill chips in ChatComposer", () => {
+    const composerSource = readFileSync(
+      new URL("../../components/chat/ChatComposer.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(composerSource.includes("findActiveSkillSlashToken"), true);
+    assert.strictEqual(composerSource.includes("replaceActiveSkillSlashToken"), true);
+    assert.strictEqual(composerSource.includes("dismissedSkillSlashTokenRef"), true);
+    assert.strictEqual(composerSource.includes("filterSkillOptions(skillOptions"), true);
+    assert.strictEqual(composerSource.includes('data-testid="selected-skill-shelf"'), true);
+    assert.strictEqual(composerSource.includes("skillPickerMenu"), true);
+    assert.strictEqual(composerSource.includes("skillOption-active"), true);
+    assert.strictEqual(composerSource.includes('role="listbox"'), true);
+    assert.strictEqual(composerSource.includes("没有匹配的 skill"), true);
+    assert.strictEqual(composerSource.includes("event.key === \"ArrowDown\""), true);
+    assert.strictEqual(composerSource.includes("event.key === \"ArrowUp\""), true);
+    assert.strictEqual(composerSource.includes("event.key === \"Escape\""), true);
+    assert.strictEqual(composerSource.includes("handleSkillSelect(activeSkillOption)"), true);
+  });
 });

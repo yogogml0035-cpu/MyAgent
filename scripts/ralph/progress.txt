@@ -7,6 +7,9 @@
 - Frontend skill option normalization and slash-token helpers live in `frontend/app/skill-selection.ts`; `frontend/app/task-state.ts` re-exports them so API adapters keep using app-level payload helpers.
 - Workspace-owned composer state lives in `frontend/hooks/use-task-workspace.ts`; ChatComposer receives explicit props and sends selected skill names through `postTaskMessage`.
 - Skill options load as a non-blocking workspace side effect through `fetchSkillOptions()`, with failures surfaced as warning notices so normal text messages remain usable.
+- ChatComposer slash UI should stay textarea-based: use `findActiveSkillSlashToken()` / `replaceActiveSkillSlashToken()` for trigger handling, render selected skills as separate chip controls, and let Enter submit only when the skill picker is closed.
+- Skill selector styling should stay on dedicated `.skillPicker*` / `.skillChip*` classes with CSS regression assertions in `frontend/tests/workspace/test_workspace_view.test.ts`; do not couple it to `.modelPicker*`.
+- Custom local Next dist directories such as `.next-dev-*` must be ignored by both git and ESLint so `npm run lint` only scans source files.
 
 ## 2026-05-20 19:18 - US-001
 - 实现了项目限定 skill 投影 helper，固定读取仓库 `backend/skills` 并只返回 `name` 和 `description`。
@@ -77,4 +80,46 @@
   - selected skill state belongs to the workspace hook, not the composer; UI stories should call `onSelectSkill`/`onRemoveSkill` instead of posting API requests directly from ChatComposer.
   - Keep `setSelectedSkills([])` inside the successful send path only; the catch path should preserve selected skills for retry.
   - The current story wires state and payload only; slash picker/chip rendering remains for the next ChatComposer UI story.
+---
+## 2026-05-20 21:01 - US-005
+- 在 `ChatComposer` 中实现了 `/` skill 选择器，支持名称/描述筛选、空状态、ArrowUp/ArrowDown、Enter 选择、Escape 和外部 pointer 关闭。
+- 新增 Codex 风格 skill chip shelf，选择 skill 时替换当前 slash token，chip 可删除且焦点回到 textarea；选择和删除过程不会发送消息。
+- 补充 composer 源码边界测试、workspace CSS 回归测试和真实 Playwright skill selector spec；使用 agent-browser 在隔离 3002/8002 服务上完成输入 `/`、选择 `web-research`、删除 chip、无消息请求和无控制台错误验证。
+- 验证通过：`cd frontend && npm test && npm run typecheck && npm run lint`、`MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260520204830/skill-selector npx playwright test e2e-playwright/test_skill_selector.spec.mjs --reporter=line`。
+- 更改的文件
+  - `frontend/components/chat/ChatComposer.tsx`
+  - `frontend/app/globals.css`
+  - `frontend/tests/workspace/test_task_workspace.test.ts`
+  - `frontend/tests/workspace/test_workspace_view.test.ts`
+  - `frontend/e2e-playwright/test_skill_selector.spec.mjs`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - `agent-browser fill` 会直接设置 textarea 值，某些 React selection/change 路径不如真实逐字输入稳定；验证 slash picker 触发时优先用 `focus` + `type`。
+  - 当前用户 3001 前端可访问但 8001 API 会超时；本轮浏览器验收改用隔离 3002/8002 服务，避免终止或重启用户已有服务。
+  - Skill picker 的样式使用专属 `.skillPicker*` / `.skillChip*` class，不耦合 model picker class；后续视觉 story 可在这些 class 上继续补响应式断言和文档。
+---
+## 2026-05-20 21:21 - US-006
+- 增强 skill chip 与 slash picker 的响应式样式约束，补充移动端尺寸、长文本截断、滚动约束和专属 CSS selector 回归断言。
+- 更新稳定接口文档、平台知识包和 E2E README，记录 `GET /api/skills`、消息 `skills` payload、项目限定 skill 投影和 skill selector 验收入口。
+- 修复 slash picker 在 Escape/外部关闭后被 textarea selection 事件重新打开的问题，并让 selector E2E 拦截非目标初始化 API，避免后端不可用时产生 console error。
+- 验证通过：`cd frontend && npm test`、`cd frontend && npm run typecheck`、`cd frontend && npm run lint`、`git diff --check`、`MYAGENT_E2E_BASE_URL=http://127.0.0.1:3003 MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260520211330/skill-selector npx playwright test e2e-playwright/test_skill_selector.spec.mjs --reporter=line`。
+- 更改的文件
+  - `.gitignore`
+  - `INTERFACES.md`
+  - `asset/deepagents_platform_knowledge_pack.md`
+  - `frontend/.gitignore`
+  - `frontend/app/globals.css`
+  - `frontend/components/chat/ChatComposer.tsx`
+  - `frontend/e2e-playwright/README.md`
+  - `frontend/e2e-playwright/test_skill_selector.spec.mjs`
+  - `frontend/eslint.config.mjs`
+  - `frontend/tests/workspace/test_task_workspace.test.ts`
+  - `frontend/tests/workspace/test_workspace_view.test.ts`
+  - `scripts/ralph/prd.json`
+  - `scripts/ralph/progress.txt`
+- **未来迭代的学习：**
+  - 关闭 slash picker 时需要记录 dismissed token；否则 textarea 的 selection/click 事件会重新识别同一个 `/query` 并再次打开菜单。
+  - 当前默认 `3001` 前端曾短暂可访问但后续断开，`8001` API 超时；本轮用临时 `3003` 前端服务完成浏览器验收，并在结束后关闭该服务。
+  - Skill selector E2E 如果只验证 composer UI，可以 route `/api/models`、`/api/tasks`、`/api/skills` 和 message API，让测试聚焦交互且不产生初始化 console error；完整后端闭环留给 US-007。
 ---

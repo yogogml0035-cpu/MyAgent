@@ -17,6 +17,7 @@ htmlcov/
 node_modules/
 .next/
 .next-dev/
+frontend/.next-dev-*/
 out/
 dist/
 coverage/
@@ -33,10 +34,9 @@ backend/storage/tasks/*
 
 audits/
 .playwright-mcp/
+screenshots/
 frontend/.next-dev-e2e/
 frontend/test-results/
 frontend/e2e-playwright/e2e-*/
 frontend/e2e-playwright/test-results/
 frontend/e2e-playwright/playwright-report/
-
-
