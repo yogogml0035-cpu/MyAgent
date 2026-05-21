@@ -391,6 +391,40 @@ class TestSendMessage:
         assert len(user_messages) == 1
         assert user_messages[0]["content"] == "test message content"
 
+    def test_send_message_to_running_task_returns_409_without_creating_second_run(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+        run_result = storage.start_run(
+            task_id,
+            message="first message",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+
+        runner = app_client.app.state.runner
+        original_is_running = runner.is_running
+        runner.is_running = lambda candidate_task_id: candidate_task_id == task_id
+        try:
+            response = app_client.post(
+                f"/api/tasks/{task_id}/messages",
+                json={"message": "second message", "model": "deepseek-v4-flash"},
+            )
+        finally:
+            runner.is_running = original_is_running
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "任务运行中，请等待完成后再发送消息"
+        state = app_client.get(f"/api/tasks/{task_id}").json()
+        assert state["status"] == "running"
+        assert state["active_run_id"] == run_id
+        assert [run["id"] for run in state["runs"]] == [run_id]
+        assert [message["content"] for message in state["messages"]] == ["first message"]
+
     def test_send_message_with_skills_formats_storage_title_and_runner(
         self, create_idle_task, app_client
     ):

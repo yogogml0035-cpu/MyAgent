@@ -15,6 +15,7 @@ Source: prd.json
 - `app/models/provider.py#create_model()` 是切换 provider wrapper 的稳定入口：non-thinking ID 保持 `ChatDeepSeek`，thinking-enabled ID 才切到 `DeepSeekThinkingChatModel`，这样上层调用方不用感知 adapter。
 - `backend/app/streaming/v2_adapter.py` 的 `thinking_chunk` 既是完整 reasoning 载体，也是 tool-call 诊断挂点：如果同一 provider turn 带了工具调用，优先把 `tool_call_id`/`tool_call_ids`/`tool_calls` 放进 thinking payload，再由 `event_converter.py` 保持稳定的 `payload.live.display_text`，不要把这些诊断字段塞进 collapsed 文案。
 - `backend/app/streaming/event_converter.py` 必须把 `assistant_thinking_delta` 的完整 reasoning 放在 `payload.content`，同时让顶层 `message` 和 `payload.live.display_text` 都保持稳定状态文案；这样即使旧消费方回退到 `message`，也不会把 reasoning 泄露到默认 UI。
+- `backend/app/api/tasks.py#send_message()` 的同 task 互斥是双层保护：先检查 `runner.is_running(task_id)` 立即返回 409，再由 `storage.start_run(... expected_statuses=...)` 兜底阻止非允许状态下创建新 run。
 
 ## 2026-05-21 20:45 - US-001
 - 实现了 DeepSeek thinking/tool-call request message 的表征测试，并新增一个未接线的 helper 作为稳定断言目标，锁定 assistant/tool provider payload 结构。
@@ -76,4 +77,17 @@ Source: prd.json
   - 只看单元测试会误判“默认文案安全”已经成立；真实浏览器里 progress row 的 copy/expand/fallback 路径仍会接触顶层 `message`，所以这类事件边界变更最好补一次最小 smoke。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - 本地前端在 `3001` 可单独运行，但浏览器 smoke 依旧依赖真实后端 `8001` 才能创建新 run；这次通过新建 `DeepSeek V4 Flash Thinking` 会话直接验证了 collapsed 与 expanded diagnostics 的分层表现。
+---
+
+## 2026-05-21 22:25 - US-006
+- 新增后端并发与互斥回归测试，验证两个不同 task 可以同时保持 `running`，同一 task 在运行中再次发送会返回 `409` 且不会创建第二个 run，并断言 A task 失败时只会把 A 标记为 failed，不会改变 B 的 `active_run_id` 或运行状态。
+- 更改的文件：`backend/tests/unit/runner/test_concurrency_and_thinking_audit.py`、`backend/tests/unit/api/test_tasks.py`、`tasks/multi-session-thinking-audit/prd.json`
+- 验证：`cd backend && uv run pytest tests/unit/runner/test_concurrency_and_thinking_audit.py tests/unit/api/test_tasks.py -q`、`cd backend && uv run pytest -q`、`cd backend && uv run ruff check .`、`cd backend && uv run mypy app tests`、`git diff --check` 全部通过；未运行浏览器 E2E，因为本轮只补后端并发/互斥测试，没有新增前端交互入口或运行时行为改动。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - `send_message()` 的同 task 互斥要同时看进程内 runner 和持久化状态：前者负责即时 `409`，后者通过 `expected_statuses` 保证不会在非允许状态下新建 run。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 并发回归测试不要靠 `sleep` 猜时序；用 monkeypatch 的 fake `runner.start()` 配合 `asyncio.Event` 才能稳定验证“双 task 并行、单 task 互斥”。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - `TaskRunner._active_runs` 只按 `task_id` 注册当前进程内活跃任务，所以 A/B 隔离回归只需要断言各自 `status`、`active_run_id` 和终端事件，不需要引入额外的全局锁测试夹具。
 ---
