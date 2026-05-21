@@ -1500,7 +1500,7 @@ test("workspace CSS keeps history scrollable with a fixed clear action", () => {
   );
   assert.match(
     cssSource,
-    /\.historyList\s*\{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;[\s\S]*?scrollbar-gutter: stable;/,
+    /\.historyList\s*\{[\s\S]*?align-content: start;[\s\S]*?grid-auto-rows: minmax\(42px, max-content\);[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;[\s\S]*?scrollbar-gutter: stable;/,
   );
   assert.match(cssSource, /\.clearHistoryButton\s*\{[\s\S]*?width: 100%;[\s\S]*?min-height: 38px;/);
   assert.match(
