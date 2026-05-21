@@ -36,6 +36,7 @@
 - SSE 使用 browser `EventSource`，后端返回 `text/event-stream`。
 - EventSource 不能设置自定义 header，因此 SSE token 通过 `?token=` 传递。
 - SSE 连接失败时，前端应刷新任务摘要、读取增量事件并做有界重试。
+- `GET /api/tasks/{task_id}/events` 支持可选 `after_id` 和 `run_id` 查询参数；`run_id` 只过滤当前 task 内的指定 run，`after_id` 仍按 task 级有序事件游标解析，未知游标继续触发 task 级恢复。
 - 后端事件日志是权威事实；SSE 只负责投影和实时体验。
 
 ### Field Naming

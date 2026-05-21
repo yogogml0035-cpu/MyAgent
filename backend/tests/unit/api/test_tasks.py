@@ -333,6 +333,102 @@ class TestGetEvents:
         events = response.json()
         assert [event["seq"] for event in events] == [1, 2]
 
+    def test_get_events_can_filter_specific_run(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+
+        first_run = storage.start_run(
+            task_id,
+            message="first run",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert first_run is not None
+        _, first_run_id = first_run
+        first_event = storage.append_event(
+            task_id,
+            "assistant_thinking_delta",
+            "first reasoning",
+            run_id=first_run_id,
+        )
+        storage.update_task_if_status(task_id, {"running"}, status="complete", run_id=first_run_id)
+
+        second_run = storage.start_run(
+            task_id,
+            message="second run",
+            model="deepseek-v4-flash",
+            expected_statuses={"complete"},
+        )
+        assert second_run is not None
+        _, second_run_id = second_run
+        storage.append_event(
+            task_id,
+            "assistant_answer_delta",
+            "second answer",
+            run_id=second_run_id,
+        )
+
+        response = app_client.get(f"/api/tasks/{task_id}/events?run_id={first_run_id}")
+
+        assert response.status_code == 200
+        assert [event["id"] for event in response.json()] == [first_event.id]
+        assert all(event["run_id"] == first_run_id for event in response.json())
+
+    def test_get_events_run_filter_keeps_task_level_after_id_cursor(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+
+        first_run = storage.start_run(
+            task_id,
+            message="first run",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert first_run is not None
+        _, first_run_id = first_run
+        first_event = storage.append_event(
+            task_id,
+            "assistant_thinking_delta",
+            "first reasoning",
+            run_id=first_run_id,
+        )
+        storage.update_task_if_status(task_id, {"running"}, status="complete", run_id=first_run_id)
+
+        second_run = storage.start_run(
+            task_id,
+            message="second run",
+            model="deepseek-v4-flash",
+            expected_statuses={"complete"},
+        )
+        assert second_run is not None
+        _, second_run_id = second_run
+        second_event = storage.append_event(
+            task_id,
+            "assistant_answer_delta",
+            "second answer",
+            run_id=second_run_id,
+        )
+
+        response = app_client.get(
+            f"/api/tasks/{task_id}/events?after_id={first_event.id}&run_id={second_run_id}"
+        )
+
+        assert response.status_code == 200
+        assert [event["id"] for event in response.json()] == [second_event.id]
+        assert [event["seq"] for event in response.json()] == [second_event.seq]
+
+    def test_get_events_rejects_invalid_run_id(self, create_idle_task, app_client):
+        created = create_idle_task()
+
+        response = app_client.get(f"/api/tasks/{created['task_id']}/events?run_id=../invalid")
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == "运行 ID 无效"
+
     def test_get_events_nonexistent_task_404(self, app_client):
         response = app_client.get("/api/tasks/nonexistent-id/events")
         assert response.status_code == 404

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.storage import PostgresTaskStorage
 from tests.fakes import InMemoryTaskStorage
 
@@ -98,6 +100,96 @@ class TestTaskStorageAppendEvent:
             storage.append_event(state.task_id, "assistant_answer_delta", f"chunk {index}")
         events = storage.read_events(state.task_id)
         assert [event.seq for event in events] == list(range(1, 252))
+
+    def test_read_events_can_filter_specific_run_without_cross_run_leakage(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
+
+        first_run = storage.start_run(
+            state.task_id,
+            message="first run",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert first_run is not None
+        _, first_run_id = first_run
+        first_event = storage.append_event(
+            state.task_id,
+            "assistant_thinking_delta",
+            "first reasoning",
+            run_id=first_run_id,
+        )
+        storage.update_task_if_status(state.task_id, {"running"}, status="complete", run_id=first_run_id)
+
+        second_run = storage.start_run(
+            state.task_id,
+            message="second run",
+            model="deepseek-v4-flash",
+            expected_statuses={"complete"},
+        )
+        assert second_run is not None
+        _, second_run_id = second_run
+        second_event = storage.append_event(
+            state.task_id,
+            "assistant_answer_delta",
+            "second answer",
+            run_id=second_run_id,
+        )
+
+        first_run_events = storage.read_events(state.task_id, run_id=first_run_id)
+        second_run_events = storage.read_events(state.task_id, run_id=second_run_id)
+
+        assert [event.id for event in first_run_events] == [first_event.id]
+        assert [event.run_id for event in first_run_events] == [first_run_id]
+        assert [event.id for event in second_run_events] == [second_event.id]
+        assert [event.run_id for event in second_run_events] == [second_run_id]
+
+    def test_read_events_run_filter_uses_task_level_after_id_cursor(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
+
+        first_run = storage.start_run(
+            state.task_id,
+            message="first run",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert first_run is not None
+        _, first_run_id = first_run
+        first_event = storage.append_event(
+            state.task_id,
+            "assistant_thinking_delta",
+            "first reasoning",
+            run_id=first_run_id,
+        )
+        storage.update_task_if_status(state.task_id, {"running"}, status="complete", run_id=first_run_id)
+
+        second_run = storage.start_run(
+            state.task_id,
+            message="second run",
+            model="deepseek-v4-flash",
+            expected_statuses={"complete"},
+        )
+        assert second_run is not None
+        _, second_run_id = second_run
+        second_event = storage.append_event(
+            state.task_id,
+            "assistant_answer_delta",
+            "second answer",
+            run_id=second_run_id,
+        )
+
+        events = storage.read_events(state.task_id, after_id=first_event.id, run_id=second_run_id)
+
+        assert [event.id for event in events] == [second_event.id]
+        assert [event.seq for event in events] == [second_event.seq]
+
+    def test_read_events_rejects_invalid_run_id(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "sessions")
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
+
+        with pytest.raises(ValueError, match="运行 ID 无效"):
+            storage.read_events(state.task_id, run_id="../invalid")
 
 
 class TestTaskStorageGetTask:

@@ -256,14 +256,27 @@ class InMemoryTaskStorage:
         self.states[task_id].events.append(event)
         return event
 
-    def read_events(self, task_id: str, *, after_id: str | None = None) -> list[EventRecord]:
+    def read_events(
+        self,
+        task_id: str,
+        *,
+        after_id: str | None = None,
+        run_id: str | None = None,
+    ) -> list[EventRecord]:
+        if run_id is not None:
+            validate_run_id(run_id)
         events = list(self.states[task_id].events)
         if after_id is None:
-            return copy.deepcopy(events)
-        for index, event in enumerate(events):
-            if event.id == after_id:
-                return copy.deepcopy(events[index + 1 :])
-        return copy.deepcopy(events)
+            filtered = events
+        else:
+            filtered = events
+            for index, event in enumerate(events):
+                if event.id == after_id:
+                    filtered = events[index + 1 :]
+                    break
+        if run_id is not None:
+            filtered = [event for event in filtered if event.run_id == run_id]
+        return copy.deepcopy(filtered)
 
     def get_task_messages(self, task_id: str) -> list[ChatMessage]:
         return self.get_task(task_id, include_events=False).messages

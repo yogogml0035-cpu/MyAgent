@@ -137,10 +137,18 @@ def delete_task(task_id: str, request: Request) -> None:
 
 
 @router.get("/{task_id}/events", response_model=list[EventRecord])
-def get_events(task_id: str, request: Request, after_id: str | None = None) -> list[EventRecord]:
+def get_events(
+    task_id: str,
+    request: Request,
+    after_id: str | None = None,
+    run_id: str | None = None,
+) -> list[EventRecord]:
     storage = _storage(request)
     _get_existing_task(storage, task_id, include_events=False)
-    return storage.read_events(task_id, after_id=after_id)
+    try:
+        return storage.read_events(task_id, after_id=after_id, run_id=run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from None
 
 
 @router.post("/{task_id}/messages", response_model=TaskState)

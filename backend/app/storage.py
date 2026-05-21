@@ -973,14 +973,28 @@ class PostgresTaskStorage:
             run_id=run_id,
         )
 
-    def read_events(self, task_id: str, *, after_id: str | None = None) -> list[EventRecord]:
+    def read_events(
+        self,
+        task_id: str,
+        *,
+        after_id: str | None = None,
+        run_id: str | None = None,
+    ) -> list[EventRecord]:
         with self._lock, self._connect() as conn, conn.cursor() as cur:
             self._fetch_task_row(cur, task_id, lock=False)
+            if run_id is not None:
+                validate_run_id(run_id)
             if after_id is None:
-                cur.execute(
-                    "SELECT * FROM events WHERE task_id = %s ORDER BY seq ASC",
-                    (task_id,),
-                )
+                if run_id is None:
+                    cur.execute(
+                        "SELECT * FROM events WHERE task_id = %s ORDER BY seq ASC",
+                        (task_id,),
+                    )
+                else:
+                    cur.execute(
+                        "SELECT * FROM events WHERE task_id = %s AND run_id = %s ORDER BY seq ASC",
+                        (task_id, run_id),
+                    )
             else:
                 cur.execute(
                     """
@@ -991,19 +1005,39 @@ class PostgresTaskStorage:
                 )
                 after_row = cur.fetchone()
                 if after_row is None:
-                    cur.execute(
-                        "SELECT * FROM events WHERE task_id = %s ORDER BY seq ASC",
-                        (task_id,),
-                    )
+                    if run_id is None:
+                        cur.execute(
+                            "SELECT * FROM events WHERE task_id = %s ORDER BY seq ASC",
+                            (task_id,),
+                        )
+                    else:
+                        cur.execute(
+                            """
+                                SELECT * FROM events
+                                WHERE task_id = %s AND run_id = %s
+                                ORDER BY seq ASC
+                                """,
+                            (task_id, run_id),
+                        )
                     return [self._event_record_from_row(row) for row in cur.fetchall()]
-                cur.execute(
-                    """
-                        SELECT * FROM events
-                        WHERE task_id = %s AND seq > %s
-                        ORDER BY seq ASC
-                        """,
-                    (task_id, after_row["seq"]),
-                )
+                if run_id is None:
+                    cur.execute(
+                        """
+                            SELECT * FROM events
+                            WHERE task_id = %s AND seq > %s
+                            ORDER BY seq ASC
+                            """,
+                        (task_id, after_row["seq"]),
+                    )
+                else:
+                    cur.execute(
+                        """
+                            SELECT * FROM events
+                            WHERE task_id = %s AND seq > %s AND run_id = %s
+                            ORDER BY seq ASC
+                            """,
+                        (task_id, after_row["seq"], run_id),
+                    )
             return [self._event_record_from_row(row) for row in cur.fetchall()]
 
     def get_task_messages(self, task_id: str) -> list[ChatMessage]:
