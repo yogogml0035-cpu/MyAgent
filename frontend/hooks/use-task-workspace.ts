@@ -180,7 +180,10 @@ export function useTaskWorkspace() {
   const [skillOptions, setSkillOptions] = useState<SkillOption[]>([]);
   const [selectedSkills, setSelectedSkills] = useState<SkillOption[]>([]);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [isBusy, setIsBusy] = useState(false);
+  const [isSubmittingTask, setIsSubmittingTask] = useState(false);
+  const [isSwitchingConversation, setIsSwitchingConversation] = useState(false);
+  const [isMutatingConversation, setIsMutatingConversation] = useState(false);
+  const [isStoppingTask, setIsStoppingTask] = useState(false);
   const [error, setError] = useState<string>("");
   const [errorLevel, setErrorLevel] = useState<"warning" | "error">("error");
   const [copiedCopyKey, setCopiedCopyKey] = useState("");
@@ -226,6 +229,9 @@ export function useTaskWorkspace() {
     [selectedSkills],
   );
   const selectedModelRunnable = isModelRunnable(selectedModelOption);
+  const isComposerBusy = isSubmittingTask || isSwitchingConversation || isStoppingTask;
+  const isHistoryBusy =
+    isSubmittingTask || isSwitchingConversation || isMutatingConversation || isStoppingTask;
   const runActivityGroups = useMemo(
     () => buildRunActivityGroups(runs, logs, artifacts),
     [artifacts, logs, runs],
@@ -432,7 +438,7 @@ export function useTaskWorkspace() {
   }, []);
 
   const handleSubmit = useCallback(async () => {
-    if (!canSend || isBusy || activeTask) {
+    if (!canSend || activeTask || isSubmittingTask || isSwitchingConversation) {
       return;
     }
 
@@ -442,7 +448,7 @@ export function useTaskWorkspace() {
       setError("当前模型服务未配置，请先在后端配置对应 API Key 后再发送。");
       return;
     }
-    setIsBusy(true);
+    setIsSubmittingTask(true);
     const content = input.trim();
     const taskContent = content || DEFAULT_FILE_PROMPT;
     const files = selectedFiles;
@@ -470,14 +476,15 @@ export function useTaskWorkspace() {
         }
       }
     } finally {
-      setIsBusy(false);
+      setIsSubmittingTask(false);
     }
   }, [
     activeTask,
     canSend,
     ensureTask,
     input,
-    isBusy,
+    isSubmittingTask,
+    isSwitchingConversation,
     model,
     refreshTask,
     refreshTaskSummaries,
@@ -489,7 +496,7 @@ export function useTaskWorkspace() {
 
   const handleSelectSkill = useCallback(
     (skill: SkillOption) => {
-      if (activeTask || isBusy) {
+      if (activeTask || isSubmittingTask || isSwitchingConversation) {
         return;
       }
 
@@ -497,7 +504,7 @@ export function useTaskWorkspace() {
         current.some((selected) => selected.name === skill.name) ? current : [...current, skill],
       );
     },
-    [activeTask, isBusy],
+    [activeTask, isSubmittingTask, isSwitchingConversation],
   );
 
   const handleRemoveSkill = useCallback((skillName: string) => {
@@ -505,12 +512,12 @@ export function useTaskWorkspace() {
   }, []);
 
   const handleStop = useCallback(async () => {
-    if (!taskId || isBusy) {
+    if (!taskId || isStoppingTask || isSwitchingConversation) {
       return;
     }
 
     setError("");
-    setIsBusy(true);
+    setIsStoppingTask(true);
 
     try {
       await cancelTask(taskId);
@@ -520,9 +527,9 @@ export function useTaskWorkspace() {
       setErrorLevel("error");
       setError(formatTaskApiFailure(caught));
     } finally {
-      setIsBusy(false);
+      setIsStoppingTask(false);
     }
-  }, [isBusy, refreshTask, refreshTaskSummaries, taskId]);
+  }, [isStoppingTask, isSwitchingConversation, refreshTask, refreshTaskSummaries, taskId]);
 
   const handleFileSelection = useCallback((chosenFiles: File[]) => {
     const { supportedFiles, rejectedFiles } = partitionSupportedUploadFiles(chosenFiles);
@@ -557,7 +564,14 @@ export function useTaskWorkspace() {
 
   const handleSelectConversation = useCallback(
     async (id: string) => {
-      if (!id || id === taskId || isBusy) {
+      if (
+        !id ||
+        id === taskId ||
+        isSubmittingTask ||
+        isSwitchingConversation ||
+        isMutatingConversation ||
+        isStoppingTask
+      ) {
         return;
       }
 
@@ -565,7 +579,7 @@ export function useTaskWorkspace() {
       setInput("");
       setSelectedSkills([]);
       setSelectedFiles([]);
-      setIsBusy(true);
+      setIsSwitchingConversation(true);
 
       try {
         await refreshTask(id);
@@ -573,21 +587,35 @@ export function useTaskWorkspace() {
         setErrorLevel("error");
         setError(formatTaskApiFailure(caught));
       } finally {
-        setIsBusy(false);
+        setIsSwitchingConversation(false);
       }
     },
-    [isBusy, refreshTask, taskId],
+    [
+      isMutatingConversation,
+      isStoppingTask,
+      isSubmittingTask,
+      isSwitchingConversation,
+      refreshTask,
+      taskId,
+    ],
   );
 
   const handleRenameConversation = useCallback(
     async (id: string, title: string) => {
       const normalizedTitle = title.trim();
-      if (!id || !normalizedTitle || isBusy) {
+      if (
+        !id ||
+        !normalizedTitle ||
+        isSubmittingTask ||
+        isSwitchingConversation ||
+        isMutatingConversation ||
+        isStoppingTask
+      ) {
         return;
       }
 
       setError("");
-      setIsBusy(true);
+      setIsMutatingConversation(true);
       try {
         await renameTask(id, normalizedTitle);
         await refreshTaskSummaries();
@@ -598,15 +626,29 @@ export function useTaskWorkspace() {
         setErrorLevel("error");
         setError(formatTaskApiFailure(caught));
       } finally {
-        setIsBusy(false);
+        setIsMutatingConversation(false);
       }
     },
-    [isBusy, refreshTaskSummaries, refreshTaskSummary, taskId],
+    [
+      isMutatingConversation,
+      isStoppingTask,
+      isSubmittingTask,
+      isSwitchingConversation,
+      refreshTaskSummaries,
+      refreshTaskSummary,
+      taskId,
+    ],
   );
 
   const handleDeleteConversation = useCallback(
     async (id: string) => {
-      if (!id || isBusy) {
+      if (
+        !id ||
+        isSubmittingTask ||
+        isSwitchingConversation ||
+        isMutatingConversation ||
+        isStoppingTask
+      ) {
         return;
       }
       const summary = taskSummaries.find((item) => item.id === id);
@@ -617,7 +659,7 @@ export function useTaskWorkspace() {
       }
 
       setError("");
-      setIsBusy(true);
+      setIsMutatingConversation(true);
       try {
         await deleteTask(id);
         if (id === taskId) {
@@ -628,14 +670,29 @@ export function useTaskWorkspace() {
         setErrorLevel("error");
         setError(formatTaskApiFailure(caught));
       } finally {
-        setIsBusy(false);
+        setIsMutatingConversation(false);
       }
     },
-    [handleNewConversation, isBusy, refreshTaskSummaries, taskId, taskSummaries],
+    [
+      handleNewConversation,
+      isMutatingConversation,
+      isStoppingTask,
+      isSubmittingTask,
+      isSwitchingConversation,
+      refreshTaskSummaries,
+      taskId,
+      taskSummaries,
+    ],
   );
 
   const handleClearConversations = useCallback(async () => {
-    if (isBusy || taskSummaries.length === 0) {
+    if (
+      isSubmittingTask ||
+      isSwitchingConversation ||
+      isMutatingConversation ||
+      isStoppingTask ||
+      taskSummaries.length === 0
+    ) {
       return;
     }
     if (activeTask || taskSummaries.some((summary) => isTaskActive(summary.status))) {
@@ -650,7 +707,7 @@ export function useTaskWorkspace() {
     const deletedIds = taskSummaries.map((summary) => summary.id);
 
     setError("");
-    setIsBusy(true);
+    setIsMutatingConversation(true);
     try {
       for (const id of deletedIds) {
         await deleteTask(id);
@@ -663,12 +720,15 @@ export function useTaskWorkspace() {
       setErrorLevel("error");
       setError(formatTaskApiFailure(caught));
     } finally {
-      setIsBusy(false);
+      setIsMutatingConversation(false);
     }
   }, [
     activeTask,
     handleNewConversation,
-    isBusy,
+    isMutatingConversation,
+    isStoppingTask,
+    isSubmittingTask,
+    isSwitchingConversation,
     refreshTaskSummaries,
     taskId,
     taskSummaries,
@@ -789,7 +849,12 @@ export function useTaskWorkspace() {
     hasConversation,
     historyItems,
     input,
-    isBusy,
+    isComposerBusy,
+    isHistoryBusy,
+    isMutatingConversation,
+    isStoppingTask,
+    isSubmittingTask,
+    isSwitchingConversation,
     model,
     modelDisplayOptions,
     noticeMessages,

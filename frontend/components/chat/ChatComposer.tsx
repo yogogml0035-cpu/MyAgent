@@ -27,7 +27,7 @@ type ChatComposerProps = {
   activeTask: boolean;
   canSend: boolean;
   input: string;
-  isBusy: boolean;
+  isComposerBusy: boolean;
   model: string;
   modelDisplayOptions: ModelDisplayOption[];
   selectedFiles: File[];
@@ -54,7 +54,7 @@ export function ChatComposer({
   activeTask,
   canSend,
   input,
-  isBusy,
+  isComposerBusy,
   model,
   modelDisplayOptions,
   selectedFiles,
@@ -82,7 +82,7 @@ export function ChatComposer({
   const skillPickerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const skillPickerEnabled = !activeTask && !isBusy && skillOptions.length > 0;
+  const skillPickerEnabled = !activeTask && !isComposerBusy && skillOptions.length > 0;
   const filteredSkillOptions = useMemo(
     () =>
       isSkillPickerOpen && activeSlashToken
@@ -498,7 +498,7 @@ export function ChatComposer({
             <button
               aria-label="停止任务"
               className="sendButton stopAction"
-              disabled={isBusy}
+              disabled={isComposerBusy}
               onClick={() => void onStop()}
               type="button"
             >
@@ -508,9 +508,9 @@ export function ChatComposer({
             </button>
           ) : (
             <button
-              aria-label={isBusy ? "发送中" : "发送"}
+              aria-label={isComposerBusy ? "发送中" : "发送"}
               className="sendButton"
-              disabled={!canSend || isBusy || !selectedModelRunnable}
+              disabled={!canSend || isComposerBusy || !selectedModelRunnable}
               type="submit"
             >
               <svg aria-hidden="true" className="sendButtonIcon" fill="none" viewBox="0 0 24 24">

@@ -12,7 +12,7 @@ export function TaskWorkspace() {
     <main className="agentShell">
       <ChatSidebar
         historyItems={workspace.historyItems}
-        isBusy={workspace.isBusy}
+        isHistoryBusy={workspace.isHistoryBusy}
         onClearConversations={workspace.handleClearConversations}
         onDeleteConversation={workspace.handleDeleteConversation}
         onNewConversation={workspace.handleNewConversation}
@@ -37,7 +37,7 @@ export function TaskWorkspace() {
           activeTask={workspace.activeTask}
           canSend={workspace.canSend}
           input={workspace.input}
-          isBusy={workspace.isBusy}
+          isComposerBusy={workspace.isComposerBusy}
           model={workspace.model}
           modelDisplayOptions={workspace.modelDisplayOptions}
           onFileSelection={workspace.handleFileSelection}

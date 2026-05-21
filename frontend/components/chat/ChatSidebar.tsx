@@ -4,7 +4,7 @@ import type { ConversationHistoryItem } from "../../app/workspace-view";
 
 type ChatSidebarProps = {
   historyItems: ConversationHistoryItem[];
-  isBusy: boolean;
+  isHistoryBusy: boolean;
   onClearConversations: () => Promise<void> | void;
   onDeleteConversation: (id: string) => Promise<void> | void;
   onNewConversation: () => void;
@@ -14,7 +14,7 @@ type ChatSidebarProps = {
 
 export function ChatSidebar({
   historyItems,
-  isBusy,
+  isHistoryBusy,
   onClearConversations,
   onDeleteConversation,
   onNewConversation,
@@ -118,7 +118,7 @@ export function ChatSidebar({
                     onKeyDown={handleRenameKeyDown}
                     value={renameValue}
                   />
-                  <button disabled={isBusy || actionBusyId === item.id} type="submit">
+                  <button disabled={isHistoryBusy || actionBusyId === item.id} type="submit">
                     保存
                   </button>
                   <button
@@ -136,7 +136,7 @@ export function ChatSidebar({
                   <button
                     aria-current={item.active ? "page" : undefined}
                     className="historyItem"
-                    disabled={isBusy && actionBusyId !== item.id}
+                    disabled={isHistoryBusy && actionBusyId !== item.id}
                     onClick={() => void onSelectConversation(item.id)}
                     type="button"
                   >
@@ -147,7 +147,7 @@ export function ChatSidebar({
                     aria-haspopup="menu"
                     aria-label={`打开 ${item.title} 的会话菜单`}
                     className="historyMenuButton"
-                    disabled={isBusy && actionBusyId !== item.id}
+                    disabled={isHistoryBusy && actionBusyId !== item.id}
                     onClick={() => setOpenMenuId((current) => (current === item.id ? "" : item.id))}
                     type="button"
                   >
@@ -187,7 +187,7 @@ export function ChatSidebar({
         <div className="historyFooter">
           <button
             className="clearHistoryButton"
-            disabled={isBusy || historyItems.length === 0}
+            disabled={isHistoryBusy || historyItems.length === 0}
             onClick={() => void onClearConversations()}
             type="button"
           >

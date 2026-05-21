@@ -68,7 +68,9 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(source.includes("selectedModelRunnable"), true);
     assert.strictEqual(source.includes('const DEFAULT_MODEL_ID = "deepseek-v4-flash";'), true);
     assert.strictEqual(source.includes("当前模型服务未配置，请先在后端配置对应 API Key 后再发送。"), true);
-    assert.ok(source.indexOf("if (!selectedModelRunnable)") < source.indexOf("setIsBusy(true)"));
+    assert.ok(
+      source.indexOf("if (!selectedModelRunnable)") < source.indexOf("setIsSubmittingTask(true)"),
+    );
     assert.ok(source.indexOf("if (!selectedModelRunnable)") < source.indexOf("ensureTask()"));
   });
 
@@ -146,15 +148,71 @@ void describe("use-task-workspace exports", () => {
 
     assert.strictEqual(hookSource.includes("handleSelectSkill"), true);
     assert.strictEqual(hookSource.includes("handleRemoveSkill"), true);
-    assert.strictEqual(hookSource.includes("activeTask || isBusy"), true);
+    assert.strictEqual(
+      hookSource.includes("activeTask || isSubmittingTask || isSwitchingConversation"),
+      true,
+    );
     assert.strictEqual(workspaceSource.includes("skillOptions={workspace.skillOptions}"), true);
     assert.strictEqual(workspaceSource.includes("selectedSkills={workspace.selectedSkills}"), true);
+    assert.strictEqual(workspaceSource.includes("isComposerBusy={workspace.isComposerBusy}"), true);
     assert.strictEqual(workspaceSource.includes("onSelectSkill={workspace.handleSelectSkill}"), true);
     assert.strictEqual(workspaceSource.includes("onRemoveSkill={workspace.handleRemoveSkill}"), true);
     assert.strictEqual(composerSource.includes("skillOptions: SkillOption[]"), true);
     assert.strictEqual(composerSource.includes("selectedSkills: SkillOption[]"), true);
+    assert.strictEqual(composerSource.includes("isComposerBusy: boolean;"), true);
     assert.strictEqual(composerSource.includes("onSelectSkill: (skill: SkillOption) => void"), true);
     assert.strictEqual(composerSource.includes("onRemoveSkill: (skillName: string) => void"), true);
+  });
+
+  void it("should scope busy state to current submission and conversation-history mutations", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const workspaceSource = readFileSync(
+      new URL("../../components/chat/TaskWorkspace.tsx", import.meta.url),
+      "utf-8",
+    );
+    const sidebarSource = readFileSync(
+      new URL("../../components/chat/ChatSidebar.tsx", import.meta.url),
+      "utf-8",
+    );
+    const composerSource = readFileSync(
+      new URL("../../components/chat/ChatComposer.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(hookSource.includes("const [isSubmittingTask, setIsSubmittingTask]"), true);
+    assert.strictEqual(
+      hookSource.includes("const [isSwitchingConversation, setIsSwitchingConversation]"),
+      true,
+    );
+    assert.strictEqual(
+      hookSource.includes("const [isMutatingConversation, setIsMutatingConversation]"),
+      true,
+    );
+    assert.strictEqual(hookSource.includes("const [isStoppingTask, setIsStoppingTask]"), true);
+    assert.strictEqual(
+      hookSource.includes(
+        "const isComposerBusy = isSubmittingTask || isSwitchingConversation || isStoppingTask;",
+      ),
+      true,
+    );
+    assert.strictEqual(hookSource.includes("const isHistoryBusy ="), true);
+    assert.strictEqual(
+      hookSource.includes("if (!canSend || activeTask || isSubmittingTask || isSwitchingConversation)"),
+      true,
+    );
+    assert.strictEqual(
+      hookSource.includes(
+        "isSubmittingTask ||\n        isSwitchingConversation ||\n        isMutatingConversation ||\n        isStoppingTask",
+      ),
+      true,
+    );
+    assert.strictEqual(workspaceSource.includes("isHistoryBusy={workspace.isHistoryBusy}"), true);
+    assert.strictEqual(sidebarSource.includes("isHistoryBusy: boolean;"), true);
+    assert.strictEqual(composerSource.includes("disabled={!canSend || isComposerBusy || !selectedModelRunnable}"), true);
+    assert.strictEqual(composerSource.includes("const skillPickerEnabled = !activeTask && !isComposerBusy"), true);
   });
 
   void it("should expose a clear-history action through the sidebar boundary", () => {
