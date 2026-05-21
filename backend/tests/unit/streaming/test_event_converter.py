@@ -209,3 +209,46 @@ class TestConvertStreamEvent:
                 "parameter_items": [{"key": "is_subgraph", "value": False}],
             },
         }
+
+    def test_thinking_delta_preserves_tool_call_diagnostics_without_changing_live_text(self):
+        record = convert_stream_event(
+            {
+                "type": "thinking_chunk",
+                "data": {
+                    "content": "先联网搜索，再决定是否调用其他工具。",
+                    "is_subgraph": False,
+                    "tool_call_id": "call-3",
+                    "tool_call_ids": ["call-3"],
+                    "tool_calls": [
+                        {
+                            "id": "call-3",
+                            "name": "searxng_search",
+                            "args": {"query": "latest audit findings"},
+                            "raw_args": '{"query": "latest audit findings"}',
+                            "partial": False,
+                            "is_subgraph": False,
+                        }
+                    ],
+                },
+            },
+            "task-1",
+            "run-1",
+            seq=9,
+        )
+
+        assert record is not None
+        assert record.type == "assistant_thinking_delta"
+        assert record.payload["tool_call_id"] == "call-3"
+        assert record.payload["tool_call_ids"] == ["call-3"]
+        assert record.payload["tool_calls"] == [
+            {
+                "id": "call-3",
+                "name": "searxng_search",
+                "args": {"query": "latest audit findings"},
+                "raw_args": '{"query": "latest audit findings"}',
+                "partial": False,
+                "is_subgraph": False,
+            }
+        ]
+        assert record.payload["live"]["display_text"] == "AI正在思考..."
+        assert record.payload["live"]["diagnostic_label"] == "model.reasoning_content"

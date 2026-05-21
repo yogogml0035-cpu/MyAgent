@@ -13,6 +13,7 @@ Source: prd.json
 - OpenAI-compatible provider payload 表征测试可以先用 `langchain_openai.chat_models.base._convert_message_to_dict()` 复用 LangChain 既有序列化，再由本地 adapter 精确补回 provider 专属字段。
 - DeepSeek message adapter 需要和 `ChatDeepSeek._get_request_payload()` 保持一致：assistant content list 要折叠为字符串、tool content list 要 JSON 化，再只对当前 assistant tool-call turn 回放 `reasoning_content`。
 - `app/models/provider.py#create_model()` 是切换 provider wrapper 的稳定入口：non-thinking ID 保持 `ChatDeepSeek`，thinking-enabled ID 才切到 `DeepSeekThinkingChatModel`，这样上层调用方不用感知 adapter。
+- `backend/app/streaming/v2_adapter.py` 的 `thinking_chunk` 既是完整 reasoning 载体，也是 tool-call 诊断挂点：如果同一 provider turn 带了工具调用，优先把 `tool_call_id`/`tool_call_ids`/`tool_calls` 放进 thinking payload，再由 `event_converter.py` 保持稳定的 `payload.live.display_text`，不要把这些诊断字段塞进 collapsed 文案。
 
 ## 2026-05-21 20:45 - US-001
 - 实现了 DeepSeek thinking/tool-call request message 的表征测试，并新增一个未接线的 helper 作为稳定断言目标，锁定 assistant/tool provider payload 结构。
@@ -48,4 +49,17 @@ Source: prd.json
   - `create_model()` 的返回类型是 `BaseChatModel`；测试如果要探测 `_get_request_payload()` 这类 provider 私有方法，需要在测试里显式 `cast`，否则 `mypy` 会报属性不存在。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - 这一轮只改了后端 provider 接线，没有前端 UI surface 变化；真实 outbound payload 行为由 `backend/tests/unit/models/test_provider.py` 直接断言。
+---
+
+## 2026-05-21 21:32 - US-004
+- 实现了 `thinking_chunk` 的完整诊断挂载：当 provider reasoning 与 tool-call 同 turn 到达时，流式适配层会把 `tool_call_id`、`tool_call_ids` 和标准化 `tool_calls` 一起带入 thinking 事件；同时保持 subgraph reasoning 仍是诊断内容，不会混进 root answer delta。
+- 更改的文件：`backend/app/streaming/v2_adapter.py`、`backend/app/streaming/event_converter.py`、`backend/tests/unit/streaming/test_v2_adapter.py`、`backend/tests/unit/streaming/test_event_converter.py`、`asset/deepagents_platform_knowledge_pack.md`、`tasks/multi-session-thinking-audit/prd.json`
+- 验证：`cd backend && uv run pytest -q`、`cd backend && uv run ruff check .`、`cd backend && uv run mypy app tests`、`git diff --check` 全部通过；未运行浏览器 E2E，因为本轮只改后端流式诊断事件结构，没有新增或修改前端交互入口。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - `thinking_chunk` 的诊断扩展最好复用 `tool_call` 已有的标准化结构，这样前端后续读取 run-level diagnostics 时不用再维护第二套工具调用 schema。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 只在 `v2_adapter.py` 增字段还不够；`event_converter.py` 对 `assistant_thinking_delta` 有固定 payload 白名单，不同步透传就会在持久化事件里丢掉 tool-call 关联信息。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - 现有 root/subgraph 隔离已经由 namespace 判定和 `message_chunk` 过滤保障；补 thinking 诊断时只要保留 `is_subgraph` 并避免发出 subgraph `message_chunk`，就不会污染最终答案流。
 ---

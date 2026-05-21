@@ -171,8 +171,12 @@ async def _handle_messages_mode(
 
     # --- AI message chunks ---
     if isinstance(chunk, AIMessageChunk):
+        touched_tool_call_keys: list[ToolCallAccumulatorKey] = []
+
         # Emit tool_call events when tool_call_chunks are present.
         for tc in chunk.tool_call_chunks:
+            if isinstance(tc, dict):
+                touched_tool_call_keys.append(_tool_call_chunk_key(tc))
             tool_call_event = _accumulate_tool_call_chunk(
                 tc,
                 is_subgraph=is_subgraph,
@@ -184,12 +188,21 @@ async def _handle_messages_mode(
 
         reasoning_text = _extract_reasoning_content(chunk)
         if reasoning_text:
+            thinking_data: dict[str, Any] = {
+                "content": reasoning_text,
+                "is_subgraph": is_subgraph,
+            }
+            thinking_data.update(
+                _thinking_tool_call_metadata(
+                    chunk,
+                    is_subgraph=is_subgraph,
+                    accumulators=accumulators,
+                    touched_keys=touched_tool_call_keys,
+                )
+            )
             yield {
                 "type": "thinking_chunk",
-                "data": {
-                    "content": reasoning_text,
-                    "is_subgraph": is_subgraph,
-                },
+                "data": thinking_data,
             }
 
         # Emit text content chunks.
@@ -323,14 +336,15 @@ def _tool_call_event_signature(event_data: dict[str, Any]) -> str:
     )
 
 
-def _tool_call_chunk_key(tool_call_chunk: dict[str, Any]) -> ToolCallAccumulatorKey:
-    index = tool_call_chunk.get("index")
+def _tool_call_chunk_key(tool_call_chunk: Any) -> ToolCallAccumulatorKey:
+    chunk = dict(tool_call_chunk) if isinstance(tool_call_chunk, dict) else {}
+    index = chunk.get("index")
     if isinstance(index, int):
         return ("index", str(index))
-    call_id = tool_call_chunk.get("id")
+    call_id = chunk.get("id")
     if isinstance(call_id, str) and call_id:
         return ("id", call_id)
-    name = tool_call_chunk.get("name")
+    name = chunk.get("name")
     if isinstance(name, str) and name:
         return ("name", name)
     return ("index", "0")
@@ -379,6 +393,92 @@ def _parse_tool_call_args(raw_args: Any) -> tuple[Any, bool]:
 
 def _is_empty_tool_args_chunk(raw_args: Any) -> bool:
     return isinstance(raw_args, str) and not raw_args.strip()
+
+
+def _thinking_tool_call_metadata(
+    chunk: AIMessageChunk,
+    *,
+    is_subgraph: bool,
+    accumulators: dict[ToolCallAccumulatorKey, AIMessageChunk],
+    touched_keys: list[ToolCallAccumulatorKey],
+) -> dict[str, Any]:
+    tool_calls: list[dict[str, Any]] = []
+    seen_keys: set[ToolCallAccumulatorKey] = set()
+
+    for key in touched_keys:
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        accumulated = accumulators.get(key)
+        if accumulated is None:
+            continue
+        event_data = _tool_call_event_data(
+            accumulated,
+            is_subgraph=is_subgraph,
+            allow_empty_args=True,
+        )
+        if event_data is not None:
+            tool_calls.append(event_data)
+
+    if not tool_calls:
+        tool_calls = _tool_call_metadata_from_parsed_calls(
+            getattr(chunk, "tool_calls", None),
+            is_subgraph=is_subgraph,
+        )
+
+    if not tool_calls:
+        return {}
+
+    tool_call_ids = [
+        call_id
+        for tool_call in tool_calls
+        if isinstance((call_id := tool_call.get("id")), str) and call_id
+    ]
+
+    metadata: dict[str, Any] = {"tool_calls": tool_calls}
+    if tool_call_ids:
+        metadata["tool_call_ids"] = tool_call_ids
+        if len(tool_call_ids) == 1:
+            metadata["tool_call_id"] = tool_call_ids[0]
+    return metadata
+
+
+def _tool_call_metadata_from_parsed_calls(
+    raw_tool_calls: Any,
+    *,
+    is_subgraph: bool,
+) -> list[dict[str, Any]]:
+    if not isinstance(raw_tool_calls, list):
+        return []
+
+    tool_calls: list[dict[str, Any]] = []
+    for index, raw_tool_call in enumerate(raw_tool_calls):
+        if not isinstance(raw_tool_call, dict):
+            continue
+        name = raw_tool_call.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        parsed_args, partial = _parse_tool_call_args(raw_tool_call.get("args"))
+        call_id = raw_tool_call.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            call_id = f"tool-index-{index}"
+        tool_calls.append(
+            {
+                "id": call_id,
+                "name": name,
+                "args": parsed_args,
+                "raw_args": _serialize_tool_call_args(raw_tool_call.get("args")),
+                "partial": partial,
+                "is_subgraph": is_subgraph,
+            }
+        )
+    return tool_calls
+
+
+def _serialize_tool_call_args(raw_args: Any) -> Any:
+    if isinstance(raw_args, (dict, list)):
+        return json.dumps(raw_args, ensure_ascii=False, sort_keys=True)
+    return raw_args
 
 
 def _extract_reasoning_content(chunk: AIMessageChunk) -> str:

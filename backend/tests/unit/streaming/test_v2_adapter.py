@@ -121,6 +121,99 @@ class TestStreamAgentSubgraphFiltering:
         ]
 
     @pytest.mark.asyncio
+    async def test_reasoning_chunk_keeps_tool_call_diagnostics(self):
+        events = await _collect_stream_events(
+            [
+                {
+                    "type": "messages",
+                    "ns": [],
+                    "data": (
+                        AIMessageChunk(
+                            content="",
+                            additional_kwargs={"reasoning_content": "先搜索最新资料，再决定下一步。"},
+                            tool_call_chunks=[
+                                {
+                                    "name": "searxng_search",
+                                    "args": '{"query": "thinking audit"}',
+                                    "id": "call-2",
+                                    "index": 0,
+                                }
+                            ],
+                        ),
+                        {},
+                    ),
+                },
+            ]
+        )
+
+        assert events == [
+            {
+                "type": "tool_call",
+                "data": {
+                    "id": "call-2",
+                    "name": "searxng_search",
+                    "args": {"query": "thinking audit"},
+                    "raw_args": '{"query": "thinking audit"}',
+                    "partial": False,
+                    "is_subgraph": False,
+                },
+            },
+            {
+                "type": "thinking_chunk",
+                "data": {
+                    "content": "先搜索最新资料，再决定下一步。",
+                    "is_subgraph": False,
+                    "tool_call_id": "call-2",
+                    "tool_call_ids": ["call-2"],
+                    "tool_calls": [
+                        {
+                            "id": "call-2",
+                            "name": "searxng_search",
+                            "args": {"query": "thinking audit"},
+                            "raw_args": '{"query": "thinking audit"}',
+                            "partial": False,
+                            "is_subgraph": False,
+                        }
+                    ],
+                },
+            },
+        ]
+
+    @pytest.mark.asyncio
+    async def test_subgraph_reasoning_stays_diagnostic_and_root_answer_stays_root_only(self):
+        events = await _collect_stream_events(
+            [
+                {
+                    "type": "messages",
+                    "ns": [("researcher", "model")],
+                    "data": (
+                        AIMessageChunk(
+                            content="subgraph token",
+                            additional_kwargs={"reasoning_content": "先分解子任务。"},
+                        ),
+                        {},
+                    ),
+                },
+                {
+                    "type": "messages",
+                    "ns": [],
+                    "data": (AIMessageChunk(content="root answer"), {}),
+                },
+            ]
+        )
+
+        assert events == [
+            {
+                "type": "thinking_chunk",
+                "data": {"content": "先分解子任务。", "is_subgraph": True},
+            },
+            {
+                "type": "message_chunk",
+                "data": {"content": "root answer"},
+            },
+        ]
+
+    @pytest.mark.asyncio
     async def test_tool_call_chunks_are_accumulated_before_tool_result(self):
         events = await _collect_stream_events(
             [

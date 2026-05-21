@@ -72,6 +72,9 @@ def convert_stream_event(
                 ],
             },
         }
+        for key in ("tool_call_id", "tool_call_ids", "tool_calls"):
+            if key in data:
+                payload[key] = data[key]
     elif record_type == "assistant_answer_delta":
         payload = {
             "schema_version": 1,
