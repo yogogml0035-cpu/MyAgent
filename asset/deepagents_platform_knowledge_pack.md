@@ -71,6 +71,15 @@ Use it when changing agent factory, middleware assembly, model provider, tool re
 - Repository-wide line-ending normalization is enforced with a root `.gitattributes`: text files default to LF, while PowerShell scripts use CRLF on checkout.
 - If the work includes pushing a branch, opening/updating a PR, or merging a PR, completion requires the GitHub remote checks to finish successfully. Local green runs are necessary but not sufficient while remote Actions are still pending or failing.
 
+## Multi-Session Thinking Audit Boundaries
+
+- Different tasks/sessions may run in parallel, but a single task stays single-run. Preserve that split across backend and frontend boundaries: `TaskRunner` active-run ownership, `storage.start_run(... expected_statuses=...)`, `send_message()` 409 protection, and the composer/sidebar busy scopes must continue to allow task A and task B to progress independently while blocking a second run for the same task.
+- A failure, cancellation, or provider error in task A must not mutate task B's `status`, `active_run_id`, event stream, or diagnostics. Run ownership is always scoped by the current task/run pair, not by a global busy flag or by wall-clock timing.
+- For `deepseek-v4-flash-thinking`, any assistant turn that already contains both `tool_calls` and provider-returned `reasoning_content` must replay that `reasoning_content` together with the assistant `content` and `tool_calls` on the next provider request after the tool result. Do not synthesize missing reasoning from event logs, older runs, or non-thinking history; legacy runs that never stored it must remain partially unavailable instead of being backfilled.
+- `reasoning_content` is run-scoped audit data only. It may live in the current run's append-only events, expanded run diagnostics, and run-level JSONL copy, but it must not enter ordinary assistant messages, `TaskState.messages`, conversation context summaries, long-term memory rows, Qdrant payloads, or default artifacts.
+- The default progress UI must stay low-noise. Collapsed rows keep stable labels such as `"AI正在思考"`, `"AI正在生成结果"`, `"准备调用..."`, `"工具已返回结果"`, and `"状态已更新"`; complete provider/tool/final-answer evidence belongs in expanded row JSON, the per-run `"完整诊断 JSON"` panel, and run-scoped copy/export flows only.
+- Expanded diagnostics and copy/export must stay scoped to one run. Aggregation may merge contiguous chunks inside the same run segment for display, but it must never mix `assistant_thinking_delta`, `assistant_answer_delta`, tool calls, tool results, or final answers from another run, even inside the same task history.
+
 ## Input And Output Examples
 
 - Create task: `POST /api/tasks` → `{"task_id": "...", "status": "idle", "model": "deepseek-v4-flash", ...}`
