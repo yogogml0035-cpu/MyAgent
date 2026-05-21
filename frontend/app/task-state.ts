@@ -504,9 +504,9 @@ function readBoundedString(value: unknown, maxChars: number) {
   return text ? truncateDisplayText(text, maxChars) : undefined;
 }
 
-function readBoundedContent(value: unknown, maxChars: number) {
+function readStreamContent(value: unknown) {
   const text = readString(value);
-  return text ? truncateDisplayText(text, maxChars) : undefined;
+  return text ? text : undefined;
 }
 
 function readBoundedStringList(value: unknown, maxItems: number, maxChars: number) {
@@ -962,7 +962,7 @@ function normalizeAssistantAnswerStream(type: string | undefined, payload: Recor
     return undefined;
   }
   const schemaVersion = payload.schema_version ?? payload.schemaVersion;
-  const content = readBoundedContent(payload.content, 8000);
+  const content = readStreamContent(payload.content);
   if (schemaVersion !== 1 || !content) {
     return undefined;
   }
@@ -983,7 +983,7 @@ function normalizeAssistantThinkingStream(type: string | undefined, payload: Rec
     return undefined;
   }
   const schemaVersion = payload.schema_version ?? payload.schemaVersion;
-  const content = readBoundedContent(payload.content, 8000);
+  const content = readStreamContent(payload.content);
   if (schemaVersion !== 1 || !content) {
     return undefined;
   }

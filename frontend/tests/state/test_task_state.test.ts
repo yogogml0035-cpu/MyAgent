@@ -495,6 +495,45 @@ test("normalizeTaskState preserves safe assistant thinking stream events", () =>
   assert.equal(state.logs[0].live?.kind, "think");
 });
 
+test("normalizeTaskState keeps full thinking stream content for diagnostics", () => {
+  const longReasoning = `思考开始：${"A".repeat(8205)}::TAIL`;
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "running",
+      events: [
+        {
+          id: "think-long",
+          type: "assistant_thinking_delta",
+          message: "AI 思考中。",
+          run_id: "run-1",
+          payload: {
+            schema_version: 1,
+            stream_index: 4,
+            content: longReasoning,
+            live: {
+              schema_version: 1,
+              kind: "think",
+              stage: "thinking",
+              display_text: "AI正在思考...",
+              diagnostic_label: "model.reasoning_content",
+              parameter_items: [],
+            },
+          },
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.logs[0]?.thinkingStream?.content, longReasoning);
+  assert.equal(
+    (state.logs[0]?.rawRecord?.payload as { content?: string } | undefined)?.content,
+    longReasoning,
+  );
+  assert.equal(JSON.stringify(state.logs).includes("rawRecord"), false);
+});
+
 test("normalizeTaskState preserves terminal task-run reasoning summaries", () => {
   const state = normalizeTaskState(
     {
