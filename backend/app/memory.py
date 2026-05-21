@@ -16,6 +16,13 @@ from .security.scanner import SENSITIVE_REDACTION, redact_sensitive_text, scan_t
 logger = logging.getLogger(__name__)
 
 MEMORY_TYPES = {"preference", "profile_fact", "project_rule", "stable_workflow"}
+RUN_DIAGNOSTIC_MARKERS = (
+    "reasoning_content",
+    "assistant_thinking_delta",
+    "assistant_answer_delta",
+    "tool_call_id",
+    "tool_result",
+)
 
 
 class MemoryServiceError(RuntimeError):
@@ -249,7 +256,7 @@ class AgentMemoryService:
                 break
             for record in records:
                 text = _sanitize_memory_segment(str(record.text), max_chars=420)
-                if not text or _has_sensitive_memory_content(text):
+                if not text or _should_skip_memory_text(text):
                     continue
                 self._upsert_memory_index(
                     memory_id=str(record.memory_id),
@@ -283,7 +290,7 @@ class AgentMemoryService:
             if memory.score is not None and memory.score < self.settings.memory_min_score:
                 continue
             memory_text = _sanitize_memory_segment(memory.text, max_chars=520)
-            if memory_text:
+            if memory_text and not _has_run_diagnostic_content(memory_text):
                 label = f"{memory.memory_type}: " if memory.memory_type else ""
                 memory_lines.append(f"{index}. {label}{memory_text}")
         if not memory_lines:
@@ -341,7 +348,7 @@ class AgentMemoryService:
             if memory.confidence < self.settings.memory_min_score:
                 continue
             text = _sanitize_memory_segment(memory.text, max_chars=420)
-            if not text or _has_sensitive_memory_content(text):
+            if not text or _should_skip_memory_text(text):
                 continue
             memory_id = str(
                 uuid.uuid5(
@@ -497,6 +504,15 @@ def _sanitize_memory_segment(text: str, *, max_chars: int) -> str:
 
 def _has_sensitive_memory_content(text: str) -> bool:
     return bool(scan_text_for_secrets(text, source="memory"))
+
+
+def _has_run_diagnostic_content(text: str) -> bool:
+    normalized = _compact(text, max_chars=max(len(text), 1)).lower()
+    return any(marker in normalized for marker in RUN_DIAGNOSTIC_MARKERS)
+
+
+def _should_skip_memory_text(text: str) -> bool:
+    return _has_sensitive_memory_content(text) or _has_run_diagnostic_content(text)
 
 
 def _compact(text: str, max_chars: int) -> str:

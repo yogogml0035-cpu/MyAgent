@@ -10,6 +10,7 @@ Source: prd.json
 - `TaskRunner` 的流式事件最好在两个边界都做 run 归属收敛：`start()` 在 `convert_stream_event()` 之后立刻规范化 `EventRecord.run_id`，`start_background()` 在持久化前再次规范化，这样即使上游 callback 或 fake runner 带错 `run_id`，事件也不会串到别的 run。
 - 前端字段转换集中在 `frontend/app/task-state.ts`，默认渲染应使用简洁 live metadata，完整运行证据通过 `rawRecord`、expanded diagnostics 和 JSONL copy 暴露。
 - `reasoning_content` 是 run 级诊断证据，只能保存在当前 run 的事件日志与展开诊断中，不能进入普通 messages、conversation context、长期记忆、Qdrant payload 或默认 artifact。
+- `ConversationContextBuilder` 和 long-term memory 只能消费 canonical 的 `TaskState.messages`、当前用户目标和最终答案；如果候选文本带 `reasoning_content`、`assistant_thinking_delta`、`assistant_answer_delta`、`tool_call_id` 或 `tool_result` 这类 run 诊断标记，必须在 context/memory 边界直接拒收。
 - 行为变更必须同步测试、实际浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。
 - OpenAI-compatible provider payload 表征测试可以先用 `langchain_openai.chat_models.base._convert_message_to_dict()` 复用 LangChain 既有序列化，再由本地 adapter 精确补回 provider 专属字段。
 - DeepSeek message adapter 需要和 `ChatDeepSeek._get_request_payload()` 保持一致：assistant content list 要折叠为字符串、tool content list 要 JSON 化，再只对当前 assistant tool-call turn 回放 `reasoning_content`。
@@ -118,4 +119,17 @@ Source: prd.json
   - 只断言 `task_completed`/`task_failed` 不够；`status_update` 和 `assistant_answer_delta` 才能证明流式事件链路也没有串 run，特别是 provider 异常前最后一批 streamed events。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - `TaskRunner.start_background()` 的 `_append_event()` 是最稳的 run-scoping 兜底点；即使测试里 monkeypatch 了 `runner.start()`，只要它还通过 `on_event` 回调事件，storage 中的事件仍会被统一绑定到当前 run。
+---
+
+## 2026-05-21 23:39 - US-009
+- 给 `ConversationContextBuilder` 与 long-term memory 补了保护回归测试，并在 `app/memory.py` 增加 run 诊断文本过滤，阻止带 `reasoning_content`、`assistant_thinking_delta`、`tool_call_id`、`tool_result` 等标记的候选文本进入 Postgres canonical memory、Qdrant payload 或记忆召回。
+- 更改的文件：`backend/app/memory.py`、`backend/tests/unit/runner/test_conversation_context.py`、`backend/tests/unit/runner/test_memory.py`、`asset/deepagents_platform_knowledge_pack.md`、`tasks/multi-session-thinking-audit/prd.json`
+- 验证：`cd backend && uv run pytest tests/unit/runner/test_conversation_context.py tests/unit/runner/test_memory.py -q`、`cd backend && uv run pytest -q`、`cd backend && uv run ruff check .`、`cd backend && uv run mypy app tests`、`git diff --check` 全部通过；未运行浏览器 E2E，因为本轮只收紧后端 context/memory 边界，没有新增前端入口或浏览器可见交互变化。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - 运行诊断泄露不应只靠 secrets scanner 兜底；`reasoning_content`、`tool_result` 这类文本本身不是凭据格式，但依然属于禁止进入长期记忆/普通上下文的 run-level 证据，应该在 memory/context 自己的边界层过滤。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 只验证“普通 assistant 历史里没有 reasoning”还不够；同一个 task 从 thinking 切回 non-thinking 时，还要断言 follow-up context 里的 `AIMessage.additional_kwargs` 依旧为空，避免后续 provider adapter 被历史消息误触发。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - `AgentMemoryService.rebuild_index_from_storage()` 和 `recall_context()` 也需要复用同一条过滤规则，否则旧脏数据可能在重建索引或记忆召回阶段重新暴露。
 ---

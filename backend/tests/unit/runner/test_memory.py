@@ -146,6 +146,65 @@ def test_remember_completed_run_persists_canonical_memory_and_qdrant_index(monke
     assert scan_text_for_secrets(payload["text"], source="memory") == []
 
 
+def test_remember_completed_run_filters_reasoning_and_tool_raw_canaries(monkeypatch):
+    service = cast(Any, object.__new__(AgentMemoryService))
+    embedding = _FakeEmbedding()
+    index = _FakeIndex()
+    storage = _FakeStorage()
+    service.embedding = embedding
+    service.index = index
+    service.storage = storage
+    service.settings = type(
+        "Settings",
+        (),
+        {
+            "default_user_id": "user-1",
+            "default_model": "deepseek-v4-flash",
+            "memory_min_score": 0.7,
+        },
+    )()
+    monkeypatch.setattr(
+        service,
+        "extract_memories",
+        lambda **_: [
+            ExtractedMemory("preference", "用户喜欢先确认架构边界", 0.92),
+            ExtractedMemory(
+                "stable_workflow",
+                "reasoning_content 原文: Authorization: Bearer not_a_real_token_999",
+                0.97,
+            ),
+            ExtractedMemory(
+                "project_rule",
+                'tool_result 原文: {"api_key":"sk-00000000FAKE00000000000000"}',
+                0.98,
+            ),
+        ],
+    )
+
+    ids = service.remember_completed_run(
+        task_id="task-1",
+        run_id="run-1",
+        user_goal="总结本轮排障结论",
+        final_answer="最终回答里不应混入 reasoning 或 tool 原始日志",
+        user_id="user-1",
+    )
+
+    assert len(ids) == 1
+    assert len(storage.memories) == 1
+    assert len(index.upserts) == 1
+    assert embedding.inputs == ["用户喜欢先确认架构边界"]
+    persisted_text = storage.memories[0]["text"]
+    payload_text = index.upserts[0]["payload"]["text"]
+    assert "reasoning_content 原文" not in persisted_text
+    assert "Authorization: Bearer" not in persisted_text
+    assert "tool_result 原文" not in persisted_text
+    assert "api_key" not in persisted_text
+    assert "reasoning_content 原文" not in payload_text
+    assert "Authorization: Bearer" not in payload_text
+    assert "tool_result 原文" not in payload_text
+    assert "api_key" not in payload_text
+
+
 def test_rebuild_index_from_canonical_storage_recreates_schema_v2_points():
     service = cast(Any, object.__new__(AgentMemoryService))
     embedding = _FakeEmbedding()

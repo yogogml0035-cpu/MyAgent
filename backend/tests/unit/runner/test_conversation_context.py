@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from langchain_core.messages import AIMessage, HumanMessage
+
 from app.config import Settings
 from app.conversation_context import ConversationContextBuilder
 from app.schemas import ChatMessage
@@ -125,3 +127,71 @@ def test_context_builder_injects_fresh_tool_cache_unless_refresh_requested(tmp_p
     )
 
     assert refresh_context.cached_tool_results == []
+
+
+def test_context_builder_ignores_reasoning_events_and_keeps_followup_history_plain(tmp_path):
+    settings = Settings(
+        task_root=tmp_path / "tasks",
+        workspace_root=tmp_path / "tasks",
+        recent_message_limit=1,
+    )
+    storage = InMemoryTaskStorage(settings.task_root)
+    state = storage.create_task(message=None, model="deepseek-v4-flash-thinking")
+    first_run = storage.start_run(
+        state.task_id,
+        message="先查一下上海天气",
+        model="deepseek-v4-flash-thinking",
+        expected_statuses={"idle"},
+    )
+    assert first_run is not None
+    _, first_run_id = first_run
+    storage.append_event(
+        state.task_id,
+        "assistant_thinking_delta",
+        "AI正在思考...",
+        payload={
+            "content": "THINKING_CANARY tool_call_id=call_123 原始推理不应进入普通上下文。",
+            "live": {"display_text": "AI正在思考...", "diagnostic_label": "model.reasoning_content"},
+        },
+        run_id=first_run_id,
+        level="info",
+    )
+    storage.update_task_if_status_and_append_event(
+        state.task_id,
+        {"running"},
+        status="complete",
+        run_id=first_run_id,
+        append_message=ChatMessage(role="assistant", content="上海今天多云。", created_at=""),
+        event_type="task_completed",
+        event_message="任务已完成。",
+    )
+    followup = storage.start_run(
+        state.task_id,
+        message="切到普通模型后继续总结",
+        model="deepseek-v4-flash",
+        expected_statuses={"complete"},
+    )
+    assert followup is not None
+
+    context = ConversationContextBuilder(settings, storage).build(
+        task_id=state.task_id,
+        current_message="切到普通模型后继续总结",
+    )
+
+    serialized = "\n".join(str(message.content) for message in context.messages)
+    assert context.summary is not None
+    assert "THINKING_CANARY" not in context.summary
+    assert "THINKING_CANARY" not in serialized
+    history_messages = [
+        message
+        for message in context.messages
+        if isinstance(message, AIMessage | HumanMessage)
+    ]
+    assert any(
+        isinstance(message, AIMessage) and message.content == "上海今天多云。"
+        for message in history_messages
+    )
+    assert all(
+        "reasoning_content" not in getattr(message, "additional_kwargs", {})
+        for message in history_messages
+    )
