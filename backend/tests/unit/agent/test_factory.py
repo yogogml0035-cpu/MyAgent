@@ -49,7 +49,16 @@ class TestBuildAgent:
         )
         call_kwargs = mock_create.call_args
         assert dummy_tool in call_kwargs.kwargs["tools"]
-        assert call_kwargs.kwargs["skills"] == ["./skills"]
+        assert call_kwargs.kwargs["skills"] == ["/skills/"]
+
+        backend = call_kwargs.kwargs["backend"]
+        assert "/skills/" in backend.routes
+        result = backend.read("/skills/web_research/SKILL.md", limit=1000)
+        assert result.error is None
+        assert result.file_data is not None
+        assert "联网研究技能" in result.file_data["content"]
+        write_result = backend.write("/skills/web_research/notes.txt", "x")
+        assert "read-only skills path" in write_result.error
 
     @patch("app.agent.factory._create_model", return_value=_mock_model())
     @patch("app.agent.factory.create_deep_agent")

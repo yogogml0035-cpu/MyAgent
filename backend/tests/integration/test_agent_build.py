@@ -35,7 +35,7 @@ class TestFullAgentBuild:
         assert result is fake_graph
 
         call_kwargs = mock_create.call_args.kwargs
-        assert call_kwargs["skills"] == ["./skills"]
+        assert call_kwargs["skills"] == ["/skills/"]
         assert call_kwargs["backend"] is not None
 
     @patch("app.agent.factory._create_model", return_value=_fake_model())
