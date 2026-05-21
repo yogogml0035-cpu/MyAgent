@@ -1,0 +1,330 @@
+{
+  "project": "MyAgent",
+  "branchName": "ralph/multi-session-thinking-audit",
+  "description": "多会话并行与 Thinking 审计：支持不同会话并行运行、同一会话互斥、DeepSeek thinking 工具调用 reasoning_content 回传、run 级完整诊断日志和前端简洁进度展示。",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "补充 DeepSeek thinking 工具调用消息表征测试",
+      "description": "作为后端维护者，我需要先用测试锁定 thinking 工具调用后的 provider 消息结构，以便修复不会停留在猜测层面。",
+      "acceptanceCriteria": [
+        "新增 `backend/tests/unit/models/test_deepseek_thinking_messages.py`，构造包含工具调用的 thinking assistant message 和 tool result message",
+        "测试断言 thinking enabled 时后续 provider 请求中的 assistant message 包含 `role`、`content`、`reasoning_content` 和 `tool_calls`",
+        "测试断言 tool result message 保留正确的 `tool_call_id`",
+        "测试断言 non-thinking 模型路径不会向 provider 请求发送 `reasoning_content`",
+        "`cd backend && uv run pytest tests/unit/models/test_deepseek_thinking_messages.py -q` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-002",
+      "title": "实现 DeepSeek thinking 消息适配层",
+      "description": "作为使用 thinking 模型的用户，我需要工具调用后的同一 run 消息被保真回传，以便不再触发 provider 的 reasoning_content 缺失错误。",
+      "acceptanceCriteria": [
+        "新增或更新 `backend/app/models/deepseek_thinking.py`，提供可测试的消息适配函数或 wrapper",
+        "thinking enabled 且 assistant message 同时包含工具调用和 reasoning 时，输出 DeepSeek-compatible message 保留 `reasoning_content`、`content` 和 `tool_calls`",
+        "non-thinking 路径剥离 thinking 专属字段，并且不修改普通 user、assistant、tool message 的必要字段",
+        "适配层不从 run events 或历史消息中伪造旧 run 缺失的 `reasoning_content`",
+        "`cd backend && uv run pytest tests/unit/models/test_deepseek_thinking_messages.py -q` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-003",
+      "title": "在模型创建入口接入 thinking 适配",
+      "description": "作为后端维护者，我需要统一从 provider 创建入口启用 thinking 兼容处理，以便所有 DeepAgents 调用共享同一规则。",
+      "acceptanceCriteria": [
+        "更新 `backend/app/models/provider.py`，在 thinking mode enabled 时接入 DeepSeek thinking 消息适配层",
+        "thinking mode disabled 时继续使用现有 provider 行为，并显式避免发送 `reasoning_content`",
+        "保留现有 `ChatDeepSeek` 初始化参数，包括 base URL、model、api key 和 `extra_body` thinking 配置",
+        "`backend/tests/unit/models/test_provider.py` 覆盖 provider 初始化参数未回退",
+        "`cd backend && uv run pytest tests/unit/models/test_provider.py tests/unit/models/test_deepseek_thinking_messages.py -q` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-004",
+      "title": "保持 thinking 流事件完整诊断内容",
+      "description": "作为排障人员，我需要 provider 暴露的 reasoning chunk 完整进入当前 run 的诊断事件，以便后续可以审计工具调用链路。",
+      "acceptanceCriteria": [
+        "更新 `backend/app/streaming/v2_adapter.py` 或相关测试，确认 `AIMessageChunk.additional_kwargs.reasoning_content` 会完整转换为 thinking chunk",
+        "如存在 tool call 关联元数据，诊断字段保存到 event payload 中，而不是 collapsed UI 文案中",
+        "subgraph/root 标识不丢失，root answer delta 与 sub-agent 诊断内容不混淆",
+        "`cd backend && uv run pytest tests/unit/streaming/test_v2_adapter.py -q` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-005",
+      "title": "确保 thinking 事件 payload 不泄露到默认文案",
+      "description": "作为普通用户，我希望默认进度只看到简洁状态，同时展开诊断时仍能看到完整 reasoning 证据。",
+      "acceptanceCriteria": [
+        "更新 `backend/app/streaming/event_converter.py`，`assistant_thinking_delta` payload 保留完整 `content`",
+        "`payload.live.display_text` 仅使用稳定简洁状态，不直接暴露完整 `reasoning_content`",
+        "`payload.live.diagnostic_label` 保持或设置为 `model.reasoning_content`",
+        "`backend/tests/unit/streaming/test_event_converter.py` 覆盖完整 payload 和简洁 live metadata",
+        "`cd backend && uv run pytest tests/unit/streaming/test_event_converter.py -q` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-006",
+      "title": "验证不同 task 可并行且同 task 互斥",
+      "description": "作为本地任务工作台用户，我需要会话 A 和会话 B 能同时运行，但同一会话不能创建第二个并发 run。",
+      "acceptanceCriteria": [
+        "新增 `backend/tests/unit/runner/test_concurrency_and_thinking_audit.py`，使用可控 fake runner 或 storage 状态验证两个不同 task 可以同时处于 running",
+        "测试断言同一 task 已 running 时再次 start 或 API send 返回 409，并且不创建新的 run",
+        "测试断言 A task 失败事件只把 A 标记为 failed，不改变 B task 的 active run 或状态",
+        "`cd backend && uv run pytest tests/unit/runner/test_concurrency_and_thinking_audit.py tests/unit/api/test_tasks.py -q` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-007",
+      "title": "验证 run 事件隔离和可选 run 查询",
+      "description": "作为排障人员，我需要按 task/run 读取事件时不会混入其他 run 的 reasoning、工具调用或最终答案。",
+      "acceptanceCriteria": [
+        "为 `backend/app/storage.py` 和 `backend/tests/fakes.py` 补充 run 事件隔离测试，确认每条事件携带正确 `run_id`、`seq` 和 task 归属",
+        "如果实现 `read_events(task_id, run_id=...)`，该参数必须只过滤当前 task 内指定 run，且不破坏 `after_id` 的 task 级恢复语义",
+        "如果不新增 run 查询参数，测试必须证明前端现有 task 级读取后按 `run_id` 分组不会串线",
+        "`cd backend && uv run pytest tests/unit/storage/test_storage.py tests/unit/api/test_tasks.py tests/unit/runner/test_concurrency_and_thinking_audit.py -q` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-008",
+      "title": "确认 runner 终端事件统一使用当前 run_id",
+      "description": "作为前端和审计日志消费者，我需要 streamed、terminal、error 和 final answer 事件都归属同一个 run。",
+      "acceptanceCriteria": [
+        "更新或补充 `backend/app/runner/core.py` 测试，确认 streamed events、`task_completed`、`task_failed`、`task_cancelled`、`status_update` 和 `final_answer` 都使用当前 `run_id`",
+        "runner 的 active run key 继续按 `task_id` 管理，不引入全局锁或全局队列",
+        "provider 异常只追加到当前 run 的错误事件，不写入其他 task/run",
+        "`cd backend && uv run pytest tests/unit/runner/test_core.py tests/unit/runner/test_concurrency_and_thinking_audit.py -q` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-009",
+      "title": "保护普通上下文和长期记忆不含 reasoning",
+      "description": "作为项目维护者，我需要 reasoning_content 只留在当前 run 诊断日志中，以便不污染普通聊天历史、长期记忆或 Qdrant payload。",
+      "acceptanceCriteria": [
+        "`backend/tests/unit/runner/test_conversation_context.py` 覆盖 context builder 只读取普通 messages，不读取 events 中的 `assistant_thinking_delta`",
+        "`backend/tests/unit/runner/test_memory.py` 使用 canary reasoning/tool raw 字符串，断言 completed-run memory 和 Qdrant payload 不包含这些字符串",
+        "同一会话从 thinking 切到 non-thinking 后，普通历史消息中不构造 `reasoning_content` 字段",
+        "`cd backend && uv run pytest tests/unit/runner/test_conversation_context.py tests/unit/runner/test_memory.py -q` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-010",
+      "title": "调整前端 busy 作用域支持跨会话发送",
+      "description": "作为用户，我需要会话 A 运行时仍能切到会话 B 发送任务，同时会话 A 自己保持不可重复发送。",
+      "acceptanceCriteria": [
+        "更新 `frontend/hooks/use-task-workspace.ts`，把全局 `isBusy` 拆分为当前提交、会话切换、会话变更等更细状态",
+        "`handleSubmit()` 只因当前 task active 或当前 task 正在提交而阻止发送，不因其他会话 running 而阻止当前非运行会话发送",
+        "`handleSelectConversation()` 不因另一个会话 running 而永久阻塞切换",
+        "clear all 仍在任一 task running 时保持保护，不删除运行中的会话",
+        "`cd frontend && npm test -- tests/workspace/test_task_workspace.test.ts` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-011",
+      "title": "更新聊天输入区的当前会话保护",
+      "description": "作为用户，我需要当前会话运行中看到明确的发送保护，而切到非运行会话时输入区恢复可发送。",
+      "acceptanceCriteria": [
+        "更新 `frontend/components/chat/ChatComposer.tsx` 和必要的父组件 props，发送按钮、placeholder、stop 按钮只反映当前会话状态",
+        "当前会话 active 时显示运行中提示和 stop button，发送按钮不可创建第二个同会话 run",
+        "切换到非运行会话时，stop button 不指向其他会话的 run，发送按钮在模型可运行且输入有效时可用",
+        "`cd frontend && npm test -- tests/workspace/test_task_workspace.test.ts tests/model/test_model_ui.test.ts` 通过",
+        "Use agent-browser to open `http://127.0.0.1:3001`, enter a running conversation A, confirm the composer shows the running placeholder and a stop control for A",
+        "Use agent-browser to switch to non-running conversation B and confirm the composer allows a valid new message without showing A's stop control",
+        "No console errors are present during the composer checks",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-012",
+      "title": "保留完整 thinking diagnostics 与 rawRecord",
+      "description": "作为排障人员，我需要展开和复制诊断时拿到完整 reasoning 内容，而默认 UI 仍保持简洁。",
+      "acceptanceCriteria": [
+        "更新 `frontend/app/task-state.ts`，expanded diagnostics 和 copy 路径使用完整 `payload.content`，不被 8000 字符 preview 截断",
+        "`ExecutionLog.rawRecord` 继续保持 non-enumerable，`JSON.stringify(state.logs)` 不泄露 raw provider payload",
+        "collapsed summary 或 preview 可以截断，但必须在 diagnostics metadata 中可观察到完整内容来源未丢失",
+        "`cd frontend && npm test -- tests/state/test_task_state.test.ts` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-013",
+      "title": "按 run 分组展示与复制诊断日志",
+      "description": "作为排障人员，我需要展开或复制某个 run 的日志时只看到该 run 的 provider、工具和 reasoning 证据。",
+      "acceptanceCriteria": [
+        "更新 `frontend/app/workspace-view.ts`，`buildThinkingStreamDiagnostics()` 聚合当前 run segment 的完整 thinking content",
+        "`buildLogClipboardText()` 导出的 raw JSONL 只包含当前 run/group 边界内的日志",
+        "A/B 两个 run 的 `assistant_thinking_delta`、tool call、tool result 和 final answer 不会互相混入对方 diagnostics",
+        "`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-014",
+      "title": "保持进度日志默认简洁并支持展开复制",
+      "description": "作为日常用户，我希望进度日志默认只显示简洁状态，只有主动展开或复制诊断时才看到完整运行证据。",
+      "acceptanceCriteria": [
+        "更新 `frontend/components/chat/TaskConversation.tsx`，collapsed rows 只显示简洁状态，例如 AI 正在思考、AI 正在生成、调用工具、工具返回、完成或失败",
+        "展开单个 run 的日志时显示该 run 的完整 JSON diagnostics，包括完整 `reasoning_content`、工具参数、工具结果、错误和最终答案",
+        "复制诊断内容时不混入其他 run 的日志",
+        "页面文本不重叠，按钮不撑破现有布局，并延续 `DESIGN.md` 中的暖色画布、珊瑚色主色、圆角和间距规则",
+        "`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts` 通过",
+        "Use agent-browser to open `http://127.0.0.1:3001`, view a run with thinking/tool events, confirm collapsed logs hide raw reasoning text",
+        "Use agent-browser to expand that run's diagnostics and confirm the full reasoning can be found in the expanded JSON",
+        "Use agent-browser to copy diagnostics and confirm copied text contains the current run id and does not contain another run id",
+        "No console errors are present during expand, collapse, and copy actions",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-015",
+      "title": "更新平台知识包的稳定运行边界",
+      "description": "作为后续维护者，我需要长期知识包记录新的并发、互斥、thinking 回传和诊断展示规则。",
+      "acceptanceCriteria": [
+        "更新 `asset/deepagents_platform_knowledge_pack.md`，记录不同 task/session 可并行、同 task 保持互斥",
+        "知识包记录 thinking tool-call 后续 provider 请求必须回传 `reasoning_content`，且不能伪造旧 run 缺失数据",
+        "知识包记录 `reasoning_content` 只作为当前 run diagnostics 保存，不进入普通消息、长期记忆、Qdrant payload 或默认 artifact",
+        "知识包记录 collapsed UI 简洁、expanded/copy diagnostics 完整且按 run 隔离",
+        "`git diff --check` 通过",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-016",
+      "title": "新增实际服务 E2E 闭环验收",
+      "description": "作为项目维护者，我需要真实浏览器闭环覆盖跨会话并行、同会话互斥、thinking 工具调用和诊断日志隔离。",
+      "acceptanceCriteria": [
+        "新增 `frontend/e2e-playwright/test_multi_session_thinking_audit.spec.mjs`，使用实际 `MYAGENT_E2E_BASE_URL` 和 `MYAGENT_E2E_API_URL`，不使用纯 mock 页面替代",
+        "E2E 创建或进入会话 A 发起 long/running 任务，再切到会话 B 发起独立 run，并确认 A/B 都有独立 run 状态",
+        "E2E 在会话 A running 时尝试再次发送，页面保持同会话发送保护，后端没有创建第二个 A run",
+        "E2E 覆盖至少一个 thinking/tool 事件链，展开 diagnostics 能看到完整 `reasoning_content`，且复制 A/B 日志不会互相混入",
+        "截图保存到 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/multi-session-thinking-audit/`，截图文件不提交 git",
+        "`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 npx playwright test e2e-playwright/test_multi_session_thinking_audit.spec.mjs --reporter=line` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-017",
+      "title": "记录 E2E 运行入口并完成全量回归",
+      "description": "作为项目维护者，我需要文档说明新 E2E 的运行方式，并用后端、前端和浏览器验收确认整体功能完成。",
+      "acceptanceCriteria": [
+        "更新 `frontend/e2e-playwright/README.md`，说明 multi-session thinking audit E2E 的环境变量、实际服务要求和截图目录",
+        "`cd backend && uv run pytest && uv run ruff check . && uv run mypy app tests` 通过",
+        "`cd frontend && npm run typecheck && npm test && npm run lint && npm run build` 通过",
+        "使用实际 `8001` 后端和 `3001` 前端运行新增 Playwright E2E 并通过",
+        "运行现有 progress-log disclosure E2E 或等价回归，确认日志展开和复制能力未回退",
+        "`git diff --check` 通过",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    }
+  ]
+}

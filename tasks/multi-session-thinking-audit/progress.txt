@@ -1,0 +1,12 @@
+# Ralph Progress
+
+Requirement: tasks/multi-session-thinking-audit
+Started: 2026-05-21 20:08
+Source: prd.json
+
+## Codebase Patterns
+
+- 后端运行状态以 `task_id`/`run_id` 为边界，`storage.start_run()`、`TaskRunner.start_background()`、`append_event()` 和终端事件需要保持同一个 `run_id`。
+- 前端字段转换集中在 `frontend/app/task-state.ts`，默认渲染应使用简洁 live metadata，完整运行证据通过 `rawRecord`、expanded diagnostics 和 JSONL copy 暴露。
+- `reasoning_content` 是 run 级诊断证据，只能保存在当前 run 的事件日志与展开诊断中，不能进入普通 messages、conversation context、长期记忆、Qdrant payload 或默认 artifact。
+- 行为变更必须同步测试、实际浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。
