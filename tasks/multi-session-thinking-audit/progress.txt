@@ -25,6 +25,8 @@ Source: prd.json
 - `frontend/app/task-state.ts` 必须保留 `assistant_thinking_delta` / `assistant_answer_delta` 的完整 `payload.content` 作为 diagnostics 源数据；任何截断都只能发生在 collapsed preview 投影层，不能提前发生在 state normalization，否则 expanded JSON 和逐行复制都会永久丢内容。
 - `frontend/app/workspace-view.ts` 的 thinking/answer diagnostics 聚合必须以当前 run segment 为边界：expanded JSON 用当前 run 的 stream 片段重建，整轮复制始终基于 `RunActivityGroup.logs` 输出 raw JSONL，避免不同 run 的 reasoning/final answer 串线。
 - `TaskConversation` 的 run 卡片要把“默认简洁进度”和“完整 run 审计”分开：collapsed rows 继续只显示稳定状态文案，整轮审计则用 `buildRunDiagnosticsJson(group.logs)` 渲染 pretty JSON；`buildLogClipboardText(group.logs)` 继续输出同一 run 的 JSONL，并在 raw record 缺字段时补齐 `run_id`、`created_at`、`seq` 等稳定元数据。
+- `backend/app/storage.py#list_task_summaries()` 只会把“至少有一条非空 user message”的 task 暴露给前端历史栏；浏览器 E2E 如果想让合成会话出现在侧栏，不能只改 `tasks.title`，还要补一条 user message。
+- `frontend/e2e-playwright` 的稳定验收模式是“真实 3001/8001 服务 + 公共 API 建 task + 直接向 Postgres seed 受控 run/events”；这样既保留真实浏览器/API 合约，又不会把 E2E 稳定性绑在外部 provider 上。
 
 ## 2026-05-21 20:45 - US-001
 - 实现了 DeepSeek thinking/tool-call request message 的表征测试，并新增一个未接线的 helper 作为稳定断言目标，锁定 assistant/tool provider payload 结构。
@@ -216,4 +218,17 @@ Source: prd.json
   - 文档型 story 虽然不改产品代码，也要同步 `prd.json` 的 `passes` 和 `progress.txt`，否则 Ralph 会在下一轮继续把同一个知识包任务当成未完成。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - `asset/deepagents_platform_knowledge_pack.md` 已经按“业务规则 / 边界 / 陷阱 / 回归风险”组织；补充稳定规则时，优先新增集中章节，而不是把同一主题拆散到多个远距离 bullet。
+---
+
+## 2026-05-22 03:33 - US-016
+- 新增实际服务闭环 Playwright spec：在真实 `3001/8001` 上用公共 API 创建会话、用 Postgres 合约 seed A/B 两个 run，覆盖 A 运行时同会话再次提交被前端拦截、B 在 A 运行期间独立启动、thinking/tool diagnostics 展开可见，以及 A/B JSONL 复制互不串线。
+- 更改的文件：`frontend/e2e-playwright/test_multi_session_thinking_audit.spec.mjs`、`tasks/multi-session-thinking-audit/prd.json`、`tasks/multi-session-thinking-audit/progress.txt`
+- 验证：`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_ACCESS_TOKEN=... MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260522033045/multi-session-thinking-audit npx playwright test e2e-playwright/test_multi_session_thinking_audit.spec.mjs --reporter=line`、`cd frontend && npm run typecheck`、`cd frontend && npm test`、`cd frontend && npm run lint`、`git diff --check` 全部通过；由于复用中的 `3001` dev server 会占用默认 `.next`，`npm run build` 改在 `/tmp/myagent-frontend-build-us016` 临时副本中通过。E2E 截图与 `assertions.json` 保存在 `frontend/e2e-playwright/e2e-20260522033045/multi-session-thinking-audit/`，命令输出保存在 `tasks/multi-session-thinking-audit/logs/us016-playwright.log`，后端日志保存在 `tasks/multi-session-thinking-audit/logs/us016-backend.log`。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - 多会话运行态的浏览器闭环不一定要真的把外部 provider 跑起来；沿用现有 E2E 的“真实前后端 + Postgres run/event seed”模式，就能稳定覆盖前端 busy 作用域、run 归属和 diagnostics 展开/复制边界。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 如果想让一个合成 task 出现在左侧历史栏，单独更新 `tasks.title` 没用，因为 `list_task_summaries()` 会过滤掉没有 user message 的会话；至少补一条 user message，再去验证切换或并行场景。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - `TaskConversation` 的 run 头部复制按钮 (`.traceHeader .traceCopyButton`) 直接复制当前 run 的 raw JSONL，适合做 “当前 run id 存在、另一 run id 不存在” 的隔离断言；而 `details.runDiagnosticsPanel` 更适合断言完整 `reasoning_content` 是否可见。
 ---
