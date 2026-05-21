@@ -157,6 +157,30 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(composerSource.includes("onRemoveSkill: (skillName: string) => void"), true);
   });
 
+  void it("should expose a clear-history action through the sidebar boundary", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const workspaceSource = readFileSync(
+      new URL("../../components/chat/TaskWorkspace.tsx", import.meta.url),
+      "utf-8",
+    );
+    const sidebarSource = readFileSync(
+      new URL("../../components/chat/ChatSidebar.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(hookSource.includes("const handleClearConversations = useCallback"), true);
+    assert.strictEqual(hookSource.includes("taskSummaries.some((summary) => isTaskActive(summary.status))"), true);
+    assert.strictEqual(hookSource.includes("清空所有历史会话后无法恢复"), true);
+    assert.strictEqual(hookSource.includes("for (const id of deletedIds)"), true);
+    assert.strictEqual(workspaceSource.includes("onClearConversations={workspace.handleClearConversations}"), true);
+    assert.strictEqual(sidebarSource.includes("onClearConversations: () => Promise<void> | void"), true);
+    assert.strictEqual(sidebarSource.includes("clearHistoryButton"), true);
+    assert.strictEqual(sidebarSource.includes("清空所有会话"), true);
+  });
+
   void it("should render the slash skill picker and removable skill chips in ChatComposer", () => {
     const composerSource = readFileSync(
       new URL("../../components/chat/ChatComposer.tsx", import.meta.url),
@@ -176,5 +200,19 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(composerSource.includes("event.key === \"ArrowUp\""), true);
     assert.strictEqual(composerSource.includes("event.key === \"Escape\""), true);
     assert.strictEqual(composerSource.includes("handleSkillSelect(activeSkillOption)"), true);
+  });
+
+  void it("should not render dollar signs inside skill markers", () => {
+    const composerSource = readFileSync(
+      new URL("../../components/chat/ChatComposer.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.doesNotMatch(
+      composerSource,
+      /<span className="skill(?:Chip|Option)Marker"[^>]*>\s*\$\s*<\/span>/,
+    );
+    assert.match(composerSource, /<span className="skillChipMarker" aria-hidden="true" \/>/);
+    assert.match(composerSource, /<span className="skillOptionMarker" aria-hidden="true" \/>/);
   });
 });

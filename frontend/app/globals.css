@@ -124,8 +124,10 @@ p {
 
 .chatSidebar {
   display: grid;
-  align-content: start;
-  min-height: 100vh;
+  grid-template-rows: auto minmax(0, 1fr);
+  align-content: stretch;
+  height: 100vh;
+  min-height: 0;
   padding: 20px 12px;
   border-right: 1px solid var(--hairline);
   background: rgba(250, 249, 245, 0.9);
@@ -186,6 +188,8 @@ p {
 
 .historyPanel {
   display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-height: 0;
   gap: 10px;
 }
 
@@ -198,7 +202,59 @@ p {
 
 .historyList {
   display: grid;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 2px;
+  scrollbar-color: rgba(204, 120, 92, 0.54) rgba(230, 223, 216, 0.28);
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
   gap: 5px;
+}
+
+.historyList::-webkit-scrollbar {
+  width: 8px;
+}
+
+.historyList::-webkit-scrollbar-track {
+  border-radius: 999px;
+  background: rgba(230, 223, 216, 0.28);
+}
+
+.historyList::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(250, 249, 245, 0.9);
+  border-radius: 999px;
+  background: rgba(204, 120, 92, 0.54);
+}
+
+.historyFooter {
+  padding: 4px 0 0;
+}
+
+.clearHistoryButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 500;
+  transition:
+    background 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease;
+}
+
+.clearHistoryButton:hover:not(:disabled),
+.clearHistoryButton:focus-visible {
+  border-color: rgba(198, 69, 69, 0.34);
+  background: rgba(250, 249, 245, 0.96);
+  color: var(--danger);
 }
 
 .historyItemShell {
@@ -1921,6 +1977,16 @@ p {
   line-height: 1;
 }
 
+.skillChipMarker::before,
+.skillOptionMarker::before {
+  width: 8px;
+  height: 8px;
+  border: 1.5px solid currentColor;
+  border-radius: 2px;
+  content: "";
+  transform: rotate(45deg);
+}
+
 .skillChipMarker {
   width: 20px;
   height: 20px;
@@ -2554,6 +2620,8 @@ button:hover:not(:disabled),
   }
 
   .chatSidebar {
+    grid-template-rows: auto auto;
+    height: auto;
     min-height: auto;
     padding: 10px;
     border-right: 0;
@@ -2562,6 +2630,7 @@ button:hover:not(:disabled),
   }
 
   .historyPanel {
+    grid-template-rows: auto auto auto;
     gap: 7px;
   }
 
@@ -2569,6 +2638,8 @@ button:hover:not(:disabled),
     grid-auto-flow: column;
     grid-auto-columns: minmax(150px, 1fr);
     overflow-x: auto;
+    overflow-y: hidden;
+    padding-right: 0;
   }
 
   .chatWorkspace {

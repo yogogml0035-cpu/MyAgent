@@ -5,6 +5,7 @@ import type { ConversationHistoryItem } from "../../app/workspace-view";
 type ChatSidebarProps = {
   historyItems: ConversationHistoryItem[];
   isBusy: boolean;
+  onClearConversations: () => Promise<void> | void;
   onDeleteConversation: (id: string) => Promise<void> | void;
   onNewConversation: () => void;
   onRenameConversation: (id: string, title: string) => Promise<void> | void;
@@ -14,6 +15,7 @@ type ChatSidebarProps = {
 export function ChatSidebar({
   historyItems,
   isBusy,
+  onClearConversations,
   onDeleteConversation,
   onNewConversation,
   onRenameConversation,
@@ -181,6 +183,16 @@ export function ChatSidebar({
               )}
             </div>
           ))}
+        </div>
+        <div className="historyFooter">
+          <button
+            className="clearHistoryButton"
+            disabled={isBusy || historyItems.length === 0}
+            onClick={() => void onClearConversations()}
+            type="button"
+          >
+            清空所有会话
+          </button>
         </div>
       </nav>
     </aside>

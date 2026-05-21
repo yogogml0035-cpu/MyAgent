@@ -1464,6 +1464,10 @@ test("workspace CSS defines dedicated warm-canvas skill picker and chip styles",
   );
   assert.match(
     cssSource,
+    /\.skillChipMarker::before,\n\.skillOptionMarker::before\s*\{[\s\S]*?transform: rotate\(45deg\);/,
+  );
+  assert.match(
+    cssSource,
     /\.skillPickerMenu\s*\{[\s\S]*?overflow: auto;[\s\S]*?overscroll-behavior: contain;[\s\S]*?background: var\(--surface\);[\s\S]*?border-radius: var\(--radius-lg\);/,
   );
   assert.match(cssSource, /\.skillOption\s*\{[\s\S]*?grid-template-columns: 24px minmax\(0, 1fr\);/);
@@ -1481,6 +1485,28 @@ test("workspace CSS defines dedicated warm-canvas skill picker and chip styles",
   );
   assert.equal(/\.modelPicker[^{,]*\s+\.skill/.test(cssSource), false);
   assert.equal(/\.modelPickerMenu[^{,]*\s+\.skill/.test(cssSource), false);
+});
+
+test("workspace CSS keeps history scrollable with a fixed clear action", () => {
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.match(
+    cssSource,
+    /\.chatSidebar\s*\{[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\);[\s\S]*?height: 100vh;/,
+  );
+  assert.match(
+    cssSource,
+    /\.historyPanel\s*\{[\s\S]*?grid-template-rows: auto minmax\(0, 1fr\) auto;[\s\S]*?min-height: 0;/,
+  );
+  assert.match(
+    cssSource,
+    /\.historyList\s*\{[\s\S]*?overflow-y: auto;[\s\S]*?overscroll-behavior: contain;[\s\S]*?scrollbar-gutter: stable;/,
+  );
+  assert.match(cssSource, /\.clearHistoryButton\s*\{[\s\S]*?width: 100%;[\s\S]*?min-height: 38px;/);
+  assert.match(
+    cssSource,
+    /@media \(max-width: 760px\)[\s\S]*?\.historyList\s*\{[\s\S]*?overflow-x: auto;[\s\S]*?overflow-y: hidden;/,
+  );
 });
 
 test("workspace CSS keeps every live log row expandable with a left-aligned timestamp", () => {

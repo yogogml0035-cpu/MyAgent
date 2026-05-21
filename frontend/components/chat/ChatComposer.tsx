@@ -363,9 +363,7 @@ export function ChatComposer({
                 title={`移除 ${skill.name}`}
                 type="button"
               >
-                <span className="skillChipMarker" aria-hidden="true">
-                  $
-                </span>
+                <span className="skillChipMarker" aria-hidden="true" />
                 <span className="skillChipName">{skill.name}</span>
                 <span className="skillChipRemove" aria-hidden="true" />
               </button>
@@ -414,9 +412,7 @@ export function ChatComposer({
                   role="option"
                   type="button"
                 >
-                  <span className="skillOptionMarker" aria-hidden="true">
-                    $
-                  </span>
+                  <span className="skillOptionMarker" aria-hidden="true" />
                   <span className="skillOptionCopy">
                     <span className="skillOptionTitle">{skill.name}</span>
                     <small>{skill.description || "项目 Skill"}</small>

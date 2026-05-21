@@ -102,6 +102,7 @@ test("composer slash skill selector creates and removes chips without sending", 
   await expect(picker).toBeVisible();
   await expect(picker.getByRole("option", { name: /code-review/ })).toBeVisible();
   await expect(picker.getByRole("option", { name: /web-research/ })).toBeVisible();
+  await expect(picker.locator(".skillOptionMarker")).toHaveText(["", ""]);
   await page.screenshot({
     fullPage: true,
     path: path.join(evidenceDir, "01-slash-picker-open.png"),
@@ -134,6 +135,7 @@ test("composer slash skill selector creates and removes chips without sending", 
   await expect(page.getByTestId("selected-skill-shelf")).toBeVisible();
   const chip = page.getByRole("button", { name: "移除 web-research skill" });
   await expect(chip).toBeVisible();
+  await expect(chip.locator(".skillChipMarker")).toHaveText("");
   await expect(textarea).toHaveValue("");
   await expect(textarea).toBeFocused();
   await page.screenshot({

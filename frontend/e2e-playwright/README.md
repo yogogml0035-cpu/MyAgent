@@ -85,6 +85,21 @@ npx playwright test e2e-playwright/test_history_menu_affordance.spec.mjs --repor
 
 The history-menu spec creates a temporary task through the public API, seeds one visible user-message history row through the same Postgres-backed task contract, verifies the three-dot menu trigger in hover and open states, captures screenshots, and deletes the task after the assertion.
 
+Run the history-scroll-clear acceptance test from `frontend/` when changing the history list scroll behavior, sidebar height constraints, or clear-all action:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_API_URL=http://127.0.0.1:8001 \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/history-scroll-clear \
+MYAGENT_E2E_ACCESS_TOKEN=... \
+MYAGENT_E2E_POSTGRES_CONTAINER=PostgreSQL \
+MYAGENT_E2E_POSTGRES_USER=postgres \
+MYAGENT_E2E_POSTGRES_DB=myagent \
+npx playwright test e2e-playwright/test_history_scroll_clear.spec.mjs --reporter=line
+```
+
+The history-scroll-clear spec creates temporary tasks through the public API, seeds visible history rows through Postgres, verifies the sidebar history area scrolls independently while the bottom clear-all button remains available, captures screenshots, and deletes only the temporary tasks.
+
 Run the auto-title acceptance test from `frontend/` when changing first-message task creation, automatic history naming, or title normalization:
 
 ```bash

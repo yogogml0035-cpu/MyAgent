@@ -33,7 +33,6 @@ backend/storage/tasks/*
 
 audits/
 .playwright-mcp/
-screenshots/
 frontend/.next-dev-e2e/
 frontend/test-results/
 frontend/e2e-playwright/e2e-*/

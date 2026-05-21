@@ -634,6 +634,46 @@ export function useTaskWorkspace() {
     [handleNewConversation, isBusy, refreshTaskSummaries, taskId, taskSummaries],
   );
 
+  const handleClearConversations = useCallback(async () => {
+    if (isBusy || taskSummaries.length === 0) {
+      return;
+    }
+    if (activeTask || taskSummaries.some((summary) => isTaskActive(summary.status))) {
+      setErrorLevel("warning");
+      setError("有任务正在运行，完成或停止后再清空历史会话。");
+      return;
+    }
+    if (!window.confirm("清空所有历史会话后无法恢复，确定清空吗？")) {
+      return;
+    }
+
+    const deletedIds = taskSummaries.map((summary) => summary.id);
+
+    setError("");
+    setIsBusy(true);
+    try {
+      for (const id of deletedIds) {
+        await deleteTask(id);
+      }
+      if (deletedIds.includes(taskId)) {
+        handleNewConversation();
+      }
+      await refreshTaskSummaries();
+    } catch (caught) {
+      setErrorLevel("error");
+      setError(formatTaskApiFailure(caught));
+    } finally {
+      setIsBusy(false);
+    }
+  }, [
+    activeTask,
+    handleNewConversation,
+    isBusy,
+    refreshTaskSummaries,
+    taskId,
+    taskSummaries,
+  ]);
+
   const showCopyFeedback = useCallback((copyKey?: string) => {
     if (!copyKey) {
       return;
@@ -735,6 +775,7 @@ export function useTaskWorkspace() {
     conversationStreamItems,
     handleCopyLogs,
     handleCopyText,
+    handleClearConversations,
     handleDownloadArtifact,
     handleFileSelection,
     handleNewConversation,

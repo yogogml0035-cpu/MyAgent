@@ -13,6 +13,7 @@ export function TaskWorkspace() {
       <ChatSidebar
         historyItems={workspace.historyItems}
         isBusy={workspace.isBusy}
+        onClearConversations={workspace.handleClearConversations}
         onDeleteConversation={workspace.handleDeleteConversation}
         onNewConversation={workspace.handleNewConversation}
         onRenameConversation={workspace.handleRenameConversation}
