@@ -575,7 +575,18 @@ export function useTaskWorkspace() {
         return;
       }
 
+      const targetSummary = taskSummaries.find((summary) => summary.id === id);
+
       setError("");
+      setTaskId(id);
+      setStatus(targetSummary?.status ?? "idle");
+      setMessages([]);
+      setLogs([]);
+      setArtifacts([]);
+      setRuns([]);
+      setUploadCount(0);
+      setBackendError("");
+      setNeedsInput(null);
       setInput("");
       setSelectedSkills([]);
       setSelectedFiles([]);
@@ -596,6 +607,7 @@ export function useTaskWorkspace() {
       isSubmittingTask,
       isSwitchingConversation,
       refreshTask,
+      taskSummaries,
       taskId,
     ],
   );
@@ -833,6 +845,7 @@ export function useTaskWorkspace() {
     canSend,
     copiedCopyKey,
     conversationStreamItems,
+    currentTaskActive: activeTask,
     handleCopyLogs,
     handleCopyText,
     handleClearConversations,

@@ -34,8 +34,8 @@ export function TaskWorkspace() {
         />
 
         <ChatComposer
-          activeTask={workspace.activeTask}
           canSend={workspace.canSend}
+          currentTaskActive={workspace.currentTaskActive}
           input={workspace.input}
           isComposerBusy={workspace.isComposerBusy}
           model={workspace.model}

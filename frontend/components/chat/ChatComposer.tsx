@@ -24,8 +24,8 @@ import { shouldSubmitComposerKey } from "../../app/workspace-view";
 const FILE_INPUT_ID = "document-files";
 
 type ChatComposerProps = {
-  activeTask: boolean;
   canSend: boolean;
+  currentTaskActive: boolean;
   input: string;
   isComposerBusy: boolean;
   model: string;
@@ -51,8 +51,8 @@ function buildSkillSlashTokenKey(value: string, token: ActiveSkillSlashToken) {
 }
 
 export function ChatComposer({
-  activeTask,
   canSend,
+  currentTaskActive,
   input,
   isComposerBusy,
   model,
@@ -82,7 +82,7 @@ export function ChatComposer({
   const skillPickerRef = useRef<HTMLDivElement | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
 
-  const skillPickerEnabled = !activeTask && !isComposerBusy && skillOptions.length > 0;
+  const skillPickerEnabled = !currentTaskActive && !isComposerBusy && skillOptions.length > 0;
   const filteredSkillOptions = useMemo(
     () =>
       isSkillPickerOpen && activeSlashToken
@@ -384,7 +384,7 @@ export function ChatComposer({
           onClick={handleTextareaSelectionChange}
           onKeyDown={handleComposerKeyDown}
           onSelect={handleTextareaSelectionChange}
-          placeholder={activeTask ? "回复生成中，请稍候..." : "尽管问..."}
+          placeholder={currentTaskActive ? "当前会话正在生成回复，请稍候..." : "尽管问..."}
           ref={textareaRef}
           rows={2}
           value={input}
@@ -494,9 +494,9 @@ export function ChatComposer({
             ) : null}
           </div>
 
-          {activeTask ? (
+          {currentTaskActive ? (
             <button
-              aria-label="停止任务"
+              aria-label="停止当前会话任务"
               className="sendButton stopAction"
               disabled={isComposerBusy}
               onClick={() => void onStop()}

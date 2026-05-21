@@ -20,6 +20,7 @@ Source: prd.json
 - `backend/app/api/tasks.py#send_message()` 的同 task 互斥是双层保护：先检查 `runner.is_running(task_id)` 立即返回 409，再由 `storage.start_run(... expected_statuses=...)` 兜底阻止非允许状态下创建新 run。
 - `storage.read_events(task_id, after_id=..., run_id=...)` 的游标语义必须先按 task 级 `seq` 解析 `after_id`，再应用可选 `run_id` 过滤；不要把恢复语义改成 run-local cursor，否则会破坏 SSE/HTTP polling 的 fail-open 恢复。
 - `frontend/hooks/use-task-workspace.ts` 的 busy 作用域要拆开：`ChatComposer` 只消费当前会话提交/停止/切换状态，`ChatSidebar` 与 clear-all 单独消费历史 mutation busy；否则一个局部请求会误伤跨会话发送和切换。
+- 前端切换会话时，如果 composer/日志需要立刻反映“当前会话”的运行态，先用目标 `taskSummary` 同步 `taskId`/`status` 并清空旧会话内容，再异步 `fetchTask(id)`；否则 A 会话的运行 placeholder 或 stop 控件会在 B 会话加载期间残留。
 
 ## 2026-05-21 20:45 - US-001
 - 实现了 DeepSeek thinking/tool-call request message 的表征测试，并新增一个未接线的 helper 作为稳定断言目标，锁定 assistant/tool provider payload 结构。
@@ -146,4 +147,17 @@ Source: prd.json
   - 前端 `npm test`/`tsx` 强依赖当前平台的 `esbuild` 二进制；如果 `node_modules` 是从 Windows 带进 WSL，先在 `frontend/` 重新 `npm ci`，否则测试和 typecheck 会一起失败。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - 复用用户已启动的 `3001` 前端做浏览器验收没问题，但 `npm run build` 会和 dev server 共享默认 `.next`；不想碰用户进程时，可以把 `frontend/` 复制到临时目录后在副本里跑 build。
+---
+
+## 2026-05-22 01:04 - US-011
+- 把聊天输入区的运行态保护显式收敛到“当前会话”：切换历史会话时先用目标 summary 立刻更新 `taskId/status` 并清空旧会话内容，再异步拉完整 task；`ChatComposer` 改用 `currentTaskActive`，A 运行时显示当前会话 placeholder 和 stop 控件，切到空闲 B 时恢复普通 placeholder 且可发送。
+- 更改的文件：`frontend/hooks/use-task-workspace.ts`、`frontend/components/chat/TaskWorkspace.tsx`、`frontend/components/chat/ChatComposer.tsx`、`frontend/tests/workspace/test_task_workspace.test.ts`、`asset/deepagents_platform_knowledge_pack.md`、`tasks/multi-session-thinking-audit/prd.json`
+- 验证：`cd frontend && npm test -- tests/workspace/test_task_workspace.test.ts tests/model/test_model_ui.test.ts`、`cd frontend && npm test`、`cd frontend && npm run typecheck`、`cd frontend && npm run lint`、`git diff --check` 全部通过；由于复用中的 `3001` dev server 会占用默认 `.next`，`npm run build` 改在 `/tmp/myagent-frontend-build-us011` 临时副本中通过。浏览器验收复用了 `http://127.0.0.1:3001` 并临时启动 `http://127.0.0.1:8001`，确认 `US-011 会话A` 显示“当前会话正在生成回复，请稍候...”与“停止当前会话任务”，切到 `US-011 会话B` 后 stop 控件消失、输入 `US-011 验收消息` 后发送按钮可用；截图保存在 `tasks/multi-session-thinking-audit/screenshots/us011-a-running.png` 和 `tasks/multi-session-thinking-audit/screenshots/us011-b-idle-ready.png`，快照/控制台日志保存在 `tasks/multi-session-thinking-audit/logs/us011-browser-snapshot-a-running.yml`、`tasks/multi-session-thinking-audit/logs/us011-browser-snapshot-b-idle.yml`、`tasks/multi-session-thinking-audit/logs/us011-browser-console-errors.log` 与 `tasks/multi-session-thinking-audit/logs/us011-backend.log`，控制台错误为 0 条。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - 会话切换如果要改变 composer 的 stop/placeholder 语义，不要等 `fetchTask()` 返回后才替换 UI；直接复用 `taskSummaries` 里的目标状态做 optimistic shell，能避免前一个会话的运行态残留。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 复用中的 `3001` dev server 会和本地 `npm run build` 争用默认 `.next`；这类前端 story 继续建议在临时副本里跑 build，而不是重启用户服务。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - `test_task_workspace.test.ts` 主要通过源码边界断言保护 hook/component 协作，适合覆盖 `TaskWorkspace -> ChatComposer` prop 语义和会话切换时的即时状态收口。
 ---

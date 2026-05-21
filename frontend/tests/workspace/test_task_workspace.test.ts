@@ -155,10 +155,12 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(workspaceSource.includes("skillOptions={workspace.skillOptions}"), true);
     assert.strictEqual(workspaceSource.includes("selectedSkills={workspace.selectedSkills}"), true);
     assert.strictEqual(workspaceSource.includes("isComposerBusy={workspace.isComposerBusy}"), true);
+    assert.strictEqual(workspaceSource.includes("currentTaskActive={workspace.currentTaskActive}"), true);
     assert.strictEqual(workspaceSource.includes("onSelectSkill={workspace.handleSelectSkill}"), true);
     assert.strictEqual(workspaceSource.includes("onRemoveSkill={workspace.handleRemoveSkill}"), true);
     assert.strictEqual(composerSource.includes("skillOptions: SkillOption[]"), true);
     assert.strictEqual(composerSource.includes("selectedSkills: SkillOption[]"), true);
+    assert.strictEqual(composerSource.includes("currentTaskActive: boolean;"), true);
     assert.strictEqual(composerSource.includes("isComposerBusy: boolean;"), true);
     assert.strictEqual(composerSource.includes("onSelectSkill: (skill: SkillOption) => void"), true);
     assert.strictEqual(composerSource.includes("onRemoveSkill: (skillName: string) => void"), true);
@@ -212,7 +214,43 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(workspaceSource.includes("isHistoryBusy={workspace.isHistoryBusy}"), true);
     assert.strictEqual(sidebarSource.includes("isHistoryBusy: boolean;"), true);
     assert.strictEqual(composerSource.includes("disabled={!canSend || isComposerBusy || !selectedModelRunnable}"), true);
-    assert.strictEqual(composerSource.includes("const skillPickerEnabled = !activeTask && !isComposerBusy"), true);
+    assert.strictEqual(
+      composerSource.includes("const skillPickerEnabled = !currentTaskActive && !isComposerBusy"),
+      true,
+    );
+  });
+
+  void it("should scope composer placeholder and stop affordance to the selected conversation", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const workspaceSource = readFileSync(
+      new URL("../../components/chat/TaskWorkspace.tsx", import.meta.url),
+      "utf-8",
+    );
+    const composerSource = readFileSync(
+      new URL("../../components/chat/ChatComposer.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(
+      hookSource.includes("const targetSummary = taskSummaries.find((summary) => summary.id === id);"),
+      true,
+    );
+    assert.strictEqual(hookSource.includes('setStatus(targetSummary?.status ?? "idle");'), true);
+    assert.strictEqual(hookSource.includes("setMessages([]);"), true);
+    assert.strictEqual(hookSource.includes("setLogs([]);"), true);
+    assert.strictEqual(hookSource.includes("currentTaskActive: activeTask,"), true);
+    assert.strictEqual(workspaceSource.includes("currentTaskActive={workspace.currentTaskActive}"), true);
+    assert.strictEqual(
+      composerSource.includes(
+        'placeholder={currentTaskActive ? "当前会话正在生成回复，请稍候..." : "尽管问..."}',
+      ),
+      true,
+    );
+    assert.strictEqual(composerSource.includes('aria-label="停止当前会话任务"'), true);
+    assert.strictEqual(composerSource.includes("{currentTaskActive ? ("), true);
   });
 
   void it("should expose a clear-history action through the sidebar boundary", () => {
