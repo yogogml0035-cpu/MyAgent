@@ -1807,6 +1807,229 @@ test("buildRunActivityGroups keeps reasoning traces chronologically with operati
   ]);
 });
 
+test("buildRunActivityGroups keeps per-run diagnostics and JSONL copy isolated", () => {
+  const groups = buildRunActivityGroups(
+    [
+      {
+        id: "run-a",
+        status: "complete",
+        startedAt: "2026-04-27T08:00:00.000Z",
+        artifactNames: [],
+      },
+      {
+        id: "run-b",
+        status: "complete",
+        startedAt: "2026-04-27T08:05:00.000Z",
+        artifactNames: [],
+      },
+    ],
+    [
+      {
+        id: "run-a-think",
+        seq: 1,
+        type: "assistant_thinking_delta",
+        title: "A thinking",
+        runId: "run-a",
+        createdAt: "2026-04-27T08:00:01.000Z",
+        thinkingStream: {
+          schemaVersion: 1,
+          streamIndex: 0,
+          content: "RUN_A_REASONING_CANARY",
+        },
+        rawRecord: {
+          id: "run-a-think",
+          type: "assistant_thinking_delta",
+          run_id: "run-a",
+          payload: { thinking_stream: { content: "RUN_A_REASONING_CANARY" } },
+        },
+      },
+      {
+        id: "run-b-think",
+        seq: 2,
+        type: "assistant_thinking_delta",
+        title: "B thinking",
+        runId: "run-b",
+        createdAt: "2026-04-27T08:05:01.000Z",
+        thinkingStream: {
+          schemaVersion: 1,
+          streamIndex: 0,
+          content: "RUN_B_REASONING_CANARY",
+        },
+        rawRecord: {
+          id: "run-b-think",
+          type: "assistant_thinking_delta",
+          run_id: "run-b",
+          payload: { thinking_stream: { content: "RUN_B_REASONING_CANARY" } },
+        },
+      },
+      {
+        id: "run-a-call",
+        seq: 3,
+        type: "tool_call",
+        title: "run a call",
+        runId: "run-a",
+        createdAt: "2026-04-27T08:00:02.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_call",
+          stage: "using_tool",
+          toolName: "list_dir",
+          toolCallId: "tool-a",
+          parameterItems: [{ key: "relative_path", value: "uploads/run-a" }],
+        },
+        rawRecord: {
+          id: "run-a-call",
+          type: "tool_call",
+          run_id: "run-a",
+          payload: { name: "list_dir", args: { relative_path: "uploads/run-a" } },
+        },
+      },
+      {
+        id: "run-b-call",
+        seq: 4,
+        type: "tool_call",
+        title: "run b call",
+        runId: "run-b",
+        createdAt: "2026-04-27T08:05:02.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_call",
+          stage: "using_tool",
+          toolName: "read_file",
+          toolCallId: "tool-b",
+          parameterItems: [{ key: "relative_path", value: "uploads/run-b.md" }],
+        },
+        rawRecord: {
+          id: "run-b-call",
+          type: "tool_call",
+          run_id: "run-b",
+          payload: { name: "read_file", args: { relative_path: "uploads/run-b.md" } },
+        },
+      },
+      {
+        id: "run-a-result",
+        seq: 5,
+        type: "tool_result",
+        title: "run a result",
+        runId: "run-a",
+        createdAt: "2026-04-27T08:00:03.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_result",
+          stage: "completed",
+          toolName: "list_dir",
+          toolCallId: "tool-a",
+          parameterItems: [],
+          resultStatus: "success",
+          resultCount: 1,
+        },
+        rawRecord: {
+          id: "run-a-result",
+          type: "tool_result",
+          run_id: "run-a",
+          payload: { name: "list_dir", status: "success", content: "RUN_A_RESULT_CANARY" },
+        },
+      },
+      {
+        id: "run-b-result",
+        seq: 6,
+        type: "tool_result",
+        title: "run b result",
+        runId: "run-b",
+        createdAt: "2026-04-27T08:05:03.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_result",
+          stage: "completed",
+          toolName: "read_file",
+          toolCallId: "tool-b",
+          parameterItems: [],
+          resultStatus: "success",
+          resultCount: 1,
+        },
+        rawRecord: {
+          id: "run-b-result",
+          type: "tool_result",
+          run_id: "run-b",
+          payload: { name: "read_file", status: "success", content: "RUN_B_RESULT_CANARY" },
+        },
+      },
+      {
+        id: "run-a-final",
+        seq: 7,
+        type: "final_answer",
+        title: "run a final",
+        runId: "run-a",
+        createdAt: "2026-04-27T08:00:04.000Z",
+        rawRecord: {
+          id: "run-a-final",
+          type: "final_answer",
+          run_id: "run-a",
+          payload: { content: "RUN_A_FINAL_CANARY" },
+        },
+      },
+      {
+        id: "run-b-final",
+        seq: 8,
+        type: "final_answer",
+        title: "run b final",
+        runId: "run-b",
+        createdAt: "2026-04-27T08:05:04.000Z",
+        rawRecord: {
+          id: "run-b-final",
+          type: "final_answer",
+          run_id: "run-b",
+          payload: { content: "RUN_B_FINAL_CANARY" },
+        },
+      },
+    ],
+    [],
+  );
+
+  assert.deepEqual(groups.map((group) => group.runId), ["run-a", "run-b"]);
+  assert.deepEqual(groups[0].logs.map((log) => log.id), [
+    "run-a-think",
+    "run-a-call",
+    "run-a-result",
+    "run-a-final",
+  ]);
+  assert.deepEqual(groups[1].logs.map((log) => log.id), [
+    "run-b-think",
+    "run-b-call",
+    "run-b-result",
+    "run-b-final",
+  ]);
+
+  const runALiveItems = buildLiveLogItems(groups[0].logs, groups[0].status);
+  const runAThinking = runALiveItems.find(
+    (item) => item.kind === "status" && item.text === "AI正在思考",
+  );
+  assert.equal(runAThinking?.kind, "status");
+  if (runAThinking?.kind !== "status") {
+    throw new Error("expected run-a thinking diagnostics");
+  }
+  assert.equal(runAThinking.details.displayJson.includes("RUN_A_REASONING_CANARY"), true);
+  assert.equal(runAThinking.details.displayJson.includes("RUN_B_REASONING_CANARY"), false);
+
+  const runAClipboard = buildLogClipboardText(groups[0].logs);
+  assert.equal(runAClipboard.includes("RUN_A_RESULT_CANARY"), true);
+  assert.equal(runAClipboard.includes("RUN_A_FINAL_CANARY"), true);
+  assert.equal(runAClipboard.includes("RUN_B_REASONING_CANARY"), false);
+  assert.equal(runAClipboard.includes("RUN_B_RESULT_CANARY"), false);
+  assert.equal(runAClipboard.includes("RUN_B_FINAL_CANARY"), false);
+  assert.equal(runAClipboard.includes("uploads/run-a"), true);
+  assert.equal(runAClipboard.includes("uploads/run-b.md"), false);
+
+  const runBClipboard = buildLogClipboardText(groups[1].logs);
+  assert.equal(runBClipboard.includes("RUN_B_RESULT_CANARY"), true);
+  assert.equal(runBClipboard.includes("RUN_B_FINAL_CANARY"), true);
+  assert.equal(runBClipboard.includes("RUN_A_REASONING_CANARY"), false);
+  assert.equal(runBClipboard.includes("RUN_A_RESULT_CANARY"), false);
+  assert.equal(runBClipboard.includes("RUN_A_FINAL_CANARY"), false);
+  assert.equal(runBClipboard.includes("uploads/run-b.md"), true);
+  assert.equal(runBClipboard.includes("uploads/run-a"), false);
+});
+
 test("partitionVisibleLogs collapses excess info reasoning but preserves warnings", () => {
   const logs = [
     {

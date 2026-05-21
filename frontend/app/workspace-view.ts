@@ -599,8 +599,7 @@ function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
 }
 
 function buildAnswerStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
-  const streamLogs = sortStreamLogs(logs, "answerStream")
-    .filter((log) => log.answerStream?.content);
+  const streamLogs = filterRunScopedStreamLogs(logs, "answerStream");
   const content = streamLogs.map((log) => log.answerStream?.content ?? "").join("");
   const lastLog = streamLogs.at(-1);
   const payload = stripUndefinedValues({
@@ -622,8 +621,7 @@ function buildAnswerStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics 
 }
 
 function buildThinkingStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
-  const streamLogs = sortStreamLogs(logs, "thinkingStream")
-    .filter((log) => log.thinkingStream?.content);
+  const streamLogs = filterRunScopedStreamLogs(logs, "thinkingStream");
   const content = streamLogs.map((log) => log.thinkingStream?.content ?? "").join("");
   const lastLog = streamLogs.at(-1);
   const payload = stripUndefinedValues({
@@ -654,6 +652,19 @@ function sortStreamLogs(
     if (leftIndex !== rightIndex) return leftIndex - rightIndex;
     return byLogOrder(left, right);
   });
+}
+
+function filterRunScopedStreamLogs(
+  logs: ExecutionLog[],
+  field: "answerStream" | "thinkingStream",
+) {
+  const streamLogs = sortStreamLogs(logs, field)
+    .filter((log) => Boolean(log[field]?.content));
+  const lastLog = streamLogs.at(-1);
+  if (!lastLog?.runId) {
+    return streamLogs;
+  }
+  return streamLogs.filter((log) => log.runId === lastLog.runId);
 }
 
 function buildSyntheticLogDiagnostics(type: string, message: string): LiveLogDiagnostics {

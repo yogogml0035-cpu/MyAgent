@@ -22,6 +22,7 @@ Source: prd.json
 - `frontend/hooks/use-task-workspace.ts` 的 busy 作用域要拆开：`ChatComposer` 只消费当前会话提交/停止/切换状态，`ChatSidebar` 与 clear-all 单独消费历史 mutation busy；否则一个局部请求会误伤跨会话发送和切换。
 - 前端切换会话时，如果 composer/日志需要立刻反映“当前会话”的运行态，先用目标 `taskSummary` 同步 `taskId`/`status` 并清空旧会话内容，再异步 `fetchTask(id)`；否则 A 会话的运行 placeholder 或 stop 控件会在 B 会话加载期间残留。
 - `frontend/app/task-state.ts` 必须保留 `assistant_thinking_delta` / `assistant_answer_delta` 的完整 `payload.content` 作为 diagnostics 源数据；任何截断都只能发生在 collapsed preview 投影层，不能提前发生在 state normalization，否则 expanded JSON 和逐行复制都会永久丢内容。
+- `frontend/app/workspace-view.ts` 的 thinking/answer diagnostics 聚合必须以当前 run segment 为边界：expanded JSON 用当前 run 的 stream 片段重建，整轮复制始终基于 `RunActivityGroup.logs` 输出 raw JSONL，避免不同 run 的 reasoning/final answer 串线。
 
 ## 2026-05-21 20:45 - US-001
 - 实现了 DeepSeek thinking/tool-call request message 的表征测试，并新增一个未接线的 helper 作为稳定断言目标，锁定 assistant/tool provider payload 结构。
@@ -174,4 +175,17 @@ Source: prd.json
   - 就算 `rawRecord` 还保留了 provider 原文，expanded/copy 链路如果是从 `thinkingStream.content` 聚合，就必须确保这个 normalized 字段本身也是全文；否则后面任何 displayJson 合成都只能得到截断版。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - 现成的 `US-005 validator 1779372824028` 会话自带 reasoning canary，适合做前端 diagnostics 展开/复制的轻量浏览器 smoke check，而不必重新造一个 thinking run。
+---
+
+## 2026-05-22 02:09 - US-013
+- 加固了 `workspace-view` 的 run 级 diagnostics 边界：thinking/answer stream 的 expanded JSON 只聚合当前 run 的片段，并补了一组交错 A/B run 的回归测试，锁定 `assistant_thinking_delta`、tool call、tool result、final answer 与整轮 JSONL copy 都不会混入别轮内容。
+- 更改的文件：`frontend/app/workspace-view.ts`、`frontend/tests/workspace/test_workspace_view.test.ts`、`tasks/multi-session-thinking-audit/prd.json`
+- 验证：`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts`、`cd frontend && npm run typecheck`、`cd frontend && npm test`、`cd frontend && npm run lint`、`git diff --check` 全部通过；由于复用中的 `3001` dev server 会占用默认 `.next`，`npm run build` 改在 `/tmp/myagent-frontend-build-us013` 临时副本中通过。浏览器验收复用了 `http://127.0.0.1:3001` 并临时启动本地 `http://127.0.0.1:8001`，在 `US-010 会话B` 的第 3 轮日志中确认页面同时显示 3 个 run 卡片，展开第 3 轮后仅出现 `B第四次发送成功`，未混入 `会话B就绪` 或 `B在A运行时仍可发送`；截图保存在 `tasks/multi-session-thinking-audit/screenshots/validator-us-013-run-group-isolation.png`，日志保存在 `tasks/multi-session-thinking-audit/logs/validator-us-013-browser-check.json`、`tasks/multi-session-thinking-audit/logs/validator-us-013-browser-errors.log` 与 `tasks/multi-session-thinking-audit/logs/validator-us-013-expanded.yml`，控制台错误为 0 条。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - `buildLiveLogItems()` 的 thinking/answer detail JSON 适合做“当前 run segment 的诊断投影”，而整轮复制应继续直接走 `buildLogClipboardText(group.logs)`，这样 expanded/copy 各自负责不同粒度，不会互相污染。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 如果浏览器里要验证 run 隔离，优先选已有多轮会话（这次用了 `US-010 会话B`）而不是现场造新数据；现成任务能直接覆盖 “多轮卡片 + 展开 JSON + 最终答案不串线” 三个边界。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - `TaskConversation` 的 “全部展开” 按钮会把整轮 `details` 一次性打开，结合 `workspace-view.ts` 的 `RunActivityGroup.logs` 分组结果，适合做 run-scoped diagnostics 的浏览器 smoke。
 ---
