@@ -9,6 +9,7 @@ from langchain_deepseek import ChatDeepSeek
 from pydantic import SecretStr
 
 from app.config import MODEL_REGISTRY, Settings
+from app.models.deepseek_thinking import DeepSeekThinkingChatModel
 
 _MODEL_RUNTIME_INDEX: dict[str, dict[str, Any]] = {
     cast(str, entry["id"]): entry for entry in MODEL_REGISTRY
@@ -45,8 +46,11 @@ def create_model(
     entry = _get_model_config(model_id)
     thinking_mode = cast(str, entry.get("thinking_mode", "disabled"))
     provider_model = cast(str, entry.get("provider_model", "deepseek-v4-flash"))
+    model_class = (
+        DeepSeekThinkingChatModel if thinking_mode == "enabled" else ChatDeepSeek
+    )
 
-    return ChatDeepSeek(
+    return model_class(
         model=provider_model,
         api_key=SecretStr(settings.deepseek_api_key),
         api_base=settings.deepseek_base_url,

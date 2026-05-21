@@ -12,6 +12,7 @@ Source: prd.json
 - 行为变更必须同步测试、实际浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。
 - OpenAI-compatible provider payload 表征测试可以先用 `langchain_openai.chat_models.base._convert_message_to_dict()` 复用 LangChain 既有序列化，再由本地 adapter 精确补回 provider 专属字段。
 - DeepSeek message adapter 需要和 `ChatDeepSeek._get_request_payload()` 保持一致：assistant content list 要折叠为字符串、tool content list 要 JSON 化，再只对当前 assistant tool-call turn 回放 `reasoning_content`。
+- `app/models/provider.py#create_model()` 是切换 provider wrapper 的稳定入口：non-thinking ID 保持 `ChatDeepSeek`，thinking-enabled ID 才切到 `DeepSeekThinkingChatModel`，这样上层调用方不用感知 adapter。
 
 ## 2026-05-21 20:45 - US-001
 - 实现了 DeepSeek thinking/tool-call request message 的表征测试，并新增一个未接线的 helper 作为稳定断言目标，锁定 assistant/tool provider payload 结构。
@@ -35,4 +36,16 @@ Source: prd.json
   - 仅靠 `_convert_message_to_dict()` 还不够；`ChatDeepSeek` 额外要求 assistant list content 折叠为字符串、tool list content 序列化成 JSON，不对齐这里会让 adapter 与真实 provider 行为漂移。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - 这一轮只实现 adapter 层本身，`create_model()` 的入口接线仍留给 US-003，避免把 story 边界混在一起。
+---
+
+## 2026-05-21 21:14 - US-003
+- 在 `create_model()` 入口按 `thinking_mode` 选择 `DeepSeekThinkingChatModel` 或 `ChatDeepSeek`，保持原有 provider 初始化参数不变，并新增 payload 回归测试确认只有 thinking 模型会回放 `reasoning_content`；同时通过 `uv run pytest tests/unit/models/test_provider.py tests/unit/models/test_deepseek_thinking_messages.py -q`、`uv run ruff check .`、`uv run mypy app tests` 和 `git diff --check`。
+- 更改的文件：`backend/app/models/provider.py`、`backend/tests/unit/models/test_provider.py`、`asset/deepagents_platform_knowledge_pack.md`、`tasks/multi-session-thinking-audit/prd.json`
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - provider 入口适合做“registry model ID -> ChatModel 类”的切换；这样 `agent/factory.py`、`memory.py` 和 `task_titles.py` 继续只依赖 `create_model()`，不用知道 thinking wrapper 的存在。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - `create_model()` 的返回类型是 `BaseChatModel`；测试如果要探测 `_get_request_payload()` 这类 provider 私有方法，需要在测试里显式 `cast`，否则 `mypy` 会报属性不存在。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - 这一轮只改了后端 provider 接线，没有前端 UI surface 变化；真实 outbound payload 行为由 `backend/tests/unit/models/test_provider.py` 直接断言。
 ---
