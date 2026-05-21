@@ -7,6 +7,8 @@ Source: prd.json
 ## Codebase Patterns
 
 - 平台级稳定运行边界最好集中沉淀到 `asset/deepagents_platform_knowledge_pack.md` 的单独规则块，而不是只散落在各次 story 的增量条目里；后续核对互斥、reasoning 回传和 run 审计边界时会更直接。
+- `frontend/next.config.mjs` 现在明确把 `next dev` 的输出目录隔离到 `.next-dev`，而生产 `npm run build` 继续写默认 `.next`；如果需要在复用中的 `3001` 开发服务旁边跑 build/typegen/E2E，优先延续这种“dev/build 产物分仓”模式，不要再依赖临时副本。
+- 依赖真实 Postgres/Qdrant 合约的 integration test 不应该再直连外部 embedding provider；优先在测试里用本地 fake embedding 保持向量维度与 recall/upsert 语义，避免 DashScope/SSL 抖动把无关回归拖挂。
 - 后端运行状态以 `task_id`/`run_id` 为边界，`storage.start_run()`、`TaskRunner.start_background()`、`append_event()` 和终端事件需要保持同一个 `run_id`。
 - `TaskRunner` 的流式事件最好在两个边界都做 run 归属收敛：`start()` 在 `convert_stream_event()` 之后立刻规范化 `EventRecord.run_id`，`start_background()` 在持久化前再次规范化，这样即使上游 callback 或 fake runner 带错 `run_id`，事件也不会串到别的 run。
 - 前端字段转换集中在 `frontend/app/task-state.ts`，默认渲染应使用简洁 live metadata，完整运行证据通过 `rawRecord`、expanded diagnostics 和 JSONL copy 暴露。
@@ -231,4 +233,17 @@ Source: prd.json
   - 如果想让一个合成 task 出现在左侧历史栏，单独更新 `tasks.title` 没用，因为 `list_task_summaries()` 会过滤掉没有 user message 的会话；至少补一条 user message，再去验证切换或并行场景。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - `TaskConversation` 的 run 头部复制按钮 (`.traceHeader .traceCopyButton`) 直接复制当前 run 的 raw JSONL，适合做 “当前 run id 存在、另一 run id 不存在” 的隔离断言；而 `details.runDiagnosticsPanel` 更适合断言完整 `reasoning_content` 是否可见。
+---
+
+## 2026-05-22 04:35 - US-017
+- 完成了全量回归闭环：把前端 dev/build 产物目录拆分为 `.next-dev` 和 `.next`，修复 `3001` 首页因 React Client Manifest 被 build 污染而出现的 SSR 500；同时把 Postgres/Qdrant integration test 改为使用本地 fake embedding，去掉对 DashScope SSL 链路的硬依赖，并更新 E2E README 记录新的 multi-session 运行入口与 progress-log 联合回归要求。
+- 更改的文件：`frontend/next.config.mjs`、`frontend/tsconfig.json`、`frontend/tests/workspace/test_frontend_architecture.test.ts`、`frontend/e2e-playwright/README.md`、`backend/tests/integration/test_postgres_memory_storage.py`、`tasks/multi-session-thinking-audit/prd.json`
+- 验证：`cd backend && source .env && uv run pytest`、`cd backend && source .env && uv run ruff check . && uv run mypy app tests`、`cd frontend && npm run typecheck && npm test && npm run lint && npm run build`、`cd frontend && source ../backend/.env && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_ACCESS_TOKEN=... MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260522043456/multi-session-thinking-audit npx playwright test e2e-playwright/test_multi_session_thinking_audit.spec.mjs --reporter=line`、`cd frontend && source ../backend/.env && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_ACCESS_TOKEN=... MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260522043517/progress-log-disclosure npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --reporter=line`、`git diff --check` 全部通过。Playwright 证据目录保存在 `frontend/e2e-playwright/e2e-20260522043456/multi-session-thinking-audit/` 和 `frontend/e2e-playwright/e2e-20260522043517/progress-log-disclosure/`，命令输出保存在 `tasks/multi-session-thinking-audit/logs/us017-playwright-multi-session.log` 与 `tasks/multi-session-thinking-audit/logs/us017-playwright-progress-log.log`。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - 如果真实浏览器验收要复用用户的 `3001` dev server，又必须在同仓库跑 `npm run build`，优先用独立 `distDir`，不要再靠“复制到临时目录再 build”规避 `.next` 互踩。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 调整 Next `distDir` 后，`tsconfig.json` 里的 generated types include 和对应的架构断言测试必须同步更新，否则 `next typegen` 或源码结构测试会在回归链路里先挂掉。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - `frontend/e2e-playwright/test_multi_session_thinking_audit.spec.mjs` 与 `test_progress_log_disclosure.spec.mjs` 都依赖 `backend/.env` 里的访问令牌和真实 `8001` 服务；在本仓库里直接 `source ../backend/.env` 就能复用同一套受保护 API 环境。
 ---

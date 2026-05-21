@@ -1,12 +1,23 @@
 from __future__ import annotations
 
 import os
+from typing import Any, cast
 
 import pytest
 
 from app.config import Settings
 from app.memory import AgentMemoryService, ExtractedMemory
 from app.storage import PostgresTaskStorage
+
+
+class _FakeEmbedding:
+    def __init__(self, dimensions: int) -> None:
+        self.dimensions = dimensions
+        self.inputs: list[str] = []
+
+    def embed(self, text: str) -> list[float]:
+        self.inputs.append(text)
+        return [0.01] * self.dimensions
 
 
 def _is_placeholder(value: str | None) -> bool:
@@ -86,6 +97,7 @@ def test_memory_service_writes_and_recalls_completed_task_memory_v2(tmp_path, mo
     assert run is not None
     _, run_id = run
     service = AgentMemoryService(settings, storage)
+    service.embedding = cast(Any, _FakeEmbedding(settings.embedding_dimensions))
     service.startup_check()
     monkeypatch.setattr(
         service,

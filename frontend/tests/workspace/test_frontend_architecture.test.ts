@@ -93,6 +93,7 @@ test("frontend dev server uses the default Next dist directory", () => {
     nextConfigSource,
     /watchOptions:\s*\{[\s\S]*?pollIntervalMs: Number\(process\.env\.NEXT_WATCH_POLL_INTERVAL_MS \|\| "300"\),/,
   );
+  assert.match(nextConfigSource, /distDir:\s*isDevServer \? "\.next-dev" : "\.next"/);
   assert.match(
     packageSource,
     /"dev": "WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true CHOKIDAR_INTERVAL=300 next dev -p 3001"/,
@@ -103,7 +104,7 @@ test("frontend dev server uses the default Next dist directory", () => {
   assert.match(devRunnerSource, /WATCHPACK_POLLING="\$\{WATCHPACK_POLLING:-true\}"/);
   assert.match(eslintConfigSource, /"\.next\/\*\*"/);
   assert.match(tsconfigSource, /"\.next\/types\/\*\*\/\*\.ts"/);
-  assert.doesNotMatch(tsconfigSource, /\.next-dev/);
+  assert.match(tsconfigSource, /"\.next-dev\/types\/\*\*\/\*\.ts"/);
   assert.match(gitignoreSource, /^next-env\.d\.ts$/m);
 });
 

@@ -40,6 +40,22 @@ npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --repor
 
 The progress-log spec seeds a temporary running task through the same Postgres-backed task/runs/messages/events contract, verifies collapsed row layout in the browser, expands status/tool/generation rows, checks the trace-level collapse-all control, captures desktop and narrow-screen screenshots, marks the temporary task complete, and deletes it through the public API.
 
+Run the multi-session thinking audit acceptance test from `frontend/` when changing cross-session busy scope, same-session send protection, run-scoped diagnostics, thinking/tool event rendering, or the JSONL copy boundary:
+
+```bash
+MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
+MYAGENT_E2E_API_URL=http://127.0.0.1:8001 \
+MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/multi-session-thinking-audit \
+MYAGENT_E2E_ACCESS_TOKEN=... \
+MYAGENT_E2E_POSTGRES_CONTAINER=PostgreSQL \
+MYAGENT_E2E_POSTGRES_USER=postgres \
+MYAGENT_E2E_POSTGRES_DB=myagent \
+npx playwright test e2e-playwright/test_multi_session_thinking_audit.spec.mjs --reporter=line
+```
+
+This spec requires the real frontend on `3001` and backend on `8001`; it does not use a mock page in place of either service. The browser flow creates or reuses two visible tasks through the public API, seeds A/B run state plus thinking/tool events through the Postgres-backed task/runs/messages/events contract, verifies that session A stays send-protected while session B can still start, expands run diagnostics to confirm full `reasoning_content`, and captures evidence under `e2e-YYYYMMDDHHMMSS/multi-session-thinking-audit/`. When this audit spec changes the progress timeline or disclosure surface, run the progress-log disclosure spec in the same regression pass to confirm collapsed rows and per-row expand/copy behavior still hold.
+The frontend config keeps `next dev` output in `.next/dev`, so this E2E can share a live `3001` dev server with `npm run build` in the same workspace without corrupting the browser runtime.
+
 Run the SearXNG search progress acceptance test when changing the configured web-search tool or tool-call/result payloads:
 
 ```bash
