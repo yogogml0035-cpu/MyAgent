@@ -489,7 +489,6 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await logToggleButton.click();
     await expect(logToggleButton).toHaveText("全部折叠", { timeout: 500 });
     await expect(logToggleButton).toHaveAttribute("aria-expanded", "true");
-    expect(await rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length)).toBe(0);
     await expect
       .poll(async () => rows.evaluateAll((elements) => elements.filter((element) => element.hasAttribute("open")).length))
       .toBe(11);

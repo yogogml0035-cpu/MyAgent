@@ -7,6 +7,7 @@ Source: prd.json
 ## Codebase Patterns
 
 - 平台级稳定运行边界最好集中沉淀到 `asset/deepagents_platform_knowledge_pack.md` 的单独规则块，而不是只散落在各次 story 的增量条目里；后续核对互斥、reasoning 回传和 run 审计边界时会更直接。
+- `TaskConversation` 这类批量 disclosure 交互要以稳定的 post-click `<details open>` 结果为契约；Playwright 不要断言 `requestAnimationFrame` 之间的瞬时状态，否则浏览器调度差异会把正确实现误判成回归。
 - `frontend/next.config.mjs` 现在明确把 `next dev` 的输出目录隔离到 `.next-dev`，而生产 `npm run build` 继续写默认 `.next`；如果需要在复用中的 `3001` 开发服务旁边跑 build/typegen/E2E，优先延续这种“dev/build 产物分仓”模式，不要再依赖临时副本。
 - 依赖真实 Postgres/Qdrant 合约的 integration test 不应该再直连外部 embedding provider；优先在测试里用本地 fake embedding 保持向量维度与 recall/upsert 语义，避免 DashScope/SSL 抖动把无关回归拖挂。
 - 后端运行状态以 `task_id`/`run_id` 为边界，`storage.start_run()`、`TaskRunner.start_background()`、`append_event()` 和终端事件需要保持同一个 `run_id`。
@@ -246,4 +247,17 @@ Source: prd.json
   - 调整 Next `distDir` 后，`tsconfig.json` 里的 generated types include 和对应的架构断言测试必须同步更新，否则 `next typegen` 或源码结构测试会在回归链路里先挂掉。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - `frontend/e2e-playwright/test_multi_session_thinking_audit.spec.mjs` 与 `test_progress_log_disclosure.spec.mjs` 都依赖 `backend/.env` 里的访问令牌和真实 `8001` 服务；在本仓库里直接 `source ../backend/.env` 就能复用同一套受保护 API 环境。
+---
+
+## 2026-05-22 04:55 - US-017
+- 收紧了进度日志批量 disclosure 的时序契约：`TaskConversation` 现在在同一次点击里同步切换 trace header 状态和行级 `<details open>`，并把 progress-log Playwright 断言改成稳定的 post-click open-count；同时更新平台知识包里的该条回归规则。
+- 更改的文件：`frontend/components/chat/TaskConversation.tsx`、`frontend/e2e-playwright/test_progress_log_disclosure.spec.mjs`、`asset/deepagents_platform_knowledge_pack.md`、`tasks/multi-session-thinking-audit/prd.json`、`tasks/multi-session-thinking-audit/progress.txt`
+- 验证：`cd frontend && npm test -- tests/workspace/test_task_conversation_scroll.test.ts tests/workspace/test_workspace_view.test.ts`、`cd frontend && npm run typecheck`、`cd frontend && source ../backend/.env && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_ACCESS_TOKEN=... MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260522045309/progress-log-disclosure npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --reporter=line`、`cd frontend && source ../backend/.env && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_ACCESS_TOKEN=... MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-20260522045328/multi-session-thinking-audit npx playwright test e2e-playwright/test_multi_session_thinking_audit.spec.mjs --reporter=line`、`cd backend && source .env && uv run pytest && uv run ruff check . && uv run mypy app tests`、`cd frontend && npm run typecheck && npm test && npm run lint && npm run build`、`git diff --check` 全部通过。Playwright 证据目录保存在 `frontend/e2e-playwright/e2e-20260522045309/progress-log-disclosure/` 和 `frontend/e2e-playwright/e2e-20260522045328/multi-session-thinking-audit/`，命令输出保存在 `tasks/multi-session-thinking-audit/logs/us017-playwright-progress-log-rerun.log`、`tasks/multi-session-thinking-audit/logs/us017-playwright-multi-session-rerun.log`、`tasks/multi-session-thinking-audit/logs/us017-backend-full-checks.log` 与 `tasks/multi-session-thinking-audit/logs/us017-frontend-full-checks.log`。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - trace-level “全部展开/全部折叠” 更适合用同步 DOM 切换维持按钮和行级 `open` 状态一致；只要契约是稳定结果，就不要把测试绑在 animation-frame 级的过渡态上。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - Playwright 的 `click()` 返回时常常已经跨过浏览器的下一帧；如果断言“点击后立刻还是 0 个 open”，就算实现正确也会因为调度差异假失败。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - `frontend/components/chat/TaskConversation.tsx` 的批量 disclosure 只操作 run 卡片内 `logList` 容器里的 `<details>`，不会影响下面独立的 `"完整诊断 JSON"` 面板。
 ---

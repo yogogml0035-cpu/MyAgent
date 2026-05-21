@@ -1,7 +1,6 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type MouseEvent } from "react";
-import { flushSync } from "react-dom";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Artifact, ChatMessage, ExecutionLog } from "../../app/task-state";
@@ -103,7 +102,6 @@ export function TaskConversation({
   const conversationCanvasRef = useRef<HTMLElement | null>(null);
   const logListRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const logListPinnedRefs = useRef<Map<string, boolean>>(new Map());
-  const scheduledLogToggleFrameRefs = useRef<Map<string, number>>(new Map());
   const [openLogDetailCounts, setOpenLogDetailCounts] = useState<Record<string, number>>({});
 
   const syncOpenLogDetailCounts = useCallback(() => {
@@ -114,44 +112,17 @@ export function TaskConversation({
     setOpenLogDetailCounts(counts);
   }, []);
 
-  const cancelScheduledLogToggle = useCallback((runId: string) => {
-    const scheduledFrame = scheduledLogToggleFrameRefs.current.get(runId);
-    if (scheduledFrame === undefined) {
-      return;
-    }
-    window.cancelAnimationFrame(scheduledFrame);
-    scheduledLogToggleFrameRefs.current.delete(runId);
-  }, []);
-
-  const scheduleLogDetailsOpen = useCallback((runId: string, logList: HTMLElement, open: boolean) => {
-    cancelScheduledLogToggle(runId);
-    const firstFrame = window.requestAnimationFrame(() => {
-      const secondFrame = window.requestAnimationFrame(() => {
-        scheduledLogToggleFrameRefs.current.delete(runId);
-        setLogDetailsOpen(logList, open);
-        if (open) {
-          logListPinnedRefs.current.set(runId, false);
-        }
-        syncOpenLogDetailCounts();
-      });
-      scheduledLogToggleFrameRefs.current.set(runId, secondFrame);
-    });
-    scheduledLogToggleFrameRefs.current.set(runId, firstFrame);
-  }, [cancelScheduledLogToggle, syncOpenLogDetailCounts]);
-
   const toggleRunLogDetails = useCallback((runId: string, open: boolean) => {
     const logList = logListRefs.current.get(runId);
     if (!logList) {
       return;
     }
-    flushSync(() => {
-      setOpenLogDetailCounts((currentCounts) => ({
-        ...currentCounts,
-        [runId]: open ? logList.querySelectorAll("details").length : 0,
-      }));
-    });
-    scheduleLogDetailsOpen(runId, logList, open);
-  }, [scheduleLogDetailsOpen]);
+    setLogDetailsOpen(logList, open);
+    if (open) {
+      logListPinnedRefs.current.set(runId, false);
+    }
+    syncOpenLogDetailCounts();
+  }, [syncOpenLogDetailCounts]);
 
   useEffect(() => {
     if (!hasConversation) {
@@ -190,16 +161,6 @@ export function TaskConversation({
       scrollLogListToBottomIfPinned(el, logListPinnedRefs.current.get(runId));
     });
   }, [noticeMessages]);
-
-  useEffect(() => {
-    const scheduledFrames = scheduledLogToggleFrameRefs.current;
-    return () => {
-      scheduledFrames.forEach((frameId) => {
-        window.cancelAnimationFrame(frameId);
-      });
-      scheduledFrames.clear();
-    };
-  }, []);
 
   function artifactCanOpen(artifact: Artifact) {
     const artifactKind = artifact.kind ?? (artifact.name.toLowerCase().endsWith(".html") ? "html" : "file");
