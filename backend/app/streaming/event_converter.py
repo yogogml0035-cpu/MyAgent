@@ -31,6 +31,7 @@ _LEVEL_MAP: dict[str, Literal["info", "success", "warning", "error"]] = {
 
 _MAX_PARAMETER_ITEMS = 8
 _MAX_PARAMETER_TEXT = 160
+_THINKING_DISPLAY_TEXT = "AI正在思考..."
 
 
 def convert_stream_event(
@@ -65,7 +66,7 @@ def convert_stream_event(
                 "schema_version": 1,
                 "kind": "think",
                 "stage": "thinking",
-                "display_text": "AI正在思考...",
+                "display_text": _THINKING_DISPLAY_TEXT,
                 "diagnostic_label": "model.reasoning_content",
                 "parameter_items": [
                     {"key": "is_subgraph", "value": bool(data.get("is_subgraph", False))},
@@ -105,7 +106,7 @@ def convert_stream_event(
 
 def _build_message(record_type: str, data: dict[str, Any]) -> str:
     if record_type == "assistant_thinking_delta":
-        return data.get("content", "")
+        return _THINKING_DISPLAY_TEXT
     if record_type == "assistant_answer_delta":
         return data.get("content", "")
     if record_type == "tool_call":

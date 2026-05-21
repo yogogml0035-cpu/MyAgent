@@ -194,7 +194,7 @@ class TestConvertStreamEvent:
 
         assert record is not None
         assert record.type == "assistant_thinking_delta"
-        assert record.message == "先判断问题是否需要联网。"
+        assert record.message == "AI正在思考..."
         assert record.payload == {
             "schema_version": 1,
             "stream_index": 8,
@@ -251,4 +251,25 @@ class TestConvertStreamEvent:
             }
         ]
         assert record.payload["live"]["display_text"] == "AI正在思考..."
+        assert record.payload["live"]["diagnostic_label"] == "model.reasoning_content"
+
+    def test_thinking_delta_keeps_reasoning_only_in_payload_not_default_message(self):
+        record = convert_stream_event(
+            {
+                "type": "thinking_chunk",
+                "data": {
+                    "content": "RAW_REASONING_CANARY: 先判断问题是否需要联网。",
+                    "is_subgraph": False,
+                },
+            },
+            "task-1",
+            "run-1",
+            seq=10,
+        )
+
+        assert record is not None
+        assert record.message == "AI正在思考..."
+        assert record.payload["content"] == "RAW_REASONING_CANARY: 先判断问题是否需要联网。"
+        assert "RAW_REASONING_CANARY" not in record.message
+        assert "RAW_REASONING_CANARY" not in record.payload["live"]["display_text"]
         assert record.payload["live"]["diagnostic_label"] == "model.reasoning_content"

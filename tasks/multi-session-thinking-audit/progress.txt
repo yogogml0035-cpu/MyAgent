@@ -14,6 +14,7 @@ Source: prd.json
 - DeepSeek message adapter 需要和 `ChatDeepSeek._get_request_payload()` 保持一致：assistant content list 要折叠为字符串、tool content list 要 JSON 化，再只对当前 assistant tool-call turn 回放 `reasoning_content`。
 - `app/models/provider.py#create_model()` 是切换 provider wrapper 的稳定入口：non-thinking ID 保持 `ChatDeepSeek`，thinking-enabled ID 才切到 `DeepSeekThinkingChatModel`，这样上层调用方不用感知 adapter。
 - `backend/app/streaming/v2_adapter.py` 的 `thinking_chunk` 既是完整 reasoning 载体，也是 tool-call 诊断挂点：如果同一 provider turn 带了工具调用，优先把 `tool_call_id`/`tool_call_ids`/`tool_calls` 放进 thinking payload，再由 `event_converter.py` 保持稳定的 `payload.live.display_text`，不要把这些诊断字段塞进 collapsed 文案。
+- `backend/app/streaming/event_converter.py` 必须把 `assistant_thinking_delta` 的完整 reasoning 放在 `payload.content`，同时让顶层 `message` 和 `payload.live.display_text` 都保持稳定状态文案；这样即使旧消费方回退到 `message`，也不会把 reasoning 泄露到默认 UI。
 
 ## 2026-05-21 20:45 - US-001
 - 实现了 DeepSeek thinking/tool-call request message 的表征测试，并新增一个未接线的 helper 作为稳定断言目标，锁定 assistant/tool provider payload 结构。
@@ -62,4 +63,17 @@ Source: prd.json
   - 只在 `v2_adapter.py` 增字段还不够；`event_converter.py` 对 `assistant_thinking_delta` 有固定 payload 白名单，不同步透传就会在持久化事件里丢掉 tool-call 关联信息。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - 现有 root/subgraph 隔离已经由 namespace 判定和 `message_chunk` 过滤保障；补 thinking 诊断时只要保留 `is_subgraph` 并避免发出 subgraph `message_chunk`，就不会污染最终答案流。
+---
+
+## 2026-05-21 22:06 - US-005
+- 收紧了 `assistant_thinking_delta` 的默认输出边界：完整 reasoning 继续保留在 `payload.content` 和展开诊断里，但顶层 `message` 改为稳定的 `AI正在思考...`，避免旧消费路径把 reasoning 当默认文案展示；同时补了 canary 回归测试验证 `live.display_text` 也不会泄露 reasoning。
+- 更改的文件：`backend/app/streaming/event_converter.py`、`backend/tests/unit/streaming/test_event_converter.py`、`asset/deepagents_platform_knowledge_pack.md`、`tasks/multi-session-thinking-audit/prd.json`
+- 验证：`cd backend && uv run pytest tests/unit/streaming/test_event_converter.py -q`、`cd backend && uv run pytest -q`、`cd backend && uv run ruff check .`、`cd backend && uv run mypy app tests`、`git diff --check` 全部通过；浏览器 smoke 复用了 `http://127.0.0.1:3001` 并临时启动 `http://127.0.0.1:8001`，确认 thinking 会话 collapsed 进度仅显示 `AI正在思考`，展开 JSON 仍包含完整 reasoning，截图与快照保存在 `tasks/multi-session-thinking-audit/screenshots/us005-thinking-collapsed-expanded.png` 和 `tasks/multi-session-thinking-audit/logs/us005-browser-*.md|.log`。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - `assistant_thinking_delta` 的安全边界最好在后端事件层就收紧，而不是依赖前端永远优先读取 `payload.live.display_text`；只要让 `payload.content` 承担完整诊断文本，legacy `message` 回退路径也能保持安全。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 只看单元测试会误判“默认文案安全”已经成立；真实浏览器里 progress row 的 copy/expand/fallback 路径仍会接触顶层 `message`，所以这类事件边界变更最好补一次最小 smoke。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - 本地前端在 `3001` 可单独运行，但浏览器 smoke 依旧依赖真实后端 `8001` 才能创建新 run；这次通过新建 `DeepSeek V4 Flash Thinking` 会话直接验证了 collapsed 与 expanded diagnostics 的分层表现。
 ---
