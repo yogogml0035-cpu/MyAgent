@@ -7,6 +7,7 @@ Source: prd.json
 ## Codebase Patterns
 
 - 后端运行状态以 `task_id`/`run_id` 为边界，`storage.start_run()`、`TaskRunner.start_background()`、`append_event()` 和终端事件需要保持同一个 `run_id`。
+- `TaskRunner` 的流式事件最好在两个边界都做 run 归属收敛：`start()` 在 `convert_stream_event()` 之后立刻规范化 `EventRecord.run_id`，`start_background()` 在持久化前再次规范化，这样即使上游 callback 或 fake runner 带错 `run_id`，事件也不会串到别的 run。
 - 前端字段转换集中在 `frontend/app/task-state.ts`，默认渲染应使用简洁 live metadata，完整运行证据通过 `rawRecord`、expanded diagnostics 和 JSONL copy 暴露。
 - `reasoning_content` 是 run 级诊断证据，只能保存在当前 run 的事件日志与展开诊断中，不能进入普通 messages、conversation context、长期记忆、Qdrant payload 或默认 artifact。
 - 行为变更必须同步测试、实际浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。
@@ -104,4 +105,17 @@ Source: prd.json
   - 只改生产 `storage.read_events()` 不够；`backend/tests/fakes.py` 的 in-memory 合同和 `/api/tasks/{task_id}/events` 的 HTTP 400 行为也要同步，否则单元测试和真实 Postgres 语义会漂移。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - 当前前端仍以 task 级事件流为主，再由本地 `runId` 分组；这次新增的 `run_id` 查询更适合后续 diagnostics/export 场景，不需要改动现有 SSE 恢复链路。
+---
+
+## 2026-05-21 23:11 - US-008
+- 给 `TaskRunner` 增加了显式 run 归属收敛：`start()` 会在流式事件转换后重新绑定当前 `run_id`，`start_background()` 在写入 storage 前再次绑定，避免 streamed、terminal、error 或 final-answer 事件因为错误 callback/未来改动带出 stale run id；同时补充 runner 测试覆盖 `status_update`、`assistant_answer_delta`、`task_completed`、`task_failed`、`task_cancelled` 和 `final_answer` 的 run 归属，以及 provider 异常不会污染其他 task/run。
+- 更改的文件：`backend/app/runner/core.py`、`backend/tests/unit/runner/test_core.py`、`backend/tests/unit/runner/test_concurrency_and_thinking_audit.py`、`asset/deepagents_platform_knowledge_pack.md`、`tasks/multi-session-thinking-audit/prd.json`
+- 验证：`cd backend && uv run pytest tests/unit/runner/test_core.py tests/unit/runner/test_concurrency_and_thinking_audit.py -q`、`cd backend && uv run pytest -q`、`cd backend && uv run ruff check .`、`cd backend && uv run mypy app tests`、`git diff --check` 全部通过；未运行浏览器 E2E，因为本轮只修改后端 runner 事件归属与单元测试，没有新增前端交互或浏览器可见行为。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - 如果某条 run 归属规则要长期稳定，除了在 `convert_stream_event()` 入口传 `run_id`，还应该在 runner 收集/持久化边界再收一次，避免未来 monkeypatch、fake runner 或 callback 漏掉 run 绑定。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 只断言 `task_completed`/`task_failed` 不够；`status_update` 和 `assistant_answer_delta` 才能证明流式事件链路也没有串 run，特别是 provider 异常前最后一批 streamed events。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - `TaskRunner.start_background()` 的 `_append_event()` 是最稳的 run-scoping 兜底点；即使测试里 monkeypatch 了 `runner.start()`，只要它还通过 `on_event` 回调事件，storage 中的事件仍会被统一绑定到当前 run。
 ---

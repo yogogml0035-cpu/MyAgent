@@ -7,6 +7,7 @@ import pytest
 from langchain_core.messages import AIMessage
 
 from app.runner.core import TaskRunner
+from app.schemas import EventRecord
 from tests.fakes import InMemoryTaskStorage
 
 
@@ -17,6 +18,27 @@ async def _wait_for(predicate: Callable[[], bool], *, timeout: float = 1.0) -> N
             return
         await asyncio.sleep(0.01)
     raise AssertionError("condition was not met before timeout")
+
+
+def _event_record(
+    *,
+    task_id: str,
+    run_id: str,
+    event_type: str,
+    message: str,
+    seq: int = 0,
+) -> EventRecord:
+    return EventRecord(
+        id=f"{task_id}-{event_type}-{seq}",
+        session_id=task_id,
+        seq=seq,
+        type=event_type,
+        message=message,
+        created_at="2026-05-21T00:00:00+00:00",
+        payload={"live": {"display_text": "AI正在思考"}},
+        run_id=run_id,
+        level="info",
+    )
 
 
 class TestConcurrencyAndThinkingAudit:
@@ -118,7 +140,16 @@ class TestConcurrencyAndThinkingAudit:
         started_b = asyncio.Event()
 
         async def fake_start(task_id: str, message: str, *, model: str | None, run_id: str, on_event=None):
-            del message, model, run_id, on_event
+            del message, model
+            assert on_event is not None
+            on_event(
+                _event_record(
+                    task_id=task_id,
+                    run_id=run_id,
+                    event_type="status_update",
+                    message="State update: model",
+                )
+            )
             if task_id == task_a.task_id:
                 started_a.set()
                 await allow_a_failure.wait()
@@ -151,9 +182,24 @@ class TestConcurrencyAndThinkingAudit:
             ]
             assert len(failed_events) == 1
             assert failed_events[0].run_id == run_id_a
-            assert not any(
-                event.type == "task_failed" for event in storage.read_events(task_b.task_id)
-            )
+            task_a_scoped_events = [
+                event
+                for event in storage.read_events(task_a.task_id)
+                if event.type in {"status_update", "task_failed"}
+            ]
+            assert [event.type for event in task_a_scoped_events] == [
+                "status_update",
+                "task_failed",
+            ]
+            assert {event.run_id for event in task_a_scoped_events} == {run_id_a}
+
+            task_b_inflight_events = [
+                event
+                for event in storage.read_events(task_b.task_id)
+                if event.type in {"status_update", "task_failed"}
+            ]
+            assert [event.type for event in task_b_inflight_events] == ["status_update"]
+            assert {event.run_id for event in task_b_inflight_events} == {run_id_b}
         finally:
             allow_a_failure.set()
             release_b.set()
@@ -163,3 +209,14 @@ class TestConcurrencyAndThinkingAudit:
             )
 
         assert storage.get_task(task_b.task_id).status == "complete"
+        task_b_terminal_events = [
+            event
+            for event in storage.read_events(task_b.task_id)
+            if event.type in {"status_update", "task_completed", "final_answer"}
+        ]
+        assert [event.type for event in task_b_terminal_events] == [
+            "status_update",
+            "task_completed",
+            "final_answer",
+        ]
+        assert {event.run_id for event in task_b_terminal_events} == {run_id_b}

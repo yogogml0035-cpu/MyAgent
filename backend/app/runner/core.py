@@ -187,6 +187,7 @@ class TaskRunner:
                             latest_state = data
                     record = convert_stream_event(event, task_id, run_id, seq=seq)
                     if record is not None:
+                        record = _bind_event_to_run(record, run_id)
                         collected.append(record)
                         if on_event is not None:
                             on_event(record)
@@ -225,14 +226,15 @@ class TaskRunner:
             final_state: dict[str, Any] = {}
 
             def _append_event(record: EventRecord) -> None:
-                collected.append(record)
+                scoped_record = _bind_event_to_run(record, run_id)
+                collected.append(scoped_record)
                 storage.append_event(
                     task_id,
-                    record.type,
-                    record.message,
-                    record.payload,
-                    run_id=record.run_id,
-                    level=record.level,
+                    scoped_record.type,
+                    scoped_record.message,
+                    scoped_record.payload,
+                    run_id=scoped_record.run_id,
+                    level=scoped_record.level,
                 )
 
             try:
@@ -458,6 +460,12 @@ def _make_runner_event(
         run_id=run_id,
         level=level,
     )
+
+
+def _bind_event_to_run(record: EventRecord, run_id: str) -> EventRecord:
+    if record.run_id == run_id:
+        return record
+    return record.model_copy(update={"run_id": run_id})
 
 
 def _terminal_event_payload(

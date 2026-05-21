@@ -4,13 +4,14 @@ import asyncio
 import inspect
 import threading
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 from langchain_core.messages import AIMessage, SystemMessage
 
 from app.memory import MemoryServiceError
 from app.runner.core import TaskRunner
+from app.schemas import EventRecord
 from tests.fakes import InMemoryTaskStorage
 
 
@@ -62,6 +63,28 @@ async def _wait_for_memory_tasks(runner: TaskRunner) -> None:
         await asyncio.sleep(0.01)
     raise AssertionError("memory tasks did not finish")
 
+def _event_record(
+    *,
+    task_id: str,
+    run_id: str | None,
+    event_type: str,
+    message: str,
+    payload: dict[str, Any] | None = None,
+    seq: int = 0,
+    level: Literal["info", "success", "warning", "error"] | None = "info",
+) -> EventRecord:
+    return EventRecord(
+        id=f"{event_type}-{seq}",
+        session_id=task_id,
+        seq=seq,
+        type=event_type,
+        message=message,
+        created_at="2026-05-21T00:00:00+00:00",
+        payload=payload or {},
+        run_id=run_id,
+        level=level,
+    )
+
 
 class TestTaskRunnerStreamState:
     @pytest.mark.asyncio
@@ -98,6 +121,38 @@ class TestTaskRunnerStreamState:
 
         assert latest_state["scope"] == "root"
         assert [record.payload["is_subgraph"] for record in snapshots] == [False, True]
+
+    @pytest.mark.asyncio
+    async def test_start_scopes_streamed_events_to_current_run(
+        self, test_settings, monkeypatch
+    ):
+        async def fake_stream_agent(agent, messages, config):
+            del agent, messages, config
+            yield {"type": "state_update", "data": {"node": "model", "is_subgraph": False}}
+            yield {
+                "type": "message_chunk",
+                "data": {"content": "partial answer", "is_subgraph": False},
+            }
+            yield {
+                "type": "values_snapshot",
+                "data": {"messages": [AIMessage(content="done")], "is_subgraph": False},
+            }
+
+        monkeypatch.setattr("app.runner.core.build_agent", lambda *args, **kwargs: object())
+        monkeypatch.setattr("app.runner.core.stream_agent", fake_stream_agent)
+
+        runner = TaskRunner(test_settings)
+        records, latest_state = await runner.start("task-1", "hello", run_id="run-1")
+
+        assert [record.type for record in records] == [
+            "status_update",
+            "assistant_answer_delta",
+            "values_snapshot",
+        ]
+        assert {record.run_id for record in records} == {"run-1"}
+        assert records[0].payload["live"]["display_text"] == "AI正在思考..."
+        assert records[1].payload["content"] == "partial answer"
+        assert latest_state["messages"] == [AIMessage(content="done")]
 
     @pytest.mark.asyncio
     async def test_start_injects_resource_manifest_system_message(
@@ -216,6 +271,72 @@ class TestTaskRunnerMemory:
 
 
 class TestTaskRunnerTerminalEvents:
+    @pytest.mark.asyncio
+    async def test_background_run_rebinds_streamed_events_to_current_run(
+        self, test_settings, monkeypatch
+    ):
+        storage = InMemoryTaskStorage(test_settings.task_root)
+        runner = TaskRunner(test_settings, storage)
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
+        run_result = storage.start_run(
+            state.task_id,
+            message="hello",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+
+        async def fake_start(task_id: str, message: str, *, model: str | None, run_id: str, on_event=None):
+            del message, model
+            assert on_event is not None
+            on_event(
+                _event_record(
+                    task_id=task_id,
+                    run_id="stale-run",
+                    event_type="status_update",
+                    message="State update: model",
+                    payload={"live": {"display_text": "AI正在思考"}},
+                    seq=0,
+                )
+            )
+            on_event(
+                _event_record(
+                    task_id=task_id,
+                    run_id=None,
+                    event_type="assistant_answer_delta",
+                    message="partial answer",
+                    payload={"content": "partial answer"},
+                    seq=1,
+                )
+            )
+            return [], {"messages": [AIMessage(content="done")]}
+
+        monkeypatch.setattr(runner, "start", fake_start)
+
+        runner.start_background(state.task_id, "hello", model="deepseek-v4-flash", run_id=run_id)
+        await _wait_for_runner(runner, state.task_id)
+
+        scoped_events = [
+            event
+            for event in storage.read_events(state.task_id)
+            if event.type
+            in {
+                "status_update",
+                "assistant_answer_delta",
+                "task_completed",
+                "final_answer",
+            }
+        ]
+
+        assert [event.type for event in scoped_events] == [
+            "status_update",
+            "assistant_answer_delta",
+            "task_completed",
+            "final_answer",
+        ]
+        assert {event.run_id for event in scoped_events} == {run_id}
+
     @pytest.mark.asyncio
     async def test_successful_background_run_writes_task_completed_event(
         self, test_settings, monkeypatch
