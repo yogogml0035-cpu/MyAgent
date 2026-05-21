@@ -193,6 +193,10 @@ export function buildLogClipboardText(logs: ExecutionLog[]) {
   return logs.map(formatRawLogRecordJson).join("\n") || "暂无日志";
 }
 
+export function buildRunDiagnosticsJson(logs: ExecutionLog[]) {
+  return formatDiagnosticJson(logs.map(buildRunDiagnosticRecord));
+}
+
 export function buildLiveLogItems(
   logs: ExecutionLog[],
   status: TaskStatus = "unknown",
@@ -549,10 +553,29 @@ export function formatLiveLogItemClipboardText(item: LiveLogItem) {
 }
 
 function formatRawLogRecordJson(log: ExecutionLog) {
-  if (log.memoryContext) {
-    return JSON.stringify(fallbackRawLogRecord(log));
+  return JSON.stringify(buildRunDiagnosticRecord(log));
+}
+
+function buildRunDiagnosticRecord(log: ExecutionLog) {
+  const fallback = fallbackRawLogRecord(log);
+  if (log.memoryContext || !isPlainRecord(log.rawRecord)) {
+    return fallback;
   }
-  return JSON.stringify(log.rawRecord ?? fallbackRawLogRecord(log));
+
+  const mergedRecord: Record<string, unknown> = {
+    ...fallback,
+    ...log.rawRecord,
+  };
+  const fallbackPayload = isPlainRecord(fallback.payload) ? fallback.payload : undefined;
+  const rawPayload = isPlainRecord(log.rawRecord.payload) ? log.rawRecord.payload : undefined;
+  if (fallbackPayload || rawPayload) {
+    mergedRecord.payload = stripUndefinedValues({
+      ...(fallbackPayload ?? {}),
+      ...(rawPayload ?? {}),
+    });
+  }
+
+  return stripUndefinedValues(mergedRecord);
 }
 
 function fallbackRawLogRecord(log: ExecutionLog) {
@@ -689,10 +712,7 @@ function mergeLiveLogDiagnostics(
 }
 
 function rawLogRecordForDiagnostics(log: ExecutionLog) {
-  if (log.memoryContext) {
-    return fallbackRawLogRecord(log);
-  }
-  return log.rawRecord ?? fallbackRawLogRecord(log);
+  return buildRunDiagnosticRecord(log);
 }
 
 function buildLiveLogDiagnosticsFromRecord(

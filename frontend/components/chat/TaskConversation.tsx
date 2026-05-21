@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import type { Artifact, ChatMessage, ExecutionLog } from "../../app/task-state";
 import { isTaskActive } from "../../app/task-state";
 import {
+  buildRunDiagnosticsJson,
   type ConversationStreamItem,
   type LiveLogItem,
   buildLiveLogItems,
@@ -395,6 +396,7 @@ export function TaskConversation({
     const groupActive = isTaskActive(group.status);
     const groupLogStatusText = formatRunLogStatus(group.status);
     const liveItems = buildLiveLogItems(group.logs, group.status);
+    const runDiagnosticsText = buildRunDiagnosticsJson(group.logs);
     const logCopyKey = `logs:${group.runId}`;
     const isLogCopied = copiedCopyKey === logCopyKey;
     const openLogDetailCount = openLogDetailCounts[group.runId] ?? 0;
@@ -486,6 +488,18 @@ export function TaskConversation({
               liveItems.map((liveItem) => renderLiveLogItem(liveItem))
             )}
           </div>
+
+          {group.logs.length > 0 ? (
+            <details className="runDiagnosticsPanel">
+              <summary>
+                <span className="runDiagnosticsPanelLabel">完整诊断 JSON</span>
+                <span className="runDiagnosticsPanelMeta">{group.logs.length} 条事件</span>
+              </summary>
+              <div className="liveLogDiagnostics runDiagnosticsBody">
+                <pre>{runDiagnosticsText}</pre>
+              </div>
+            </details>
+          ) : null}
         </article>
       </section>
     );

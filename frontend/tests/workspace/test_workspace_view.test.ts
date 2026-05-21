@@ -7,6 +7,7 @@ import {
   buildConversationStreamItems,
   buildLiveLogItems,
   buildLogClipboardText,
+  buildRunDiagnosticsJson,
   buildRunActivityGroups,
   buildStateNoticeMessages,
   buildWorkspaceNoticeMessages,
@@ -66,7 +67,35 @@ test("buildLogClipboardText copies raw JSONL diagnostics", () => {
     id: "log-1",
     type: "status_update",
     message: "State update: model",
+    detail: "开始 (0/5)",
+    level: "info",
     payload: { node: "model" },
+  });
+});
+
+test("buildLogClipboardText backfills current run id into copied JSONL diagnostics", () => {
+  const text = buildLogClipboardText([
+    {
+      id: "event-1",
+      type: "status_update",
+      title: "状态已更新",
+      runId: "run-current",
+      createdAt: "2026-04-27T08:01:00.000Z",
+      rawRecord: {
+        id: "event-1",
+        type: "status_update",
+        message: "State update: model",
+      },
+    },
+  ]);
+
+  assert.deepEqual(JSON.parse(text), {
+    id: "event-1",
+    type: "status_update",
+    message: "State update: model",
+    created_at: "2026-04-27T08:01:00.000Z",
+    run_id: "run-current",
+    payload: {},
   });
 });
 
@@ -1554,6 +1583,10 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("<pre>{details.displayJson}</pre>"), true);
   assert.equal(conversationSource.includes("details.rawJson"), false);
   assert.equal(conversationSource.includes("liveLogCopyButton"), true);
+  assert.equal(conversationSource.includes("buildRunDiagnosticsJson"), true);
+  assert.equal(conversationSource.includes('className="runDiagnosticsPanel"'), true);
+  assert.equal(conversationSource.includes("完整诊断 JSON"), true);
+  assert.equal(conversationSource.includes("<pre>{runDiagnosticsText}</pre>"), true);
   assert.equal(conversationSource.includes("onToggle={syncOpenLogDetailCounts}"), true);
   assert.equal(conversationSource.includes("toggleRunLogDetails"), true);
   assert.equal(conversationSource.includes("setLogDetailsOpen(logList, open)"), true);
@@ -1583,6 +1616,22 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   );
   assert.match(
     cssSource,
+    /\.runDiagnosticsPanel\s*\{[\s\S]*?margin: 0 14px 14px;[\s\S]*?background: rgba\(24, 23, 21, 0\.78\);/,
+  );
+  assert.match(
+    cssSource,
+    /\.runDiagnosticsPanel summary\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto 10px;[\s\S]*?min-height: 38px;/,
+  );
+  assert.match(
+    cssSource,
+    /\.runDiagnosticsPanel\[open\] summary::after\s*\{[\s\S]*?transform: rotate\(225deg\);/,
+  );
+  assert.match(
+    cssSource,
+    /\.runDiagnosticsBody pre\s*\{[\s\S]*?max-height: 240px;/,
+  );
+  assert.match(
+    cssSource,
     /\.traceActions\s*\{[\s\S]*?display: flex;[\s\S]*?gap: 8px;/,
   );
   assert.match(
@@ -1604,6 +1653,14 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.match(
     cssSource,
     /\.liveLogDiagnostics pre\s*\{[\s\S]*?padding: 10px;/,
+  );
+  assert.match(
+    cssSource,
+    /@media \(max-width: 760px\)[\s\S]*?\.traceHeader\s*\{[\s\S]*?align-items: flex-start;[\s\S]*?flex-wrap: wrap;/,
+  );
+  assert.match(
+    cssSource,
+    /@media \(max-width: 760px\)[\s\S]*?\.liveStatusRow summary,\s*\n  \.liveToolCard summary\s*\{[\s\S]*?grid-template-columns: 92px minmax\(0, 1fr\) auto auto 10px;/,
   );
   assert.match(
     cssSource,
@@ -2019,6 +2076,15 @@ test("buildRunActivityGroups keeps per-run diagnostics and JSONL copy isolated",
   assert.equal(runAClipboard.includes("RUN_B_FINAL_CANARY"), false);
   assert.equal(runAClipboard.includes("uploads/run-a"), true);
   assert.equal(runAClipboard.includes("uploads/run-b.md"), false);
+
+  const runADiagnostics = buildRunDiagnosticsJson(groups[0].logs);
+  assert.equal(runADiagnostics.includes("RUN_A_REASONING_CANARY"), true);
+  assert.equal(runADiagnostics.includes("RUN_A_RESULT_CANARY"), true);
+  assert.equal(runADiagnostics.includes("RUN_A_FINAL_CANARY"), true);
+  assert.equal(runADiagnostics.includes('"run_id": "run-a"'), true);
+  assert.equal(runADiagnostics.includes("RUN_B_REASONING_CANARY"), false);
+  assert.equal(runADiagnostics.includes("RUN_B_RESULT_CANARY"), false);
+  assert.equal(runADiagnostics.includes("RUN_B_FINAL_CANARY"), false);
 
   const runBClipboard = buildLogClipboardText(groups[1].logs);
   assert.equal(runBClipboard.includes("RUN_B_RESULT_CANARY"), true);

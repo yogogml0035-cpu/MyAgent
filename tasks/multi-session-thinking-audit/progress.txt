@@ -23,6 +23,7 @@ Source: prd.json
 - 前端切换会话时，如果 composer/日志需要立刻反映“当前会话”的运行态，先用目标 `taskSummary` 同步 `taskId`/`status` 并清空旧会话内容，再异步 `fetchTask(id)`；否则 A 会话的运行 placeholder 或 stop 控件会在 B 会话加载期间残留。
 - `frontend/app/task-state.ts` 必须保留 `assistant_thinking_delta` / `assistant_answer_delta` 的完整 `payload.content` 作为 diagnostics 源数据；任何截断都只能发生在 collapsed preview 投影层，不能提前发生在 state normalization，否则 expanded JSON 和逐行复制都会永久丢内容。
 - `frontend/app/workspace-view.ts` 的 thinking/answer diagnostics 聚合必须以当前 run segment 为边界：expanded JSON 用当前 run 的 stream 片段重建，整轮复制始终基于 `RunActivityGroup.logs` 输出 raw JSONL，避免不同 run 的 reasoning/final answer 串线。
+- `TaskConversation` 的 run 卡片要把“默认简洁进度”和“完整 run 审计”分开：collapsed rows 继续只显示稳定状态文案，整轮审计则用 `buildRunDiagnosticsJson(group.logs)` 渲染 pretty JSON；`buildLogClipboardText(group.logs)` 继续输出同一 run 的 JSONL，并在 raw record 缺字段时补齐 `run_id`、`created_at`、`seq` 等稳定元数据。
 
 ## 2026-05-21 20:45 - US-001
 - 实现了 DeepSeek thinking/tool-call request message 的表征测试，并新增一个未接线的 helper 作为稳定断言目标，锁定 assistant/tool provider payload 结构。
@@ -188,4 +189,17 @@ Source: prd.json
   - 如果浏览器里要验证 run 隔离，优先选已有多轮会话（这次用了 `US-010 会话B`）而不是现场造新数据；现成任务能直接覆盖 “多轮卡片 + 展开 JSON + 最终答案不串线” 三个边界。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - `TaskConversation` 的 “全部展开” 按钮会把整轮 `details` 一次性打开，结合 `workspace-view.ts` 的 `RunActivityGroup.logs` 分组结果，适合做 run-scoped diagnostics 的浏览器 smoke。
+---
+
+## 2026-05-22 02:47 - US-014
+- 保持 collapsed 进度行为简洁的同时，给每个 run 卡片新增了默认折叠的“完整诊断 JSON”面板；它直接展示当前 run 的 pretty JSON 数组，避免排障时必须逐行展开。与此同时，run 级 JSONL 复制路径改成复用 merged record，并在 raw record 缺字段时自动补齐 `run_id`/`created_at`/`seq` 等稳定元数据，保证复制出的诊断文本更适合审计。
+- 更改的文件：`frontend/app/workspace-view.ts`、`frontend/components/chat/TaskConversation.tsx`、`frontend/app/globals.css`、`frontend/tests/workspace/test_workspace_view.test.ts`、`asset/deepagents_platform_knowledge_pack.md`、`tasks/multi-session-thinking-audit/prd.json`
+- 验证：`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts`、`cd frontend && npm test`、`cd frontend && npm run typecheck`、`cd frontend && npm run lint`、`git diff --check` 全部通过；由于复用中的 `3001` dev server 会占用默认 `.next`，`npm run build` 改在 `/tmp/myagent-frontend-build-us014` 临时副本中通过。浏览器验收复用了 `http://127.0.0.1:3001` 和新启的 `http://127.0.0.1:8001`，在 `US-005 validator 1779372824028` 会话确认 collapsed rows 仍只显示 `AI正在思考` / `任务已完成`，展开“完整诊断 JSON”后能看到 `US005_REASONING_CANARY` 与 `run-us005-1779372824121`，并通过拦截复制动作验证复制文本包含当前 run id、排除 `US-010 会话B` 第 3 轮的 `run-20260521T163237-ac2a69a0`。截图保存在 `tasks/multi-session-thinking-audit/screenshots/us014-collapsed-log.png` 和 `tasks/multi-session-thinking-audit/screenshots/us014-expanded-diagnostics.png`，日志保存在 `tasks/multi-session-thinking-audit/logs/us014-browser-validation.txt`、`tasks/multi-session-thinking-audit/logs/us014-expanded-snapshot.yml`、`tasks/multi-session-thinking-audit/logs/us014-browser-console-errors.log` 与 `tasks/multi-session-thinking-audit/logs/us014-backend.log`，控制台错误为 0 条。
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - run 级 debug 需求最好不要靠“全部展开每一行”来满足；保留 collapsed timeline 的低噪音投影，再单独提供一个 run-scoped pretty JSON 面板，会比把完整证据塞回逐行 summary 更稳。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 如果复制链路直接信任 `rawRecord`，真实历史数据里可能缺 `run_id` 或 `created_at`；前端导出前要 merge fallback 结构，否则浏览器端很难证明“复制的是当前 run”。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - `US-005 validator 1779372824028` 适合验证 thinking canary 是否只在 expanded diagnostics 中出现；`US-010 会话B` 适合作为“另一个 run id 不应混入复制结果”的对照样本。
 ---
