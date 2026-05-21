@@ -11,6 +11,7 @@ Source: prd.json
 - `reasoning_content` 是 run 级诊断证据，只能保存在当前 run 的事件日志与展开诊断中，不能进入普通 messages、conversation context、长期记忆、Qdrant payload 或默认 artifact。
 - 行为变更必须同步测试、实际浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。
 - OpenAI-compatible provider payload 表征测试可以先用 `langchain_openai.chat_models.base._convert_message_to_dict()` 复用 LangChain 既有序列化，再由本地 adapter 精确补回 provider 专属字段。
+- DeepSeek message adapter 需要和 `ChatDeepSeek._get_request_payload()` 保持一致：assistant content list 要折叠为字符串、tool content list 要 JSON 化，再只对当前 assistant tool-call turn 回放 `reasoning_content`。
 
 ## 2026-05-21 20:45 - US-001
 - 实现了 DeepSeek thinking/tool-call request message 的表征测试，并新增一个未接线的 helper 作为稳定断言目标，锁定 assistant/tool provider payload 结构。
@@ -22,4 +23,16 @@ Source: prd.json
   - `ChatDeepSeek` 当前不会把 `AIMessage.additional_kwargs["reasoning_content"]` 自动写回 outbound payload；后续接线必须走 wrapper 或 request payload hook。
   - 有用的上下文（例如，"评估面板在 component X 中"）
   - `ToolMessage` 的 provider payload 已经稳定保留 `tool_call_id`，这部分不需要额外补丁，只要别在 adapter 里重写 tool message 结构。
+---
+
+## 2026-05-21 21:00 - US-002
+- 实现了可复用的 DeepSeek thinking adapter/wrapper，使 thinking tool-call turn 在请求 payload 中保留 `reasoning_content`，同时保持与 `ChatDeepSeek` 原生 content 归一化逻辑一致，并补了缺失 reasoning 不伪造的回归测试。
+- 更改的文件：`backend/app/models/deepseek_thinking.py`、`backend/tests/unit/models/test_deepseek_thinking_messages.py`、`asset/deepagents_platform_knowledge_pack.md`、`tasks/multi-session-thinking-audit/prd.json`
+- **未来迭代的学习：**
+  - 发现的 patterns（例如，"这个 codebase 使用 X 来做 Y"）
+  - 如果要包 `ChatDeepSeek`，最稳妥的切点是重写 `_get_request_payload()` 后复用 `self._convert_input(...).to_messages()`，这样不会丢掉 LangChain 默认参数和 DeepSeek 自带 payload 结构。
+  - 遇到的陷阱（例如，"更改 W 时不要忘记更新 Z"）
+  - 仅靠 `_convert_message_to_dict()` 还不够；`ChatDeepSeek` 额外要求 assistant list content 折叠为字符串、tool list content 序列化成 JSON，不对齐这里会让 adapter 与真实 provider 行为漂移。
+  - 有用的上下文（例如，"评估面板在 component X 中"）
+  - 这一轮只实现 adapter 层本身，`create_model()` 的入口接线仍留给 US-003，避免把 story 边界混在一起。
 ---
