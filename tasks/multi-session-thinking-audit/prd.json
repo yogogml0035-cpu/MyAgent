@@ -323,7 +323,7 @@
       "priority": 17,
       "passes": true,
       "notes": "",
-      "retryCount": 2,
+      "retryCount": 0,
       "blocked": false
     }
   ]

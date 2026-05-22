@@ -41,3 +41,5 @@ frontend/e2e-playwright/playwright-report/
 
 .agents/
 scripts/ralph/
+tasks/*/screenshots
+tasks/*/logs
