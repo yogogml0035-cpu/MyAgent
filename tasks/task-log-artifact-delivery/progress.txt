@@ -1,0 +1,16 @@
+# Ralph Progress
+
+Requirement: tasks/task-log-artifact-delivery
+Started: 2026-05-24 01:36
+Source: prd.json
+
+## Codebase Patterns
+
+- 前端任务工作区遵循 component -> hook -> API/state/view adapter 的分层：组件渲染 props，`use-task-workspace.ts` 管理动作，`workspace-view.ts` 构造展示模型，`task-api.ts` 负责 HTTP/SSE/blob。
+- 进度日志是 append-only event log 的用户投影。主页面应展示轻量进度，完整 JSONL 诊断适合作为 run-scoped 下载，而不是默认 `<pre>` 渲染。
+- `TaskConversation.tsx` 当前在 render 中构造 `buildRunDiagnosticsJson(group.logs)` 并渲染完整诊断 `<pre>`，这是大量事件卡顿的主要改造点。
+- Artifact 下载已有安全链路：前端通过 `fetchArtifactBlob()` 和 `buildArtifactRequest()` 下载，后端通过 storage resolver 和 `FileResponse` 返回文件。
+- 后端 artifact 的权威可见性来自 run `artifact_names`，未登记文件即使存在于磁盘也不应能通过 run-scoped artifact API 下载。
+- 二进制 Office 文件不能走纯文本 `write_run_text()`；需要安全地把 task workspace 内真实文件推广或复制为 run artifact。
+- Runner 必须在 success complete 前完成交付文件检查；如果用户要求文件但没有可下载 artifact，不能先写 complete 再提示失败。
+- 行为变更必须同步前端 unit tests、后端 unit tests、真实浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。

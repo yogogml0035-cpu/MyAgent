@@ -1,0 +1,166 @@
+{
+  "project": "MyAgent",
+  "branchName": "ralph/task-log-artifact-delivery",
+  "description": "任务日志与文件产物体验优化：主对话默认精简展示进度，完整日志按需下载；用户要求或 AI 声称生成的交付文件必须登记为可下载产物，缺失时不能标记任务成功。",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "实现主对话轻量日志投影",
+      "description": "作为运行长任务的用户，我需要主对话只显示关键阶段和当前动作，以便 2000+ 事件不会让页面卡死。",
+      "acceptanceCriteria": [
+        "更新 `frontend/app/workspace-view.ts`，使主页面可见日志只保留关键阶段、当前动作、错误、警告和终态",
+        "单个 run 输入 2000+ 原始事件时，`buildLiveLogItems()` 或等价可见投影不会返回 2000+ 可展开行",
+        "`assistant_thinking_delta`、`assistant_answer_delta`、`values_snapshot` 和 `final_answer` 不作为完整大段内容默认渲染到主页面",
+        "`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-002",
+      "title": "添加完整日志按需下载入口",
+      "description": "作为排障人员，我需要点击后下载完整 run 日志，以便完整诊断不再参与每次页面渲染。",
+      "acceptanceCriteria": [
+        "更新 `frontend/components/chat/TaskConversation.tsx`，每个 run 卡片提供下载完整日志入口",
+        "更新 `frontend/hooks/use-task-workspace.ts`，点击下载时才把当前 run logs 生成 JSONL Blob",
+        "主页面不再默认渲染 `完整诊断 JSON` 的完整 `<pre>` 内容",
+        "下载文件名包含当前 run id 或稳定 run 标识，且不包含本地绝对路径",
+        "`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts tests/workspace/test_task_conversation_scroll.test.ts tests/workspace/test_task_workspace.test.ts` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-003",
+      "title": "支持真实文件推广为 run artifact",
+      "description": "作为需要 Office 交付物的用户，我需要后端把 task workspace 中真实存在的生成文件登记为可下载 artifact。",
+      "acceptanceCriteria": [
+        "更新 `backend/app/storage.py`，新增安全方法把当前 task workspace 内的真实文件复制或登记到 `artifacts/runs/{run_id}/`",
+        "该方法支持二进制文件，例如 `.docx`、`.pptx`、`.xlsx`，不能只支持文本写入",
+        "source path 和 artifact name 都经过 task workspace、run id 和 `normalize_artifact_name()` 边界校验",
+        "登记后的 artifact 出现在 task API state 的 `artifacts` 列表中，包含 name、type、url、run_id",
+        "同步更新 `backend/tests/fakes.py` 的 fake storage 合同",
+        "`cd backend && uv run pytest tests/unit/storage/test_storage.py tests/unit/api/test_artifacts.py -q` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-004",
+      "title": "在 runner 完成前校验交付文件",
+      "description": "作为用户，我要求生成文件时需要系统确认文件真实可下载，以便不会看到虚假的完成状态。",
+      "acceptanceCriteria": [
+        "更新 `backend/app/runner/core.py`，在把 task 标记为 complete 前检查本轮是否要求文件交付",
+        "当用户消息明确要求 Word/PPT/Excel/报告文件时，run 完成前必须存在对应登记 artifact",
+        "当 final answer 声称已保存或已生成某文件时，该文件必须存在于当前 task workspace 并登记为 artifact",
+        "如果要求的交付文件缺失，task/run 不被标记为 complete，并写入包含 `文件未生成或未登记为产物` 的可见错误或修正提示",
+        "缺失文件路径不被渲染成可点击链接，也不作为 artifact URL 暴露",
+        "`cd backend && uv run pytest tests/unit/runner/test_core.py tests/unit/api/test_tasks.py -q` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-005",
+      "title": "展示简短最终回复和文件下载卡片",
+      "description": "作为接收交付物的用户，我需要最终回复旁边出现文件下载卡片，以便明确真正交付的是可下载文件。",
+      "acceptanceCriteria": [
+        "更新 `frontend/app/workspace-view.ts` 和 `frontend/components/chat/TaskConversation.tsx`，有 run artifacts 时最终助手回复附带 artifact 下载卡片",
+        "没有助手回复但有 artifacts 时，仍在 run 日志之后显示独立 artifact 卡片",
+        "`.docx` artifact 卡片显示文件名和下载按钮，HTML artifact 仍保留安全打开入口",
+        "最终回复用于简短摘要和文件清单，不把完整 Office 正文作为聊天气泡替代交付文件",
+        "`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts tests/state/test_task_state.test.ts` passes",
+        "Use agent-browser to open `http://127.0.0.1:3001`, select a completed task with a `.docx` artifact, and confirm the final reply area shows a download card with the `.docx` filename",
+        "Use agent-browser to click the `.docx` download button and confirm a browser download starts with the expected filename",
+        "No console errors are present during the artifact card browser check",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-006",
+      "title": "新增大日志与产物交付浏览器 E2E",
+      "description": "作为项目维护者，我需要真实浏览器闭环验证大量日志不卡、文件可下载、缺失文件不成功。",
+      "acceptanceCriteria": [
+        "新增 `frontend/e2e-playwright/test_task_log_artifact_delivery.spec.mjs`",
+        "E2E 使用真实 `MYAGENT_E2E_BASE_URL` 和 `MYAGENT_E2E_API_URL`，不使用纯 mock 页面替代",
+        "E2E seed 一个包含 2000+ events 的 run，并确认主页面没有渲染 2000+ `.liveStatusRow` 或 `.liveToolCard`",
+        "E2E 在大量事件任务中滚动主页面、点击日志区域，并确认页面仍响应且停止或暂停控件可点击",
+        "E2E seed 一个 `.docx` run artifact，确认浏览器显示下载卡片并能下载该文件",
+        "E2E seed 一个要求文件但无 artifact 的任务，确认页面显示 `文件未生成或未登记为产物` 或等价明确提示",
+        "E2E 截图保存到 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/task-log-artifact-delivery/` 且不提交 git",
+        "`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-007",
+      "title": "同步平台知识包和 E2E 文档",
+      "description": "作为后续维护者，我需要长期文档记录新的日志和文件交付边界，以便后续改动不回退。",
+      "acceptanceCriteria": [
+        "更新 `asset/deepagents_platform_knowledge_pack.md`，记录主对话默认不渲染完整诊断 JSON",
+        "知识包记录完整日志通过 run-scoped 下载获得，并且不替代主页面关键进度",
+        "知识包记录用户要求或 final answer 声称生成的交付文件必须登记为 artifact",
+        "知识包记录交付文件缺失时 task/run 不能标记为成功完成",
+        "更新 `frontend/e2e-playwright/README.md`，记录 `test_task_log_artifact_delivery.spec.mjs` 的运行方式和证据目录",
+        "`git diff --check` passes",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-008",
+      "title": "完成全量质量门回归",
+      "description": "作为项目维护者，我需要后端、前端和浏览器验收全部通过，以便确认日志和产物交付体验没有破坏现有任务工作区。",
+      "acceptanceCriteria": [
+        "`cd backend && uv run pytest && uv run ruff check . && uv run mypy app tests` passes",
+        "`cd frontend && npm run typecheck && npm test && npm run lint && npm run build` passes",
+        "新增 task-log-artifact-delivery Playwright E2E passes",
+        "现有 `test_progress_log_disclosure.spec.mjs` 或 `test_runtime_contracts.spec.mjs` 邻近回归 passes",
+        "`git diff --check` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    }
+  ]
+}
