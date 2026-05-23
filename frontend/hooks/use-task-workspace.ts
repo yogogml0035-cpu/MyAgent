@@ -163,6 +163,14 @@ export function buildSandboxedArtifactPreviewDocument(
 </html>`;
 }
 
+export function buildRunLogDownloadName(runId: string) {
+  const normalizedRunId = runId
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return `${normalizedRunId || "run"}-logs.jsonl`;
+}
+
 export function useTaskWorkspace() {
   const [taskId, setTaskId] = useState<string>("");
   const [status, setStatus] = useState<TaskStatus>("idle");
@@ -788,6 +796,34 @@ export function useTaskWorkspace() {
     [handleCopyText, logs],
   );
 
+  const handleDownloadLogs = useCallback(
+    async (downloadedLogs: ExecutionLog[], runId: string, groupTitle: string) => {
+      if (downloadedLogs.length === 0) {
+        setErrorLevel("warning");
+        setError(`${groupTitle}暂无完整日志可下载。`);
+        return;
+      }
+
+      setError("");
+      try {
+        const payload = buildLogClipboardText(downloadedLogs);
+        const blob = new Blob([payload], { type: "application/x-ndjson;charset=utf-8" });
+        const objectUrl = URL.createObjectURL(blob);
+        const anchor = document.createElement("a");
+        anchor.href = objectUrl;
+        anchor.download = buildRunLogDownloadName(runId);
+        document.body.appendChild(anchor);
+        anchor.click();
+        anchor.remove();
+        window.setTimeout(() => URL.revokeObjectURL(objectUrl), ARTIFACT_OBJECT_URL_REVOKE_DELAY_MS);
+      } catch (caught) {
+        setErrorLevel("error");
+        setError(formatTaskApiFailure(caught));
+      }
+    },
+    [],
+  );
+
   const handleDownloadArtifact = useCallback(
     async (artifact: Artifact) => {
       setError("");
@@ -850,6 +886,7 @@ export function useTaskWorkspace() {
     handleCopyText,
     handleClearConversations,
     handleDownloadArtifact,
+    handleDownloadLogs,
     handleFileSelection,
     handleNewConversation,
     handleOpenArtifact,

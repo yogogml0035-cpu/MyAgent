@@ -48,6 +48,14 @@ void describe("use-task-workspace exports", () => {
     assert.doesNotMatch(html, /<script/i);
   });
 
+  void it("should generate run-scoped log download filenames without absolute paths", async () => {
+    const mod = await import("../../hooks/use-task-workspace");
+
+    assert.strictEqual(mod.buildRunLogDownloadName("run-42"), "run-42-logs.jsonl");
+    assert.strictEqual(mod.buildRunLogDownloadName(" run 42 / debug "), "run-42-debug-logs.jsonl");
+    assert.strictEqual(mod.buildRunLogDownloadName(""), "run-logs.jsonl");
+  });
+
   void it("should not top-level navigate opened artifact windows to blob URLs", () => {
     const source = readFileSync(
       new URL("../../hooks/use-task-workspace.ts", import.meta.url),
@@ -275,6 +283,22 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(sidebarSource.includes("onClearConversations: () => Promise<void> | void"), true);
     assert.strictEqual(sidebarSource.includes("clearHistoryButton"), true);
     assert.strictEqual(sidebarSource.includes("清空所有会话"), true);
+  });
+
+  void it("should expose run log download handling through the workspace boundary", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const workspaceSource = readFileSync(
+      new URL("../../components/chat/TaskWorkspace.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(hookSource.includes("const handleDownloadLogs = useCallback"), true);
+    assert.strictEqual(hookSource.includes('new Blob([payload], { type: "application/x-ndjson;charset=utf-8" })'), true);
+    assert.strictEqual(hookSource.includes("anchor.download = buildRunLogDownloadName(runId);"), true);
+    assert.strictEqual(workspaceSource.includes("onDownloadLogs={workspace.handleDownloadLogs}"), true);
   });
 
   void it("should render the slash skill picker and removable skill chips in ChatComposer", () => {

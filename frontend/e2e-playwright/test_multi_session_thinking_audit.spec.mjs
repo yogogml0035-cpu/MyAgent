@@ -464,12 +464,20 @@ test("real services keep multi-session thinking audit isolated per run", async (
       path: path.join(evidenceDir, "02-conversation-b-running-while-a-running.png"),
     });
 
-    const runDiagnosticsB = logPanelB.locator("details.runDiagnosticsPanel");
-    await runDiagnosticsB.locator("summary").click();
-    await expect(runDiagnosticsB.locator("pre")).toContainText(reasoningB);
-    await expect(runDiagnosticsB.locator("pre")).toContainText(seededRunB.runId);
-    await expect(runDiagnosticsB.locator("pre")).toContainText('"type": "tool_call"');
-    await expect(runDiagnosticsB.locator("pre")).toContainText('"type": "tool_result"');
+    await expect(logPanelB.locator("details.runDiagnosticsPanel")).toHaveCount(0);
+    const downloadLogsButtonB = logPanelB.getByRole("button", { name: /下载.*完整日志/ });
+    await expect(downloadLogsButtonB).toBeVisible();
+    const downloadEventB = page.waitForEvent("download");
+    await downloadLogsButtonB.click();
+    const downloadB = await downloadEventB;
+    expect(downloadB.suggestedFilename()).toBe(`${seededRunB.runId}-logs.jsonl`);
+    const downloadBPath = path.join(evidenceDir, "03-conversation-b-diagnostics.jsonl");
+    await downloadB.saveAs(downloadBPath);
+    const downloadBContent = fs.readFileSync(downloadBPath, "utf-8");
+    expect(downloadBContent).toContain(reasoningB);
+    expect(downloadBContent).toContain(seededRunB.runId);
+    expect(downloadBContent).toContain('"type": "tool_call"');
+    expect(downloadBContent).toContain('"type": "tool_result"');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "03-conversation-b-diagnostics-expanded.png"),
@@ -491,12 +499,20 @@ test("real services keep multi-session thinking audit isolated per run", async (
     await expect(composer).toHaveAttribute("placeholder", "当前会话正在生成回复，请稍候...");
     const logPanelA = page.getByRole("region", { name: /第 1 轮进度日志/ }).first();
     await expect(logPanelA).toBeVisible();
-    const runDiagnosticsA = logPanelA.locator("details.runDiagnosticsPanel");
-    await runDiagnosticsA.locator("summary").click();
-    await expect(runDiagnosticsA.locator("pre")).toContainText(reasoningA);
-    await expect(runDiagnosticsA.locator("pre")).toContainText(seededRunA.runId);
-    await expect(runDiagnosticsA.locator("pre")).toContainText('"type": "tool_call"');
-    await expect(runDiagnosticsA.locator("pre")).toContainText('"type": "tool_result"');
+    await expect(logPanelA.locator("details.runDiagnosticsPanel")).toHaveCount(0);
+    const downloadLogsButtonA = logPanelA.getByRole("button", { name: /下载.*完整日志/ });
+    await expect(downloadLogsButtonA).toBeVisible();
+    const downloadEventA = page.waitForEvent("download");
+    await downloadLogsButtonA.click();
+    const downloadA = await downloadEventA;
+    expect(downloadA.suggestedFilename()).toBe(`${seededRunA.runId}-logs.jsonl`);
+    const downloadAPath = path.join(evidenceDir, "04-conversation-a-diagnostics.jsonl");
+    await downloadA.saveAs(downloadAPath);
+    const downloadAContent = fs.readFileSync(downloadAPath, "utf-8");
+    expect(downloadAContent).toContain(reasoningA);
+    expect(downloadAContent).toContain(seededRunA.runId);
+    expect(downloadAContent).toContain('"type": "tool_call"');
+    expect(downloadAContent).toContain('"type": "tool_result"');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "04-conversation-a-diagnostics-expanded.png"),

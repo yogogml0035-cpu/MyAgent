@@ -6,7 +6,6 @@ import remarkGfm from "remark-gfm";
 import type { Artifact, ChatMessage, ExecutionLog } from "../../app/task-state";
 import { isTaskActive } from "../../app/task-state";
 import {
-  buildRunDiagnosticsJson,
   type ConversationStreamItem,
   type LiveLogItem,
   buildLiveLogItems,
@@ -84,6 +83,7 @@ type TaskConversationProps = {
   noticeMessages: ChatMessage[];
   onCopyLogs: (logs: ExecutionLog[], copyKey?: string) => Promise<void>;
   onCopyText: (text: string, failureMessage?: string, copyKey?: string) => Promise<void>;
+  onDownloadLogs: (logs: ExecutionLog[], runId: string, groupTitle: string) => Promise<void>;
   onDownloadArtifact: (artifact: Artifact) => Promise<void>;
   onOpenArtifact: (artifact: Artifact) => Promise<void>;
 };
@@ -96,6 +96,7 @@ export function TaskConversation({
   noticeMessages,
   onCopyLogs,
   onCopyText,
+  onDownloadLogs,
   onDownloadArtifact,
   onOpenArtifact,
 }: TaskConversationProps) {
@@ -357,7 +358,6 @@ export function TaskConversation({
     const groupActive = isTaskActive(group.status);
     const groupLogStatusText = formatRunLogStatus(group.status);
     const liveItems = buildLiveLogItems(group.logs, group.status);
-    const runDiagnosticsText = buildRunDiagnosticsJson(group.logs);
     const logCopyKey = `logs:${group.runId}`;
     const isLogCopied = copiedCopyKey === logCopyKey;
     const openLogDetailCount = openLogDetailCounts[group.runId] ?? 0;
@@ -398,6 +398,16 @@ export function TaskConversation({
               <span>{groupLogStatusText}</span>
             </div>
             <div className="traceActions" aria-label={`${group.title}日志操作`}>
+              <button
+                aria-label={`下载${group.title}完整日志`}
+                className="downloadSecondaryButton"
+                disabled={group.logs.length === 0}
+                onClick={() => void onDownloadLogs(group.logs, group.runId, group.title)}
+                title={group.logs.length > 0 ? `下载${group.title}完整日志（JSONL）` : "暂无日志可下载"}
+                type="button"
+              >
+                下载完整日志
+              </button>
               <button
                 aria-expanded={hasOpenLogDetails}
                 aria-label={toggleLogDetailsTitle}
@@ -449,18 +459,6 @@ export function TaskConversation({
               liveItems.map((liveItem) => renderLiveLogItem(liveItem))
             )}
           </div>
-
-          {group.logs.length > 0 ? (
-            <details className="runDiagnosticsPanel">
-              <summary>
-                <span className="runDiagnosticsPanelLabel">完整诊断 JSON</span>
-                <span className="runDiagnosticsPanelMeta">{group.logs.length} 条事件</span>
-              </summary>
-              <div className="liveLogDiagnostics runDiagnosticsBody">
-                <pre>{runDiagnosticsText}</pre>
-              </div>
-            </details>
-          ) : null}
         </article>
       </section>
     );

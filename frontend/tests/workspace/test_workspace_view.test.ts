@@ -1628,10 +1628,12 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("<pre>{details.displayJson}</pre>"), true);
   assert.equal(conversationSource.includes("details.rawJson"), false);
   assert.equal(conversationSource.includes("liveLogCopyButton"), true);
-  assert.equal(conversationSource.includes("buildRunDiagnosticsJson"), true);
-  assert.equal(conversationSource.includes('className="runDiagnosticsPanel"'), true);
-  assert.equal(conversationSource.includes("完整诊断 JSON"), true);
-  assert.equal(conversationSource.includes("<pre>{runDiagnosticsText}</pre>"), true);
+  assert.equal(conversationSource.includes("buildRunDiagnosticsJson"), false);
+  assert.equal(conversationSource.includes('className="runDiagnosticsPanel"'), false);
+  assert.equal(conversationSource.includes("完整诊断 JSON"), false);
+  assert.equal(conversationSource.includes("<pre>{runDiagnosticsText}</pre>"), false);
+  assert.equal(conversationSource.includes("下载完整日志"), true);
+  assert.equal(conversationSource.includes("onDownloadLogs(group.logs, group.runId, group.title)"), true);
   assert.equal(conversationSource.includes("onToggle={syncOpenLogDetailCounts}"), true);
   assert.equal(conversationSource.includes("toggleRunLogDetails"), true);
   assert.equal(conversationSource.includes("setLogDetailsOpen(logList, open)"), true);
@@ -1658,22 +1660,6 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.match(
     cssSource,
     /\.liveLogCopyButton\s*\{[\s\S]*?grid-column: 4;[\s\S]*?justify-self: end;/,
-  );
-  assert.match(
-    cssSource,
-    /\.runDiagnosticsPanel\s*\{[\s\S]*?margin: 0 14px 14px;[\s\S]*?background: rgba\(24, 23, 21, 0\.78\);/,
-  );
-  assert.match(
-    cssSource,
-    /\.runDiagnosticsPanel summary\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto 10px;[\s\S]*?min-height: 38px;/,
-  );
-  assert.match(
-    cssSource,
-    /\.runDiagnosticsPanel\[open\] summary::after\s*\{[\s\S]*?transform: rotate\(225deg\);/,
-  );
-  assert.match(
-    cssSource,
-    /\.runDiagnosticsBody pre\s*\{[\s\S]*?max-height: 240px;/,
   );
   assert.match(
     cssSource,

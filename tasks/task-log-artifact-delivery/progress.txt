@@ -11,6 +11,7 @@ Source: prd.json
 - `workspace-view.ts` 的日志诊断需要区分 `rawJson` 和 `displayJson`：前者保留完整事件，后者只保留主页面需要的轻量摘要，避免流式正文和快照重新进入默认渲染。
 - `TaskConversation.tsx` 当前在 render 中构造 `buildRunDiagnosticsJson(group.logs)` 并渲染完整诊断 `<pre>`，这是大量事件卡顿的主要改造点。
 - Artifact 下载已有安全链路：前端通过 `fetchArtifactBlob()` 和 `buildArtifactRequest()` 下载，后端通过 storage resolver 和 `FileResponse` 返回文件。
+- 运行日志下载应沿用 artifact 下载模式：仅在用户点击时把 `buildLogClipboardText(logs)` 转成 JSONL Blob，并用 run-scoped 文件名触发浏览器下载，避免 render 阶段预构造大字符串。
 - 后端 artifact 的权威可见性来自 run `artifact_names`，未登记文件即使存在于磁盘也不应能通过 run-scoped artifact API 下载。
 - 二进制 Office 文件不能走纯文本 `write_run_text()`；需要安全地把 task workspace 内真实文件推广或复制为 run artifact。
 - Runner 必须在 success complete 前完成交付文件检查；如果用户要求文件但没有可下载 artifact，不能先写 complete 再提示失败。
@@ -27,4 +28,23 @@ Source: prd.json
   - `buildLiveLogItems()` 的性能边界更依赖 `displayJson` 体积；完整审计内容应留在 `rawJson` 或下载链路
   - 流式日志摘要需要“替换式合并”，隐藏快照/终态摘要需要“附加式合并”，否则压缩后的行会被后续隐藏诊断重新膨胀
   - `npm test -- <file>` 仍会跑 `tests/*/test_*.test.ts`，定向回归时要把这些基础测试的现状一并考虑
+---
+## 2026-05-24 02:51 - US-002
+- 实现了每个 run 卡片的“下载完整日志”入口，点击时才把当前 run 的完整原始日志拼成 JSONL Blob 下载，主页面不再渲染完整诊断 `<pre>`
+- 增加 run-scoped 日志文件名规范化 helper，并把下载动作从 `use-task-workspace.ts` 透传到 `TaskConversation.tsx`
+- 更新前端单测和相关 Playwright 邻近用例，使其识别新的“下载完整日志”入口与压缩后的日志诊断展示
+- 更改的文件
+- `frontend/components/chat/TaskConversation.tsx`
+- `frontend/components/chat/TaskWorkspace.tsx`
+- `frontend/hooks/use-task-workspace.ts`
+- `frontend/tests/workspace/test_task_workspace.test.ts`
+- `frontend/tests/workspace/test_workspace_view.test.ts`
+- `frontend/e2e-playwright/test_progress_log_disclosure.spec.mjs`
+- `frontend/e2e-playwright/test_multi_session_thinking_audit.spec.mjs`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - run 级完整日志下载按钮的可访问名称会带上轮次，例如 `下载第 1 轮完整日志`，E2E 更稳妥的定位方式是 `/下载.*完整日志/`
+  - `buildLogClipboardText()` 产物是紧凑 JSONL，不带空格缩进；浏览器验收应解析每行 JSON，而不是匹配固定格式化字符串
+  - 现有 `test_progress_log_disclosure.spec.mjs` 仍有部分旧断言默认要求展开行展示完整流式正文；在继续清理邻近回归时要以 `workspace-view` 当前的 `content_hidden/chunk_count` 压缩契约为准
+  - 本轮真实浏览器验证复用了已运行的前端 `3001`，后端 `8001` 由本 agent 临时启动；截图证据保存在 `tasks/task-log-artifact-delivery/screenshots/progress-log-us002/`
 ---
