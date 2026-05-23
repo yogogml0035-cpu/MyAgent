@@ -1086,9 +1086,10 @@ test("buildLiveLogItems compresses 2000+ raw events into a small visible project
   assert.equal(items.length, 1);
   assert.equal(items[0]?.kind, "status");
   assert.equal(items[0]?.kind === "status" ? items[0].text : "", "AI正在思考");
-  assert.equal(items[0]?.details.rawJson.includes("chunk-2099"), true);
+  assert.equal(items[0]?.details.rawJson.includes("chunk-2099"), false);
   assert.equal(items[0]?.details.displayJson.includes("chunk-2099"), false);
   const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
+  assert.equal(display.type, "assistant_thinking_delta");
   assert.equal(display.payload.thinking_stream.content_hidden, true);
   assert.equal(display.payload.thinking_stream.chunk_count, 2100);
 });
@@ -1224,9 +1225,10 @@ test("buildLiveLogItems shows answer stream deltas only inside generation diagno
   );
   assert.equal(items[0]?.kind === "status" ? items[0].text : "", "AI正在生成结果");
   assert.equal("rows" in (items[0]?.details ?? {}), false);
-  assert.equal(items[0]?.details.rawJson.includes("stream-punctuation"), true);
-  assert.equal(items[0]?.details.rawJson.includes("stream-content"), true);
+  assert.equal(items[0]?.details.rawJson.includes("stream-punctuation"), false);
+  assert.equal(items[0]?.details.rawJson.includes("stream-content"), false);
   const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
+  assert.equal(display.type, "assistant_answer_delta");
   assert.equal(display.payload.answer_stream.content_hidden, true);
   assert.equal(display.payload.answer_stream.chunk_count, 2);
   assert.equal(display.payload.answer_stream.character_count, "。".length + "第一段".length);
@@ -1285,6 +1287,8 @@ test("buildLiveLogItems shows thinking stream content inside thinking diagnostic
   );
   assert.equal("rows" in (items[1]?.details ?? {}), false);
   assert.equal(items[1]?.details.rawJson.includes('"assistant_thinking_delta"'), true);
+  assert.equal(items[1]?.details.rawJson.includes("先判断是否需要联网。"), false);
+  assert.equal(items[1]?.details.rawJson.includes("再选择搜索工具。"), false);
   const display = JSON.parse(items[1]?.details.displayJson ?? "{}");
   assert.equal(display.type, "assistant_thinking_delta");
   assert.equal(display.payload.thinking_stream.content_hidden, true);
@@ -1297,6 +1301,38 @@ test("buildLiveLogItems shows thinking stream content inside thinking diagnostic
   assert.equal("chunks" in display.payload.thinking_stream, false);
   assert.equal("accumulated_content" in display.payload.thinking_stream, false);
   assert.equal(items[1]?.details.displayJson.includes("再选择搜索工具"), false);
+});
+
+test("buildLiveLogItems keeps streamed chunks out of active row raw diagnostics for large runs", () => {
+  const logs = Array.from({ length: 2000 }, (_, index) => ({
+    id: `thinking-${index + 1}`,
+    seq: index + 1,
+    type: "assistant_thinking_delta" as const,
+    title: `thinking-${index + 1}`,
+    createdAt: `2026-05-14T05:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
+    thinkingStream: {
+      schemaVersion: 1 as const,
+      streamIndex: index + 1,
+      content: `reasoning-chunk-${index + 1}`,
+    },
+    rawRecord: {
+      id: `thinking-${index + 1}`,
+      type: "assistant_thinking_delta",
+      payload: { content: `reasoning-chunk-${index + 1}` },
+    },
+  }));
+
+  const [item] = buildLiveLogItems(logs, "running");
+  assert.equal(item?.kind, "status");
+  if (!item || item.kind !== "status") {
+    throw new Error("expected active thinking row");
+  }
+  assert.equal(item.details.rawJson.includes("reasoning-chunk-2000"), false);
+  assert.equal(item.details.displayJson.includes("reasoning-chunk-2000"), false);
+  assert.equal(item.details.rawJson.length < 2000, true);
+  const summary = JSON.parse(item.details.rawJson);
+  assert.equal(summary.payload.thinking_stream.chunk_count, 2000);
+  assert.equal(summary.payload.thinking_stream.content_hidden, true);
 });
 
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {

@@ -216,10 +216,14 @@ export function buildLiveLogItems(
   let lastAnswerDetails: LiveLogDiagnostics | undefined;
   let answerStreamItem: LiveStatusLogItem | undefined;
   let answerStreamBaseDetails: LiveLogDiagnostics | undefined;
-  const answerStreamLogs: ExecutionLog[] = [];
+  let answerStreamChunkCount = 0;
+  let answerStreamCharacterCount = 0;
+  let answerStreamLastLog: ExecutionLog | undefined;
   let thinkingStreamItem: LiveStatusLogItem | undefined;
   let thinkingStreamBaseDetails: LiveLogDiagnostics | undefined;
-  let thinkingStreamLogs: ExecutionLog[] = [];
+  let thinkingStreamChunkCount = 0;
+  let thinkingStreamCharacterCount = 0;
+  let thinkingStreamLastLog: ExecutionLog | undefined;
 
   function consumeHiddenDiagnostics() {
     if (hiddenDiagnosticLogs.length === 0) {
@@ -241,13 +245,17 @@ export function buildLiveLogItems(
   function resetThinkingStreamSegment() {
     thinkingStreamItem = undefined;
     thinkingStreamBaseDetails = undefined;
-    thinkingStreamLogs = [];
+    thinkingStreamChunkCount = 0;
+    thinkingStreamCharacterCount = 0;
+    thinkingStreamLastLog = undefined;
   }
 
   function resetAnswerStreamSegment() {
     answerStreamItem = undefined;
     answerStreamBaseDetails = undefined;
-    answerStreamLogs.length = 0;
+    answerStreamChunkCount = 0;
+    answerStreamCharacterCount = 0;
+    answerStreamLastLog = undefined;
   }
 
   function pushStatusItem(log: ExecutionLog, text: string) {
@@ -272,11 +280,18 @@ export function buildLiveLogItems(
   }
 
   function upsertThinkingStreamItem(log: ExecutionLog) {
-    if (!log.thinkingStream?.content) {
+    const thinkingContent = log.thinkingStream?.content;
+    if (!thinkingContent) {
       return;
     }
-    thinkingStreamLogs.push(log);
-    const streamDetails = buildThinkingStreamDiagnostics(thinkingStreamLogs);
+    thinkingStreamChunkCount += 1;
+    thinkingStreamCharacterCount += thinkingContent.length;
+    thinkingStreamLastLog = log;
+    const streamDetails = buildThinkingStreamDiagnostics({
+      characterCount: thinkingStreamCharacterCount,
+      chunkCount: thinkingStreamChunkCount,
+      lastLog: thinkingStreamLastLog,
+    });
     if (!thinkingStreamItem) {
       const previous = items.at(-1);
       if (previous?.kind === "status" && previous.text === "AI正在思考" && !previous.active) {
@@ -306,13 +321,20 @@ export function buildLiveLogItems(
   }
 
   function upsertAnswerStreamItem(log: ExecutionLog) {
-    if (!log.answerStream?.content) {
+    const answerContent = log.answerStream?.content;
+    if (!answerContent) {
       return;
     }
     hasAnswerStream = true;
-    answerStreamLogs.push(log);
+    answerStreamChunkCount += 1;
+    answerStreamCharacterCount += answerContent.length;
+    answerStreamLastLog = log;
     lastAnswerCreatedAt = log.createdAt;
-    lastAnswerDetails = buildAnswerStreamDiagnostics(answerStreamLogs);
+    lastAnswerDetails = buildAnswerStreamDiagnostics({
+      characterCount: answerStreamCharacterCount,
+      chunkCount: answerStreamChunkCount,
+      lastLog: answerStreamLastLog,
+    });
     if (!answerStreamItem) {
       const previous = items.at(-1);
       if (previous?.kind === "status" && previous.text === "AI正在生成结果" && !previous.active) {
@@ -625,84 +647,80 @@ function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
   return buildLiveLogDiagnosticsFromRecord(rawLogRecordForDiagnostics(log));
 }
 
-function buildAnswerStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
-  const streamLogs = filterRunScopedStreamLogs(logs, "answerStream");
-  const lastLog = streamLogs.at(-1);
+function buildAnswerStreamDiagnostics({
+  characterCount,
+  chunkCount,
+  lastLog,
+}: {
+  characterCount: number;
+  chunkCount: number;
+  lastLog: ExecutionLog | undefined;
+}): LiveLogDiagnostics {
   const payload = stripUndefinedValues({
     answer_stream: stripUndefinedValues({
       schema_version: lastLog?.answerStream?.schemaVersion ?? 1,
-      chunk_count: streamLogs.length,
-      character_count: countStreamCharacters(streamLogs, "answerStream"),
+      chunk_count: chunkCount,
+      character_count: characterCount,
       content_hidden: true,
     }),
   });
-  return buildLiveLogDiagnosticsFromRecords(
-    streamLogs.map(rawLogRecordForDiagnostics),
-    stripUndefinedValues({
-      type: "assistant_answer_delta",
-      message: "AI正在生成结果",
-      created_at: lastLog?.createdAt,
-      run_id: lastLog?.runId,
-      payload,
-    }),
-    { replaceDisplayOnMerge: true },
-  );
+  return buildStreamStatusDiagnostics({
+    createdAt: lastLog?.createdAt,
+    message: "AI正在生成结果",
+    payload,
+    runId: lastLog?.runId ?? undefined,
+    type: "assistant_answer_delta",
+  });
 }
 
-function buildThinkingStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
-  const streamLogs = filterRunScopedStreamLogs(logs, "thinkingStream");
-  const lastLog = streamLogs.at(-1);
+function buildThinkingStreamDiagnostics({
+  characterCount,
+  chunkCount,
+  lastLog,
+}: {
+  characterCount: number;
+  chunkCount: number;
+  lastLog: ExecutionLog | undefined;
+}): LiveLogDiagnostics {
   const payload = stripUndefinedValues({
     thinking_stream: stripUndefinedValues({
       schema_version: lastLog?.thinkingStream?.schemaVersion ?? 1,
-      chunk_count: streamLogs.length,
-      character_count: countStreamCharacters(streamLogs, "thinkingStream"),
+      chunk_count: chunkCount,
+      character_count: characterCount,
       content_hidden: true,
     }),
   });
-  return buildLiveLogDiagnosticsFromRecords(
-    streamLogs.map(rawLogRecordForDiagnostics),
-    stripUndefinedValues({
-      type: "assistant_thinking_delta",
-      message: "AI正在思考",
-      created_at: lastLog?.createdAt,
-      run_id: lastLog?.runId,
-      payload,
-    }),
-    { replaceDisplayOnMerge: true },
-  );
-}
-
-function sortStreamLogs(
-  logs: ExecutionLog[],
-  field: "answerStream" | "thinkingStream",
-) {
-  return [...logs].sort((left, right) => {
-    const leftIndex = left[field]?.streamIndex ?? 0;
-    const rightIndex = right[field]?.streamIndex ?? 0;
-    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-    return byLogOrder(left, right);
+  return buildStreamStatusDiagnostics({
+    createdAt: lastLog?.createdAt,
+    message: "AI正在思考",
+    payload,
+    runId: lastLog?.runId ?? undefined,
+    type: "assistant_thinking_delta",
   });
 }
 
-function filterRunScopedStreamLogs(
-  logs: ExecutionLog[],
-  field: "answerStream" | "thinkingStream",
-) {
-  const streamLogs = sortStreamLogs(logs, field)
-    .filter((log) => Boolean(log[field]?.content));
-  const lastLog = streamLogs.at(-1);
-  if (!lastLog?.runId) {
-    return streamLogs;
-  }
-  return streamLogs.filter((log) => log.runId === lastLog.runId);
-}
-
-function countStreamCharacters(
-  logs: ExecutionLog[],
-  field: "answerStream" | "thinkingStream",
-) {
-  return logs.reduce((total, log) => total + (log[field]?.content.length ?? 0), 0);
+function buildStreamStatusDiagnostics({
+  createdAt,
+  message,
+  payload,
+  runId,
+  type,
+}: {
+  createdAt?: string;
+  message: string;
+  payload: Record<string, unknown>;
+  runId?: string;
+  type: "assistant_answer_delta" | "assistant_thinking_delta";
+}): LiveLogDiagnostics {
+  return buildLiveLogDiagnosticsFromRecord(
+    stripUndefinedValues({
+      type,
+      message,
+      created_at: createdAt,
+      run_id: runId,
+      payload,
+    }),
+  );
 }
 
 function buildSyntheticLogDiagnostics(type: string, message: string): LiveLogDiagnostics {

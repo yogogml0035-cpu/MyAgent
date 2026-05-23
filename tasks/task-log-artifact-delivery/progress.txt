@@ -21,6 +21,7 @@ Source: prd.json
 - run artifact 若要贴在最终回复旁，前端应把它绑定到“该 run 最后一个可见 assistant message”，而不是第一个 assistant message；否则多段助手回复会把下载卡片挂错位置。
 - 带交付 artifact 的最终回复应在 `workspace-view.ts` 做摘要投影，优先过滤路径行和文件声明行，只保留首个有效结果分句，再追加“请使用下方下载卡片获取”的固定提示。
 - 真实浏览器 E2E 若要 seed `running` 大日志任务而不让切会话时回放 2000+ 历史事件，前端需要先走 `include_events=false` 轻量 task state，再用 `latest_event_id` 作为 `/events` 与 `/stream` 的 cursor；后端 storage/schema/fake storage 必须一起暴露这个字段。
+- 主页面 active thinking/answer 状态行不能把所有流式 chunk 再拼成 `details.rawJson`；2000+ chunk 会让 `buildLiveLogItems()` 在渲染期反复序列化巨量 diagnostics，滚动和点击都会卡住。主页面应只保留 chunk/char 计数摘要，完整内容继续留给 run 级 JSONL 下载。
 
 ## 2026-05-24 02:10 - US-001
 - 实现了主对话轻量日志投影：`assistant_thinking_delta`、`assistant_answer_delta`、`values_snapshot` 和 `final_answer` 默认只输出摘要，不再把大段正文塞进主页面展开内容
@@ -122,6 +123,18 @@ Source: prd.json
 - **未来迭代的学习：**
   - 需要用数据库直接 seed `running` 任务时，浏览器打开该会话不会自动有完整日志；若页面只需保持可操作，优先依赖 summary 状态和 SSE cursor，而不是强制全量 hydrate 历史 events
   - run 级 artifact 下载按钮和打开按钮最好都带文件名级 `aria-label`，这样 Playwright 邻近回归不会被页面上多个“下载/打开”按钮干扰
-  - 本轮真实浏览器证据目录为 `tasks/task-log-artifact-delivery/screenshots/e2e-20260524052902/task-log-artifact-delivery/`，邻近 runtime contracts 回归证据在 `tasks/task-log-artifact-delivery/screenshots/e2e-20260524052902/runtime-contracts/`
-  - 验证命令通过：`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`
+- 本轮真实浏览器证据目录为 `tasks/task-log-artifact-delivery/screenshots/e2e-20260524052902/task-log-artifact-delivery/`，邻近 runtime contracts 回归证据在 `tasks/task-log-artifact-delivery/screenshots/e2e-20260524052902/runtime-contracts/`
+- 验证命令通过：`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`
+---
+## 2026-05-24 06:06 - US-006
+- 修复大日志运行中主页面卡顿：`workspace-view.ts` 不再为 active thinking/answer 行累积 2000+ chunk 的 raw diagnostics，而是只维护增量的 chunk/字符计数摘要
+- 补充前端单测，锁定“主页面摘要轻量、完整流式正文不进入主页面 raw/display diagnostics”的契约，并复跑专用 Playwright E2E
+- 更改的文件
+- `frontend/app/workspace-view.ts`
+- `frontend/tests/workspace/test_workspace_view.test.ts`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - `buildLiveLogItems()` 的性能热点不仅在可见行数量，还在每次 render 时是否重新 `JSON.stringify` 大块 diagnostics；即使只渲染 1 行，若把 2000+ chunk 留在 active row diagnostics 里，滚动和点击也会卡
+  - 专用 E2E 的日志区域点击依赖主页面确实渲染出 `.logList`；一旦前端 runtime error 或诊断对象退化成大对象，失败点可能表现为滚轮/定位超时，而不是更直观的断言失败
+  - 本轮通过命令：`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts`、`cd frontend && npm run typecheck`、`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=/mnt/d/AgentProject/MyAgent/frontend/e2e-playwright/e2e-20260524060543/task-log-artifact-delivery MYAGENT_E2E_ACCESS_TOKEN=... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`
 ---
