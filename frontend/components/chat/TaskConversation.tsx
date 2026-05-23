@@ -280,6 +280,7 @@ export function TaskConversation({
                     <div className="messageArtifactActions">
                       {artifactCanOpen(artifact) ? (
                         <button
+                          aria-label={`打开 ${artifact.name}`}
                           className="downloadSecondaryButton"
                           onClick={() => void onOpenArtifact(artifact)}
                           type="button"
@@ -288,6 +289,7 @@ export function TaskConversation({
                         </button>
                       ) : null}
                       <button
+                        aria-label={`下载 ${artifact.name}`}
                         className="downloadPrimaryButton"
                         onClick={() => void onDownloadArtifact(artifact)}
                         type="button"
@@ -326,6 +328,7 @@ export function TaskConversation({
             <div className="downloadActions">
               {canOpen ? (
                 <button
+                  aria-label={`打开 ${artifact.name}`}
                   className="downloadSecondaryButton"
                   onClick={() => void onOpenArtifact(artifact)}
                   type="button"
@@ -334,6 +337,7 @@ export function TaskConversation({
                 </button>
               ) : null}
               <button
+                aria-label={`下载 ${artifact.name}`}
                 className="downloadPrimaryButton"
                 onClick={() => void onDownloadArtifact(artifact)}
                 type="button"

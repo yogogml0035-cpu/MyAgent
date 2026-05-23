@@ -2592,6 +2592,77 @@ test("buildConversationStreamItems attaches run artifacts to the assistant reply
   assert.equal(assistantItem.kind === "message" ? assistantItem.groupTitle : "", "第 1 轮");
 });
 
+test("buildConversationStreamItems attaches run artifacts to the last visible assistant reply", () => {
+  const items = buildConversationStreamItems(
+    [
+      { id: "m1", role: "user", content: "请生成 Word 文件", runId: "run-1" },
+      { id: "m2", role: "assistant", content: "我先整理资料。", runId: "run-1" },
+      { id: "m3", role: "assistant", content: "文档已完成，请查收。", runId: "run-1" },
+    ],
+    [
+      {
+        runId: "run-1",
+        title: "第 1 轮",
+        status: "complete" as const,
+        logs: [{ id: "event-1", title: "完成", runId: "run-1" }],
+        artifacts: [{ id: "run-1:report.docx", name: "report.docx", runId: "run-1" }],
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    items.map((item) => item.id),
+    ["message:m1", "run:run-1", "message:m2", "message:m3"],
+  );
+  const firstAssistant = items[2];
+  const finalAssistant = items[3];
+  assert.equal(firstAssistant.kind, "message");
+  assert.equal(finalAssistant.kind, "message");
+  assert.deepEqual(
+    firstAssistant.kind === "message" ? firstAssistant.assistantArtifacts : undefined,
+    undefined,
+  );
+  assert.deepEqual(
+    finalAssistant.kind === "message"
+      ? finalAssistant.assistantArtifacts?.map((artifact) => artifact.name)
+      : [],
+    ["report.docx"],
+  );
+});
+
+test("buildConversationStreamItems compresses long delivery replies into a short artifact summary", () => {
+  const longReply = [
+    "技术参数总结.docx 已保存到 /workspace/output/技术参数总结.docx",
+    "第一章详细描述产品架构与适配范围，第二章逐条展开性能指标、接口协议、网络要求、部署前提与兼容性约束，第三章继续补充测试建议、验收说明、风险提示以及长篇结论，正文故意写得很长以验证不会直接把完整 Office 内容塞进最终气泡。",
+    "最终建议按附件下载正式交付文件。",
+  ].join("\n");
+  const items = buildConversationStreamItems(
+    [
+      { id: "m1", role: "user", content: "请输出 Word 文档", runId: "run-1" },
+      { id: "m2", role: "assistant", content: longReply, runId: "run-1" },
+    ],
+    [
+      {
+        runId: "run-1",
+        title: "第 1 轮",
+        status: "complete" as const,
+        logs: [{ id: "event-1", title: "完成", runId: "run-1" }],
+        artifacts: [{ id: "run-1:技术参数总结.docx", name: "技术参数总结.docx", runId: "run-1" }],
+      },
+    ],
+  );
+
+  const finalAssistant = items[2];
+  assert.equal(finalAssistant?.kind, "message");
+  if (!finalAssistant || finalAssistant.kind !== "message") {
+    throw new Error("expected projected assistant message");
+  }
+  assert.equal(finalAssistant.message.content.includes("/workspace/output/技术参数总结.docx"), false);
+  assert.equal(finalAssistant.message.content.includes("已生成 1 个交付文件，请使用下方下载卡片获取。"), true);
+  assert.equal(finalAssistant.message.content.includes("第一章详细描述产品架构与适配范围"), true);
+  assert.equal(finalAssistant.message.content.includes("完整 Office 内容"), false);
+});
+
 test("buildConversationStreamItems keeps artifact cards after run logs without assistant reply", () => {
   const items = buildConversationStreamItems(
     [{ id: "m1", role: "user", content: "分析", runId: "run-1" }],
@@ -2609,6 +2680,29 @@ test("buildConversationStreamItems keeps artifact cards after run logs without a
   assert.deepEqual(
     items.map((item) => item.id),
     ["message:m1", "run:run-1", "artifact:run-1:report.html"],
+  );
+});
+
+test("buildConversationStreamItems keeps artifact cards when only placeholder assistant replies exist", () => {
+  const items = buildConversationStreamItems(
+    [
+      { id: "m1", role: "user", content: "请生成报告", runId: "run-1" },
+      { id: "m2", role: "assistant", content: "AI回复", runId: "run-1" },
+    ],
+    [
+      {
+        runId: "run-1",
+        title: "第 1 轮",
+        status: "complete" as const,
+        logs: [{ id: "event-1", title: "写入报告", runId: "run-1" }],
+        artifacts: [{ id: "run-1:report.docx", name: "report.docx", runId: "run-1" }],
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    items.map((item) => item.id),
+    ["message:m1", "run:run-1", "artifact:run-1:report.docx"],
   );
 });
 

@@ -18,6 +18,8 @@ Source: prd.json
 - task workspace 文件提升为 run artifact 时，应复用 `_task_relative_path()` 做边界校验，再 `copyfile()` 到 `artifacts/runs/{run_id}/` 并调用 `record_run_artifact()`，这样二进制字节、digest 和 run-scoped 下载合同会一起成立。
 - Runner 必须在 success complete 前完成交付文件检查；如果用户要求文件但没有可下载 artifact，不能先写 complete 再提示失败。
 - 行为变更必须同步前端 unit tests、后端 unit tests、真实浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。
+- run artifact 若要贴在最终回复旁，前端应把它绑定到“该 run 最后一个可见 assistant message”，而不是第一个 assistant message；否则多段助手回复会把下载卡片挂错位置。
+- 带交付 artifact 的最终回复应在 `workspace-view.ts` 做摘要投影，优先过滤路径行和文件声明行，只保留首个有效结果分句，再追加“请使用下方下载卡片获取”的固定提示。
 
 ## 2026-05-24 02:10 - US-001
 - 实现了主对话轻量日志投影：`assistant_thinking_delta`、`assistant_answer_delta`、`values_snapshot` 和 `final_answer` 默认只输出摘要，不再把大段正文塞进主页面展开内容
@@ -78,6 +80,21 @@ Source: prd.json
 - `tasks/task-log-artifact-delivery/prd.json`
 - **未来迭代的学习：**
   - 交付文件检查要发生在 `task_completed` 和 synthetic `final_answer` 事件之前，否则前端会先收到虚假的成功态
-  - final answer 中的 `/root/...docx` 之类绝对路径只能提取文件名作为线索，真实查找和推广必须继续受 task workspace 边界约束
-  - 为避免把用户上传件误当成交付物，claimed-file 搜索应默认排除 `uploads/` 和 `artifacts/`，只从当前任务生成区补登记真实产物
+- final answer 中的 `/root/...docx` 之类绝对路径只能提取文件名作为线索，真实查找和推广必须继续受 task workspace 边界约束
+- 为避免把用户上传件误当成交付物，claimed-file 搜索应默认排除 `uploads/` 和 `artifacts/`，只从当前任务生成区补登记真实产物
+---
+## 2026-05-24 04:02 - US-005
+- 实现了最终回复侧的 run artifact 下载卡片：artifact 现在绑定到每轮最后一个可见 assistant reply，没有可见助手回复时仍保留独立 artifact 卡片
+- 为带交付文件的最终助手回复增加简短摘要投影，过滤绝对路径/文件声明行，只保留首个有效摘要句，再补充“请使用下方下载卡片获取”的固定提示，避免长 Office 正文替代真实交付
+- 补齐 `.docx` 下载按钮的文件名级可访问名称，并用真实 `3001/8001` 浏览器验收确认最终回复区域显示 `技术参数总结.docx` 下载卡片、点击后浏览器开始下载且无 console error
+- 更改的文件
+- `frontend/app/workspace-view.ts`
+- `frontend/components/chat/TaskConversation.tsx`
+- `frontend/tests/workspace/test_workspace_view.test.ts`
+- `frontend/tests/workspace/test_task_workspace.test.ts`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - 最终回复摘要规则属于 view projection，不要在 `task-state.ts` 改写后端原始 message；原始 assistant 内容仍应留在状态层，便于复制、下载或后续 richer rendering
+  - 浏览器验收想稳定点选文件下载按钮时，优先给按钮加上 `aria-label=\"下载 ${artifact.name}\"` 这类文件名级可访问名称，而不是依赖页面上第几个“下载”
+  - 本轮浏览器证据使用真实后端 task state：截图在 `tasks/task-log-artifact-delivery/screenshots/us005-browser/us005-final-reply-card.png`，下载样本在 `tasks/task-log-artifact-delivery/logs/us005-downloaded-技术参数总结.docx`
 ---

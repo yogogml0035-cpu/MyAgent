@@ -67,6 +67,16 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(source.includes("artifactWindow.document.write"), true);
   });
 
+  void it("should expose artifact action labels with filenames for browser verification", () => {
+    const conversationSource = readFileSync(
+      new URL("../../components/chat/TaskConversation.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(conversationSource.includes("aria-label={`下载 ${artifact.name}`}"), true);
+    assert.strictEqual(conversationSource.includes("aria-label={`打开 ${artifact.name}`}"), true);
+  });
+
   void it("should block unavailable models before creating tasks or uploading files", () => {
     const source = readFileSync(
       new URL("../../hooks/use-task-workspace.ts", import.meta.url),

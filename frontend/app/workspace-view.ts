@@ -1559,10 +1559,103 @@ function accumulateStreamedAnswer(logs: ExecutionLog[]): string {
 }
 
 const PUNCTUATION_PATTERN = /[。，！？、；：""''（）【】《》.,!?;:"'()\[\]{}]/g;
+const ARTIFACT_SUMMARY_MAX_CHARS = 220;
+const DELIVERY_ARTIFACT_NOTE_PREFIX = "已生成";
+const DELIVERY_ARTIFACT_EXTENSIONS = /\.(docx|pptx|xlsx|xlsm|pdf|html|md)\b/i;
+const ARTIFACT_SUMMARY_SPLIT_PATTERN = /[。！？!?；;，,]/;
 
 function hasMeaningfulContent(content: string): boolean {
   const stripped = content.replace(PUNCTUATION_PATTERN, "");
   return stripped.trim().length > 0;
+}
+
+function truncateArtifactSummary(value: string, maxChars: number) {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function normalizeArtifactSummaryLine(line: string) {
+  return line
+    .trim()
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/^\d+[.)]\s+/, "")
+    .trim();
+}
+
+function buildArtifactSummaryExcerpt(line: string) {
+  const clause = normalizeArtifactSummaryLine(line)
+    .split(ARTIFACT_SUMMARY_SPLIT_PATTERN)
+    .map((part) => part.trim())
+    .find(Boolean);
+  return clause ?? "";
+}
+
+function isArtifactDeliveryLine(line: string) {
+  const normalized = normalizeArtifactSummaryLine(line);
+  if (!normalized) {
+    return true;
+  }
+  if (
+    /^(保存路径|输出路径|文件路径|文件位置|下载路径|已保存到|已生成到|保存于|存放于|附件路径)[:：]/i.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(已保存|已生成|已写入|文件已生成|报告已生成|文档已生成).*(\.docx|\.pptx|\.xlsx|\.xlsm|\.pdf|\.html|\.md)\b/i.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  if (DELIVERY_ARTIFACT_EXTENSIONS.test(normalized) && /[\\/]/.test(normalized)) {
+    return true;
+  }
+  return DELIVERY_ARTIFACT_EXTENSIONS.test(normalized) && normalized.length <= 120;
+}
+
+function buildArtifactDeliveryNote(artifacts: Artifact[]) {
+  if (artifacts.length <= 1) {
+    return `${DELIVERY_ARTIFACT_NOTE_PREFIX} 1 个交付文件，请使用下方下载卡片获取。`;
+  }
+  return `${DELIVERY_ARTIFACT_NOTE_PREFIX} ${artifacts.length} 个交付文件，请使用下方下载卡片获取。`;
+}
+
+function buildAssistantArtifactSummary(message: ChatMessage, artifacts: Artifact[]) {
+  const deliveryNote = buildArtifactDeliveryNote(artifacts);
+  const normalizedContent = message.content.replace(/\r\n/g, "\n").trim();
+  if (!normalizedContent) {
+    return deliveryNote;
+  }
+
+  const summarySource =
+    normalizedContent
+      .split(/\n+/)
+      .map(buildArtifactSummaryExcerpt)
+      .find((line) => line && !isArtifactDeliveryLine(line)) ??
+    normalizedContent.replace(/\s+/g, " ").trim();
+
+  const summaryText = truncateArtifactSummary(summarySource, ARTIFACT_SUMMARY_MAX_CHARS);
+  if (!summaryText || summaryText === deliveryNote) {
+    return deliveryNote;
+  }
+
+  const normalizedSummary = /[。！？.!?]$/.test(summaryText) ? summaryText : `${summaryText}。`;
+  return `${normalizedSummary}\n\n${deliveryNote}`;
+}
+
+function projectAssistantMessage(message: ChatMessage, artifacts: Artifact[]) {
+  if (message.role !== "assistant" || artifacts.length === 0) {
+    return message;
+  }
+  return {
+    ...message,
+    content: buildAssistantArtifactSummary(message, artifacts),
+  };
 }
 
 export function buildRunActivityGroups(
@@ -1676,15 +1769,21 @@ export function buildConversationStreamItems(
   messages: ChatMessage[],
   groups: RunActivityGroup[],
 ): ConversationStreamItem[] {
+  const groupsByRunId = new Map(groups.map((group) => [group.runId, group]));
   const remainingGroups = new Map(groups.map((group) => [group.runId, group]));
   const firstReplyIndexByRunId = new Map<string, number>();
   const lastMessageIndexByRunId = new Map<string, number>();
+  const lastVisibleAssistantIndexByRunId = new Map<string, number>();
+  const renderedArtifactRuns = new Set<string>();
 
   messages.forEach((message, index) => {
     if (message.runId) {
       lastMessageIndexByRunId.set(message.runId, index);
       if (message.role !== "user" && !firstReplyIndexByRunId.has(message.runId)) {
         firstReplyIndexByRunId.set(message.runId, index);
+      }
+      if (message.role === "assistant" && !isPlaceholderAssistantMessage(message)) {
+        lastVisibleAssistantIndexByRunId.set(message.runId, index);
       }
     }
   });
@@ -1701,6 +1800,9 @@ export function buildConversationStreamItems(
   }
 
   function pushArtifactItems(group: RunActivityGroup) {
+    if (renderedArtifactRuns.has(group.runId)) {
+      return;
+    }
     group.artifacts.forEach((artifact) => {
       items.push({
         id: `artifact:${group.runId}:${artifact.name}`,
@@ -1709,6 +1811,7 @@ export function buildConversationStreamItems(
         artifact,
       });
     });
+    renderedArtifactRuns.add(group.runId);
   }
 
   function pushStreamedAnswerItem(group: RunActivityGroup) {
@@ -1730,27 +1833,31 @@ export function buildConversationStreamItems(
     }
 
     const isPlaceholder = isPlaceholderAssistantMessage(message);
+    const assistantArtifacts =
+      message.runId &&
+      message.role === "assistant" &&
+      lastVisibleAssistantIndexByRunId.get(message.runId) === index
+        ? (groupsByRunId.get(message.runId)?.artifacts ?? [])
+        : [];
     if (!isPlaceholder) {
       items.push({
         id: `message:${message.id}`,
         kind: "message",
-        message,
-        assistantArtifacts:
-          message.role !== "user" && groupBeforeReply ? groupBeforeReply.artifacts : undefined,
-        groupTitle: groupBeforeReply?.title,
+        message: projectAssistantMessage(message, assistantArtifacts),
+        assistantArtifacts: assistantArtifacts.length > 0 ? assistantArtifacts : undefined,
+        groupTitle: assistantArtifacts.length > 0 ? groupsByRunId.get(message.runId ?? "")?.title : undefined,
       });
-    }
-
-    if (groupBeforeReply && message.role === "user") {
-      pushArtifactItems(groupBeforeReply);
+      if (assistantArtifacts.length > 0 && message.runId) {
+        renderedArtifactRuns.add(message.runId);
+      }
     }
 
     if (
       message.runId &&
-      !firstReplyIndexByRunId.has(message.runId) &&
-      lastMessageIndexByRunId.get(message.runId) === index
+      lastMessageIndexByRunId.get(message.runId) === index &&
+      !lastVisibleAssistantIndexByRunId.has(message.runId)
     ) {
-      const group = pushGroup(message.runId);
+      const group = groupBeforeReply ?? pushGroup(message.runId);
       if (group) {
         pushStreamedAnswerItem(group);
         pushArtifactItems(group);
