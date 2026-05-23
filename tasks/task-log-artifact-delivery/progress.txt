@@ -67,3 +67,17 @@ Source: prd.json
   - task workspace 到 run artifact 的推广要拒绝 `artifacts/` 自身作为 source，避免把未登记或旧产物绕过当前 run 的显式登记边界
   - 本轮未做浏览器验证，因为改动仅涉及后端 storage/API 合同，无前端行为变化
 ---
+## 2026-05-24 03:28 - US-004
+- 在 runner 成功落 `complete` 之前增加交付文件校验：若用户明确要求 Word/PPT/Excel/报告文件，或 final answer 声称已保存文件，系统会先检查当前 run 是否已有对应 artifact
+- 新增 claimed-file 自动推广逻辑：final answer 提到的 `.docx/.pptx/.xlsx/.xlsm/.pdf/.html/.md` 文件会在 task workspace 非 `uploads/`、非 `artifacts/` 区域内搜索，找到真实文件后自动推广为 run artifact
+- 当交付文件缺失时，task/run 改为 `needs_input` 而不是 `complete`，写出包含 `文件未生成或未登记为产物` 的可见修正提示；同时保留重新发送消息继续修复的入口
+- 更改的文件
+- `backend/app/runner/core.py`
+- `backend/tests/unit/runner/test_core.py`
+- `backend/tests/unit/api/test_tasks.py`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - 交付文件检查要发生在 `task_completed` 和 synthetic `final_answer` 事件之前，否则前端会先收到虚假的成功态
+  - final answer 中的 `/root/...docx` 之类绝对路径只能提取文件名作为线索，真实查找和推广必须继续受 task workspace 边界约束
+  - 为避免把用户上传件误当成交付物，claimed-file 搜索应默认排除 `uploads/` 和 `artifacts/`，只从当前任务生成区补登记真实产物
+---

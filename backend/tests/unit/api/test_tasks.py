@@ -729,6 +729,64 @@ class TestSendMessage:
             "run_id": data["active_run_id"],
         }
 
+    def test_send_message_allows_retry_from_needs_input_status(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+        run_result = storage.start_run(
+            task_id,
+            message="请生成 Word 文档",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+        storage.update_task_if_status_and_append_event(
+            task_id,
+            {"running"},
+            status="needs_input",
+            run_id=run_id,
+            needs_input={
+                "message": "文件未生成或未登记为产物，请修复后重新生成。",
+                "reason": "deliverable_artifact_missing",
+            },
+            event_type="needs_input",
+            event_message="文件未生成或未登记为产物，请修复后重新生成。",
+            event_payload={
+                "message": "文件未生成或未登记为产物，请修复后重新生成。",
+                "reason": "deliverable_artifact_missing",
+            },
+            event_level="warning",
+        )
+        runner = app_client.app.state.runner
+        original_start = runner.start_background
+        started: dict[str, str] = {}
+
+        def mock_start_background(task_id: str, message: str, *, model: str, run_id: str) -> None:
+            started.update(
+                {
+                    "task_id": task_id,
+                    "message": message,
+                    "model": model,
+                    "run_id": run_id,
+                }
+            )
+
+        runner.start_background = mock_start_background
+        try:
+            response = app_client.post(
+                f"/api/tasks/{task_id}/messages",
+                json={"message": "请重新生成 Word 文档", "model": "deepseek-v4-flash"},
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "running"
+        assert started["task_id"] == task_id
+        assert started["message"] == "请重新生成 Word 文档"
+
     def test_send_message_keeps_manual_history_title(self, create_idle_task, app_client):
         created = create_idle_task()
         task_id = created["task_id"]

@@ -6,7 +6,9 @@ import asyncio
 import contextlib
 import inspect
 import logging
+import re
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any, Protocol
 
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -28,6 +30,31 @@ from app.tools.registry import get_platform_tools
 
 logger = logging.getLogger(__name__)
 
+DELIVERABLE_SUFFIX_TO_KIND: dict[str, str] = {
+    ".docx": "Word",
+    ".pptx": "PPT",
+    ".xlsx": "Excel",
+    ".xlsm": "Excel",
+    ".html": "报告",
+    ".md": "报告",
+    ".pdf": "报告",
+}
+DELIVERABLE_REQUEST_PATTERNS: tuple[tuple[str, str], ...] = (
+    ("word", r"(生成|导出|输出|交付|提供|整理|保存).{0,24}(word|docx|文档)"),
+    ("powerpoint", r"(生成|导出|输出|交付|提供|整理|保存).{0,24}(ppt|pptx|幻灯片)"),
+    ("excel", r"(生成|导出|输出|交付|提供|整理|保存).{0,24}(excel|xlsx|xlsm|表格)"),
+    ("report", r"(生成|导出|输出|交付|提供|整理|保存).{0,24}(报告|report|pdf|html)"),
+)
+DELIVERABLE_CLAIM_PATTERN = re.compile(
+    r"(已(?:保存|生成|输出|整理|写入)|保存到|生成了|输出到|导出到|已写入)",
+    re.IGNORECASE,
+)
+CLAIMED_FILE_PATTERN = re.compile(
+    r"(?P<path>(?:[A-Za-z]:[\\/]|/)?[^\s'\"`<>]+?\.(?:docx|pptx|xlsx|xlsm|pdf|html|md|txt))",
+    re.IGNORECASE,
+)
+DELIVERABLE_SEARCH_EXCLUDED_DIRS = {"artifacts", "uploads", ".git", "__pycache__"}
+
 
 class RunnerStorage(Protocol):
     def append_event(
@@ -40,6 +67,18 @@ class RunnerStorage(Protocol):
         run_id: str | None = None,
         level: EventLevel | None = None,
     ) -> EventRecord: ...
+
+    def get_task(self, task_id: str, *, include_events: bool = True) -> Any: ...
+
+    def task_dir(self, task_id: str) -> Path: ...
+
+    def promote_run_artifact_file(
+        self,
+        task_id: str,
+        run_id: str,
+        source_path: str,
+        artifact_name: str | None = None,
+    ) -> Path: ...
 
     def update_task_if_status_and_append_event(
         self,
@@ -243,6 +282,26 @@ class TaskRunner:
                 )
 
                 final_answer = extract_final_answer(final_state)
+                deliverable_check = self._ensure_run_deliverables(
+                    task_id=task_id,
+                    run_id=run_id,
+                    user_message=message,
+                    final_answer=final_answer,
+                )
+
+                if deliverable_check is not None:
+                    self.storage.update_task_if_status_and_append_event(
+                        task_id,
+                        {"running"},
+                        status="needs_input",
+                        run_id=run_id,
+                        needs_input=deliverable_check,
+                        event_type="needs_input",
+                        event_message=deliverable_check["message"],
+                        event_payload=deliverable_check,
+                        event_level="warning",
+                    )
+                    return
 
                 append_message: ChatMessage | None = None
                 if final_answer:
@@ -435,6 +494,68 @@ class TaskRunner:
         active = self._active_runs.get(task_id)
         return active is not None and not active.done()
 
+    def _ensure_run_deliverables(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        user_message: str,
+        final_answer: str | None,
+    ) -> dict[str, Any] | None:
+        storage = self.storage
+        if storage is None:
+            return None
+
+        expected_kinds = _requested_deliverable_kinds(user_message)
+        claimed_files = _claimed_output_filenames(final_answer)
+        if not expected_kinds and not claimed_files:
+            return None
+
+        promoted = _promote_claimed_files(
+            storage,
+            task_id=task_id,
+            run_id=run_id,
+            claimed_files=claimed_files,
+        )
+
+        state = storage.get_task(task_id, include_events=False)
+        run = next((item for item in state.runs if item.id == run_id), None)
+        artifact_names = {name.casefold() for name in (run.artifact_names if run is not None else [])}
+        artifact_suffixes = {
+            Path(name).suffix.lower() for name in (run.artifact_names if run is not None else [])
+        }
+
+        missing_kinds = [
+            kind for kind in sorted(expected_kinds) if _kind_to_suffixes(kind).isdisjoint(artifact_suffixes)
+        ]
+        missing_files = [
+            name for name in sorted(claimed_files) if name.casefold() not in artifact_names
+        ]
+
+        if not missing_kinds and not missing_files:
+            return None
+
+        missing_parts: list[str] = []
+        if missing_kinds:
+            missing_parts.append("要求的交付类型缺失：" + "、".join(_humanize_deliverable_kind(kind) for kind in missing_kinds))
+        if missing_files:
+            missing_parts.append("声称已生成的文件缺失：" + "、".join(missing_files))
+        message = "文件未生成或未登记为产物，请修复后重新生成。"
+        payload: dict[str, Any] = {
+            "message": message,
+            "reason": "deliverable_artifact_missing",
+            "missing_deliverables": missing_parts,
+            "missing_artifact_names": missing_files,
+            "promoted_artifacts": promoted,
+            "repair_hint": "请在当前任务工作区生成文件并登记为 artifact 后重试。",
+            "action_label": "重新生成文件",
+        }
+        if missing_kinds:
+            payload["requested_deliverable_types"] = [
+                _humanize_deliverable_kind(kind) for kind in missing_kinds
+            ]
+        return payload
+
 
 def _make_runner_event(
     task_id: str,
@@ -509,6 +630,84 @@ def _terminal_parameter_items(extra: dict[str, Any]) -> list[dict[str, Any]]:
         if isinstance(value, (str, int, float, bool)):
             items.append({"key": key, "value": value})
     return items
+
+
+def _requested_deliverable_kinds(message: str) -> set[str]:
+    normalized = " ".join(message.split()).casefold()
+    requested: set[str] = set()
+    for kind, pattern in DELIVERABLE_REQUEST_PATTERNS:
+        if re.search(pattern, normalized, re.IGNORECASE):
+            requested.add(kind)
+    return requested
+
+
+def _claimed_output_filenames(final_answer: str | None) -> set[str]:
+    if not final_answer:
+        return set()
+    if DELIVERABLE_CLAIM_PATTERN.search(final_answer) is None:
+        return set()
+    claimed: set[str] = set()
+    for match in CLAIMED_FILE_PATTERN.finditer(final_answer):
+        raw_path = match.group("path").strip().rstrip(".,;:)]}>")
+        name = Path(raw_path.replace("\\", "/")).name
+        suffix = Path(name).suffix.lower()
+        if not name or suffix not in DELIVERABLE_SUFFIX_TO_KIND:
+            continue
+        claimed.add(name)
+    return claimed
+
+
+def _kind_to_suffixes(kind: str) -> set[str]:
+    if kind == "word":
+        return {".docx"}
+    if kind == "powerpoint":
+        return {".pptx"}
+    if kind == "excel":
+        return {".xlsx", ".xlsm"}
+    if kind == "report":
+        return {".html", ".md", ".pdf"}
+    return set()
+
+
+def _humanize_deliverable_kind(kind: str) -> str:
+    if kind == "word":
+        return "Word"
+    if kind == "powerpoint":
+        return "PPT"
+    if kind == "excel":
+        return "Excel"
+    if kind == "report":
+        return "报告"
+    return kind
+
+
+def _promote_claimed_files(
+    storage: RunnerStorage,
+    *,
+    task_id: str,
+    run_id: str,
+    claimed_files: set[str],
+) -> list[str]:
+    if not claimed_files:
+        return []
+    task_dir = storage.task_dir(task_id)
+    promoted: list[str] = []
+    wanted = {name.casefold(): name for name in claimed_files}
+    for path in task_dir.rglob("*"):
+        if not path.is_file():
+            continue
+        if any(part in DELIVERABLE_SEARCH_EXCLUDED_DIRS for part in path.relative_to(task_dir).parts):
+            continue
+        candidate = wanted.get(path.name.casefold())
+        if candidate is None:
+            continue
+        relative_path = path.relative_to(task_dir).as_posix()
+        try:
+            storage.promote_run_artifact_file(task_id, run_id, relative_path, artifact_name=path.name)
+        except (FileNotFoundError, ValueError):
+            continue
+        promoted.append(path.name)
+    return sorted(set(promoted), key=str.casefold)
 
 
 def _call_memory_recall(memory_service: Any, message: str, user_id: str) -> str | None:
