@@ -893,14 +893,14 @@ test("buildLiveLogItems renders DeepAgents stream order with segmented thinking 
   assert.equal(firstStatusUpdate?.kind, "status");
   assert.equal(secondThinking?.kind, "status");
   assert.equal(firstThinking?.details.rawJson.includes("Need verify."), false);
-  assert.equal(secondThinking?.details.displayJson.includes("Need verify."), true);
+  assert.equal(secondThinking?.details.displayJson.includes("Need verify."), false);
   assert.equal(firstStatusUpdate?.details.rawJson.includes("values_snapshot"), true);
   assert.equal(firstStatusUpdate?.details.rawJson.includes('"type": "status_update"'), true);
   assert.equal(firstThinking?.details.displayJson.includes("values_snapshot"), false);
-  assert.equal(
-    JSON.parse(firstThinking?.details.displayJson ?? "{}").payload.thinking_stream.content,
-    "Need search.",
-  );
+  const firstThinkingDisplay = JSON.parse(firstThinking?.details.displayJson ?? "{}");
+  assert.equal(firstThinkingDisplay.payload.thinking_stream.content_hidden, true);
+  assert.equal(firstThinkingDisplay.payload.thinking_stream.chunk_count, 1);
+  assert.equal(firstThinkingDisplay.payload.thinking_stream.character_count, "Need search.".length);
 });
 
 test("buildLiveLogItems shows status updates as a generic compact row while retaining diagnostics", () => {
@@ -1055,8 +1055,42 @@ test("buildLiveLogItems keeps final_answer only in diagnostics instead of a visi
     ["任务已完成"],
   );
   assert.equal(items[0]?.details.displayJson.includes('"type": "task_completed"'), true);
+  assert.equal(items[0]?.details.displayJson.includes("任务已完成"), true);
   assert.equal(items[0]?.details.displayJson.includes('"type": "final_answer"'), true);
-  assert.equal(items[0]?.details.displayJson.includes("Final answer generated"), true);
+  assert.equal(items[0]?.details.displayJson.includes("Final answer generated"), false);
+  assert.equal(items[0]?.details.rawJson.includes('"type": "final_answer"'), true);
+  assert.equal(items[0]?.details.rawJson.includes("Final answer generated"), true);
+});
+
+test("buildLiveLogItems compresses 2000+ raw events into a small visible projection", () => {
+  const logs: Parameters<typeof buildLiveLogItems>[0] = Array.from({ length: 2100 }, (_, index) => ({
+    id: `think-${index}`,
+    seq: index,
+    type: "assistant_thinking_delta" as const,
+    title: `thinking-${index}`,
+    createdAt: `2026-05-14T05:15:${String(index % 60).padStart(2, "0")}.000Z`,
+    thinkingStream: {
+      schemaVersion: 1 as const,
+      streamIndex: index,
+      content: `chunk-${index}`,
+    },
+    rawRecord: {
+      id: `think-${index}`,
+      type: "assistant_thinking_delta",
+      message: `thinking-${index}`,
+    },
+  }));
+
+  const items = buildLiveLogItems(logs, "running");
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.kind, "status");
+  assert.equal(items[0]?.kind === "status" ? items[0].text : "", "AI正在思考");
+  assert.equal(items[0]?.details.rawJson.includes("chunk-2099"), true);
+  assert.equal(items[0]?.details.displayJson.includes("chunk-2099"), false);
+  const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
+  assert.equal(display.payload.thinking_stream.content_hidden, true);
+  assert.equal(display.payload.thinking_stream.chunk_count, 2100);
 });
 
 test("buildLiveLogItems aggregates assistant stream chunks into a generation row", () => {
@@ -1131,10 +1165,14 @@ test("buildLiveLogItems aggregates assistant stream chunks into a generation row
   );
   const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
   assert.equal(display.type, "assistant_answer_delta");
-  assert.equal(display.payload.answer_stream.content.includes("第一段"), true);
-  assert.equal(display.payload.answer_stream.content.includes("第二段"), true);
+  assert.equal(display.payload.answer_stream.content_hidden, true);
+  assert.equal(display.payload.answer_stream.chunk_count, 2);
+  assert.equal(
+    display.payload.answer_stream.character_count,
+    "第一段".length + "第一段\n第二段".length,
+  );
+  assert.equal("content" in display.payload.answer_stream, false);
   assert.equal("chunks" in display.payload.answer_stream, false);
-  assert.equal("chunk_count" in display.payload.answer_stream, false);
   assert.equal("accumulated_content" in display.payload.answer_stream, false);
 });
 
@@ -1189,11 +1227,13 @@ test("buildLiveLogItems shows answer stream deltas only inside generation diagno
   assert.equal(items[0]?.details.rawJson.includes("stream-punctuation"), true);
   assert.equal(items[0]?.details.rawJson.includes("stream-content"), true);
   const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
-  assert.equal(display.payload.answer_stream.content, "。第一段");
+  assert.equal(display.payload.answer_stream.content_hidden, true);
+  assert.equal(display.payload.answer_stream.chunk_count, 2);
+  assert.equal(display.payload.answer_stream.character_count, "。".length + "第一段".length);
+  assert.equal("content" in display.payload.answer_stream, false);
   assert.equal("chunks" in display.payload.answer_stream, false);
-  assert.equal("chunk_count" in display.payload.answer_stream, false);
   assert.equal("accumulated_content" in display.payload.answer_stream, false);
-  assert.equal(items[0]?.details.displayJson.includes('"content_hidden": true'), false);
+  assert.equal(items[0]?.details.displayJson.includes('"content_hidden": true'), true);
 });
 
 test("buildLiveLogItems shows thinking stream content inside thinking diagnostics", () => {
@@ -1247,11 +1287,16 @@ test("buildLiveLogItems shows thinking stream content inside thinking diagnostic
   assert.equal(items[1]?.details.rawJson.includes('"assistant_thinking_delta"'), true);
   const display = JSON.parse(items[1]?.details.displayJson ?? "{}");
   assert.equal(display.type, "assistant_thinking_delta");
-  assert.equal(display.payload.thinking_stream.content, "先判断是否需要联网。再选择搜索工具。");
+  assert.equal(display.payload.thinking_stream.content_hidden, true);
+  assert.equal(display.payload.thinking_stream.chunk_count, 2);
+  assert.equal(
+    display.payload.thinking_stream.character_count,
+    "先判断是否需要联网。".length + "再选择搜索工具。".length,
+  );
+  assert.equal("content" in display.payload.thinking_stream, false);
   assert.equal("chunks" in display.payload.thinking_stream, false);
-  assert.equal("chunk_count" in display.payload.thinking_stream, false);
   assert.equal("accumulated_content" in display.payload.thinking_stream, false);
-  assert.equal(items[1]?.details.displayJson.includes("再选择搜索工具"), true);
+  assert.equal(items[1]?.details.displayJson.includes("再选择搜索工具"), false);
 });
 
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
@@ -1493,7 +1538,7 @@ test("workspace CSS defines dedicated warm-canvas skill picker and chip styles",
   );
   assert.match(
     cssSource,
-    /\.skillChipMarker::before,\n\.skillOptionMarker::before\s*\{[\s\S]*?transform: rotate\(45deg\);/,
+    /\.skillChipMarker::before,\r?\n\.skillOptionMarker::before\s*\{[\s\S]*?transform: rotate\(45deg\);/,
   );
   assert.match(
     cssSource,
@@ -2065,8 +2110,9 @@ test("buildRunActivityGroups keeps per-run diagnostics and JSONL copy isolated",
   if (runAThinking?.kind !== "status") {
     throw new Error("expected run-a thinking diagnostics");
   }
-  assert.equal(runAThinking.details.displayJson.includes("RUN_A_REASONING_CANARY"), true);
+  assert.equal(runAThinking.details.displayJson.includes("RUN_A_REASONING_CANARY"), false);
   assert.equal(runAThinking.details.displayJson.includes("RUN_B_REASONING_CANARY"), false);
+  assert.equal(runAThinking.details.rawJson.includes("RUN_A_REASONING_CANARY"), true);
 
   const runAClipboard = buildLogClipboardText(groups[0].logs);
   assert.equal(runAClipboard.includes("RUN_A_RESULT_CANARY"), true);

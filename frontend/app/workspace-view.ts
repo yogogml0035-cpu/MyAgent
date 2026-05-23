@@ -44,6 +44,9 @@ export type VisibleLogPartition = {
 
 export type LiveLogDiagnostics = {
   records: unknown[];
+  displayRecords: unknown[];
+  customDisplay: boolean;
+  replaceDisplayOnMerge: boolean;
   rawJson: string;
   displayJson: string;
 };
@@ -224,6 +227,7 @@ export function buildLiveLogItems(
     }
     const details = buildLiveLogDiagnosticsFromRecords(
       hiddenDiagnosticLogs.map(rawLogRecordForDiagnostics),
+      buildCompactHiddenLogDisplayRecords(hiddenDiagnosticLogs),
     );
     hiddenDiagnosticLogs = [];
     return details;
@@ -623,12 +627,13 @@ function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
 
 function buildAnswerStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
   const streamLogs = filterRunScopedStreamLogs(logs, "answerStream");
-  const content = streamLogs.map((log) => log.answerStream?.content ?? "").join("");
   const lastLog = streamLogs.at(-1);
   const payload = stripUndefinedValues({
     answer_stream: stripUndefinedValues({
       schema_version: lastLog?.answerStream?.schemaVersion ?? 1,
-      content,
+      chunk_count: streamLogs.length,
+      character_count: countStreamCharacters(streamLogs, "answerStream"),
+      content_hidden: true,
     }),
   });
   return buildLiveLogDiagnosticsFromRecords(
@@ -640,17 +645,19 @@ function buildAnswerStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics 
       run_id: lastLog?.runId,
       payload,
     }),
+    { replaceDisplayOnMerge: true },
   );
 }
 
 function buildThinkingStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
   const streamLogs = filterRunScopedStreamLogs(logs, "thinkingStream");
-  const content = streamLogs.map((log) => log.thinkingStream?.content ?? "").join("");
   const lastLog = streamLogs.at(-1);
   const payload = stripUndefinedValues({
     thinking_stream: stripUndefinedValues({
       schema_version: lastLog?.thinkingStream?.schemaVersion ?? 1,
-      content,
+      chunk_count: streamLogs.length,
+      character_count: countStreamCharacters(streamLogs, "thinkingStream"),
+      content_hidden: true,
     }),
   });
   return buildLiveLogDiagnosticsFromRecords(
@@ -662,6 +669,7 @@ function buildThinkingStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostic
       run_id: lastLog?.runId,
       payload,
     }),
+    { replaceDisplayOnMerge: true },
   );
 }
 
@@ -690,6 +698,13 @@ function filterRunScopedStreamLogs(
   return streamLogs.filter((log) => log.runId === lastLog.runId);
 }
 
+function countStreamCharacters(
+  logs: ExecutionLog[],
+  field: "answerStream" | "thinkingStream",
+) {
+  return logs.reduce((total, log) => total + (log[field]?.content.length ?? 0), 0);
+}
+
 function buildSyntheticLogDiagnostics(type: string, message: string): LiveLogDiagnostics {
   return buildLiveLogDiagnosticsFromRecord({ type, message });
 }
@@ -701,14 +716,18 @@ function mergeLiveLogDiagnostics(
   if (!first) {
     return second;
   }
-  const merged = buildLiveLogDiagnosticsFromRecords([...first.records, ...second.records]);
-  if (second.displayJson !== second.rawJson) {
-    return {
-      ...merged,
-      displayJson: second.displayJson,
-    };
-  }
-  return merged;
+  const mergedDisplayRecords = second.replaceDisplayOnMerge
+    ? second.displayRecords
+    : first.replaceDisplayOnMerge
+      ? first.displayRecords
+      : [...first.displayRecords, ...second.displayRecords];
+  return buildLiveLogDiagnosticsFromRecords(
+    [...first.records, ...second.records],
+    mergedDisplayRecords,
+    {
+      replaceDisplayOnMerge: second.replaceDisplayOnMerge || first.replaceDisplayOnMerge,
+    },
+  );
 }
 
 function rawLogRecordForDiagnostics(log: ExecutionLog) {
@@ -724,18 +743,23 @@ function buildLiveLogDiagnosticsFromRecord(
 
 function buildLiveLogDiagnosticsFromRecords(
   records: unknown[],
-  displayRecord?: unknown,
+  displayRecord?: unknown | unknown[],
+  options: { replaceDisplayOnMerge?: boolean } = {},
 ): LiveLogDiagnostics {
   const normalizedRecords = records.map(normalizeDiagnosticRecord);
-  const rawDisplayRecord = normalizedRecords.length === 1
-    ? normalizedRecords[0]
-    : { records: normalizedRecords };
-  const normalizedDisplayRecord =
-    displayRecord === undefined ? rawDisplayRecord : normalizeDiagnosticRecord(displayRecord);
+  const normalizedDisplayRecords =
+    displayRecord === undefined
+      ? normalizedRecords
+      : Array.isArray(displayRecord)
+        ? displayRecord.map(normalizeDiagnosticRecord)
+        : [normalizeDiagnosticRecord(displayRecord)];
   return {
     records: normalizedRecords,
-    rawJson: formatDiagnosticJson(rawDisplayRecord),
-    displayJson: formatDiagnosticJson(normalizedDisplayRecord),
+    displayRecords: normalizedDisplayRecords,
+    customDisplay: displayRecord !== undefined,
+    replaceDisplayOnMerge: options.replaceDisplayOnMerge ?? false,
+    rawJson: formatDiagnosticRecords(normalizedRecords),
+    displayJson: formatDiagnosticRecords(normalizedDisplayRecords),
   };
 }
 
@@ -747,14 +771,45 @@ function formatDiagnosticJson(record: unknown) {
   return JSON.stringify(record, null, 2) ?? "null";
 }
 
+function formatDiagnosticRecords(records: unknown[]) {
+  return formatDiagnosticJson(records.length === 1 ? records[0] : { records });
+}
+
 function withLiveLogDisplayRecord(
   details: LiveLogDiagnostics,
   displayRecord: unknown,
 ): LiveLogDiagnostics {
-  return {
-    ...details,
-    displayJson: formatDiagnosticJson(normalizeDiagnosticRecord(displayRecord)),
-  };
+  return buildLiveLogDiagnosticsFromRecords(details.records, [displayRecord], {
+    replaceDisplayOnMerge: true,
+  });
+}
+
+function buildCompactHiddenLogDisplayRecords(logs: ExecutionLog[]) {
+  return logs.map((log) => {
+    if (log.type === "values_snapshot") {
+      return stripUndefinedValues({
+        type: "values_snapshot",
+        message: "状态快照已省略",
+        created_at: log.createdAt,
+        run_id: log.runId,
+        payload: {
+          content_hidden: true,
+        },
+      });
+    }
+    if (log.type === "final_answer") {
+      return stripUndefinedValues({
+        type: "final_answer",
+        message: "最终回复正文已省略",
+        created_at: log.createdAt,
+        run_id: log.runId,
+        payload: {
+          content_hidden: true,
+        },
+      });
+    }
+    return rawLogRecordForDiagnostics(log);
+  });
 }
 
 const TOOL_RESULT_DISPLAY_JSON_MAX_BYTES = 100 * 1024;

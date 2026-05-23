@@ -8,9 +8,23 @@ Source: prd.json
 
 - 前端任务工作区遵循 component -> hook -> API/state/view adapter 的分层：组件渲染 props，`use-task-workspace.ts` 管理动作，`workspace-view.ts` 构造展示模型，`task-api.ts` 负责 HTTP/SSE/blob。
 - 进度日志是 append-only event log 的用户投影。主页面应展示轻量进度，完整 JSONL 诊断适合作为 run-scoped 下载，而不是默认 `<pre>` 渲染。
+- `workspace-view.ts` 的日志诊断需要区分 `rawJson` 和 `displayJson`：前者保留完整事件，后者只保留主页面需要的轻量摘要，避免流式正文和快照重新进入默认渲染。
 - `TaskConversation.tsx` 当前在 render 中构造 `buildRunDiagnosticsJson(group.logs)` 并渲染完整诊断 `<pre>`，这是大量事件卡顿的主要改造点。
 - Artifact 下载已有安全链路：前端通过 `fetchArtifactBlob()` 和 `buildArtifactRequest()` 下载，后端通过 storage resolver 和 `FileResponse` 返回文件。
 - 后端 artifact 的权威可见性来自 run `artifact_names`，未登记文件即使存在于磁盘也不应能通过 run-scoped artifact API 下载。
 - 二进制 Office 文件不能走纯文本 `write_run_text()`；需要安全地把 task workspace 内真实文件推广或复制为 run artifact。
 - Runner 必须在 success complete 前完成交付文件检查；如果用户要求文件但没有可下载 artifact，不能先写 complete 再提示失败。
 - 行为变更必须同步前端 unit tests、后端 unit tests、真实浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。
+
+## 2026-05-24 02:10 - US-001
+- 实现了主对话轻量日志投影：`assistant_thinking_delta`、`assistant_answer_delta`、`values_snapshot` 和 `final_answer` 默认只输出摘要，不再把大段正文塞进主页面展开内容
+- 为 `LiveLogDiagnostics` 增加 raw/display 分离和 replace-on-merge 合并语义，保留完整原始诊断用于复制/下载，同时压缩主页面默认显示
+- 更新前端测试，覆盖 2000+ 事件压缩场景，并修正一条对 CRLF 过敏的既有 CSS 断言
+- 更改的文件
+- `frontend/app/workspace-view.ts`
+- `frontend/tests/workspace/test_workspace_view.test.ts`
+- **未来迭代的学习：**
+  - `buildLiveLogItems()` 的性能边界更依赖 `displayJson` 体积；完整审计内容应留在 `rawJson` 或下载链路
+  - 流式日志摘要需要“替换式合并”，隐藏快照/终态摘要需要“附加式合并”，否则压缩后的行会被后续隐藏诊断重新膨胀
+  - `npm test -- <file>` 仍会跑 `tests/*/test_*.test.ts`，定向回归时要把这些基础测试的现状一并考虑
+---
