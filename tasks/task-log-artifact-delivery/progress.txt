@@ -24,6 +24,7 @@ Source: prd.json
 - 真实浏览器 E2E 若要 seed `running` 大日志任务而不让切会话时回放 2000+ 历史事件，前端需要先走 `include_events=false` 轻量 task state，再用 `latest_event_id` 作为 `/events` 与 `/stream` 的 cursor；后端 storage/schema/fake storage 必须一起暴露这个字段。
 - 主页面 active thinking/answer 状态行不能把所有流式 chunk 再拼成 `details.rawJson`；2000+ chunk 会让 `buildLiveLogItems()` 在渲染期反复序列化巨量 diagnostics，滚动和点击都会卡住。主页面应只保留 chunk/char 计数摘要，完整内容继续留给 run 级 JSONL 下载。
 - 流式状态行如果复用已有 `status` item，`displayJson` 合并必须使用 `replaceDisplayOnMerge` 覆盖为当前 stream summary；否则旧的 `status_update` 或隐藏快照 display record 会污染后续 `assistant_*_delta` 投影与测试断言。
+- 在本仓库里跑真实前后端 Playwright 回归时，若需要临时启动后端 `8001`，应让 `uvicorn` 挂在持久 PTY 会话中保活到验收结束；一次性 `nohup` 子进程在当前 CLI 环境下可能被父进程回收，导致浏览器用例出现 `ECONNREFUSED`。
 
 ## 2026-05-24 02:10 - US-001
 - 实现了主对话轻量日志投影：`assistant_thinking_delta`、`assistant_answer_delta`、`values_snapshot` 和 `final_answer` 默认只输出摘要，不再把大段正文塞进主页面展开内容
@@ -164,4 +165,15 @@ Source: prd.json
   - 稳定的任务交付/日志边界应写进知识包，而不是只留在任务进度或 PR 描述里
   - 每新增一个真实浏览器 E2E spec，都应在 `frontend/e2e-playwright/README.md` 中给出可直接执行的命令和独立 evidence 子目录，避免后续回归只知道 spec 名称却不知道运行前提
   - 本轮验收只需 `git diff --check` 和前端 `typecheck`，因为 story 范围是长期文档与测试入口文档同步，没有行为代码改动
+---
+## 2026-05-24 07:05 - US-008
+- 完成后端、前端与浏览器全量质量门回归，确认日志精简、run-scoped 日志下载、真实 artifact 交付和缺失交付拦截没有破坏现有任务工作区
+- 在任务目录下保存本轮回归日志与真实浏览器证据；`task-log-artifact-delivery` 和邻近 `runtime-contracts` 两个 Playwright spec 均通过
+- 更改的文件
+- `tasks/task-log-artifact-delivery/prd.json`
+- `tasks/task-log-artifact-delivery/progress.txt`
+- **未来迭代的学习：**
+  - 浏览器回归若依赖本 agent 临时拉起的后端，优先使用持久 PTY 会话保活 `uvicorn`，否则很容易在 Playwright 首次 `POST /api/tasks` 前后出现 `ECONNREFUSED`
+  - 证据目录可以直接复用任务约束下的 `tasks/task-log-artifact-delivery/screenshots/e2e-YYYYMMDDHHMMSS/...`；运行日志单独落到 `tasks/task-log-artifact-delivery/logs/` 更利于 validator 追溯
+  - 本轮通过命令：`cd backend && uv run pytest && uv run ruff check . && uv run mypy app tests`、`cd frontend && npm run typecheck && npm test && npm run lint && npm run build`、`cd frontend && ... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`、`cd frontend && ... npx playwright test e2e-playwright/test_runtime_contracts.spec.mjs --reporter=line`、`git diff --check`
 ---
