@@ -311,3 +311,53 @@ class TestPostgresTaskStorageRunArtifacts:
         assert sorted(child.name for child in (tmp_path / "sessions" / task_id).iterdir()) == [
             "artifacts"
         ]
+
+    def test_promote_run_artifact_file_copies_binary_workspace_file_without_database(
+        self, tmp_path, monkeypatch
+    ):
+        storage = PostgresTaskStorage(tmp_path / "sessions", "postgresql://unused")
+        task_id = "task-1"
+        run_id = "run-test-001"
+        source = storage.task_dir(task_id) / "outputs" / "brief.docx"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source_bytes = b"PK\x03\x04docx-binary"
+        source.write_bytes(source_bytes)
+        recorded: list[tuple[str, str, str, dict | None]] = []
+
+        def record_run_artifact(task_id_arg, run_id_arg, artifact_name_arg, *, artifact_ref=None):
+            recorded.append((task_id_arg, run_id_arg, artifact_name_arg, artifact_ref))
+
+        monkeypatch.setattr(storage, "record_run_artifact", record_run_artifact)
+
+        path = storage.promote_run_artifact_file(task_id, run_id, "outputs/brief.docx")
+
+        assert path == (
+            tmp_path / "sessions" / task_id / "artifacts" / "runs" / run_id / "brief.docx"
+        ).resolve()
+        assert path.read_bytes() == source_bytes
+        assert len(recorded) == 1
+        recorded_task_id, recorded_run_id, recorded_name, artifact_ref = recorded[0]
+        assert recorded_task_id == task_id
+        assert recorded_run_id == run_id
+        assert recorded_name == "brief.docx"
+        assert artifact_ref is not None
+        assert artifact_ref["type"] == "word"
+        assert artifact_ref["name"] == "brief.docx"
+        assert artifact_ref["resource_ref"]["name"] == "brief.docx"
+
+    def test_promote_run_artifact_file_rejects_sources_outside_task_workspace(self, tmp_path):
+        storage = PostgresTaskStorage(tmp_path / "sessions", "postgresql://unused")
+
+        with pytest.raises(ValueError, match="任务相对路径超出任务目录"):
+            storage.promote_run_artifact_file("task-1", "run-test-001", "../outside.docx")
+
+    def test_promote_run_artifact_file_rejects_existing_artifact_paths(self, tmp_path):
+        storage = PostgresTaskStorage(tmp_path / "sessions", "postgresql://unused")
+        task_id = "task-1"
+        run_id = "run-test-001"
+        source = storage.task_dir(task_id) / "artifacts" / "existing.docx"
+        source.parent.mkdir(parents=True, exist_ok=True)
+        source.write_bytes(b"artifact bytes")
+
+        with pytest.raises(ValueError, match="源文件不能位于产物目录"):
+            storage.promote_run_artifact_file(task_id, run_id, "artifacts/existing.docx")

@@ -546,6 +546,33 @@ class InMemoryTaskStorage:
         self.record_run_artifact(task_id, run_id, name)
         return path
 
+    def promote_run_artifact_file(
+        self,
+        task_id: str,
+        run_id: str,
+        source_path: str,
+        artifact_name: str | None = None,
+    ) -> Path:
+        validate_run_id(run_id)
+        source = self._task_relative_path(task_id, source_path)
+        if not source.exists() or not source.is_file():
+            raise FileNotFoundError(source_path)
+        task_dir = self.task_dir(task_id)
+        artifacts_root = (task_dir / "artifacts").resolve()
+        if artifacts_root in source.parents:
+            raise ValueError("源文件不能位于产物目录")
+
+        name = normalize_artifact_name(artifact_name or source.name)
+        destination = self.run_artifact_dir(task_id, run_id) / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        if name in RUN_ARTIFACT_NAMES:
+            legacy_destination = self._task_relative_path(task_id, f"artifacts/{name}")
+            legacy_destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(destination, legacy_destination)
+        self.record_run_artifact(task_id, run_id, name)
+        return destination
+
     def run_artifact_dir(self, task_id: str, run_id: str) -> Path:
         validate_run_id(run_id)
         if run_id == LEGACY_RUN_ID:

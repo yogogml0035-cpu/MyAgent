@@ -14,6 +14,8 @@ Source: prd.json
 - 运行日志下载应沿用 artifact 下载模式：仅在用户点击时把 `buildLogClipboardText(logs)` 转成 JSONL Blob，并用 run-scoped 文件名触发浏览器下载，避免 render 阶段预构造大字符串。
 - 后端 artifact 的权威可见性来自 run `artifact_names`，未登记文件即使存在于磁盘也不应能通过 run-scoped artifact API 下载。
 - 二进制 Office 文件不能走纯文本 `write_run_text()`；需要安全地把 task workspace 内真实文件推广或复制为 run artifact。
+- 二进制交付文件进入 API state 时，要同时保持 `TYPE_MAP`、contracts `ArtifactKind` 和 schema `ArtifactRecord.type` 对齐，否则 `.docx/.xlsx` 会在后端合同层丢失类型语义。
+- task workspace 文件提升为 run artifact 时，应复用 `_task_relative_path()` 做边界校验，再 `copyfile()` 到 `artifacts/runs/{run_id}/` 并调用 `record_run_artifact()`，这样二进制字节、digest 和 run-scoped 下载合同会一起成立。
 - Runner 必须在 success complete 前完成交付文件检查；如果用户要求文件但没有可下载 artifact，不能先写 complete 再提示失败。
 - 行为变更必须同步前端 unit tests、后端 unit tests、真实浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。
 
@@ -47,4 +49,21 @@ Source: prd.json
   - `buildLogClipboardText()` 产物是紧凑 JSONL，不带空格缩进；浏览器验收应解析每行 JSON，而不是匹配固定格式化字符串
   - 现有 `test_progress_log_disclosure.spec.mjs` 仍有部分旧断言默认要求展开行展示完整流式正文；在继续清理邻近回归时要以 `workspace-view` 当前的 `content_hidden/chunk_count` 压缩契约为准
   - 本轮真实浏览器验证复用了已运行的前端 `3001`，后端 `8001` 由本 agent 临时启动；截图证据保存在 `tasks/task-log-artifact-delivery/screenshots/progress-log-us002/`
+---
+## 2026-05-24 03:09 - US-003
+- 实现了 `promote_run_artifact_file()`，可把当前 task workspace 内真实存在的文件安全复制到 `artifacts/runs/{run_id}/` 并登记为 run-scoped artifact
+- 补齐后端 artifact 类型合同，`.docx/.xlsx/.xlsm/.pptx` 现在会通过 API state 暴露为 `word`、`excel`、`powerpoint` 类型
+- 更新 fake storage 与后端单测，覆盖二进制 `.docx` 下载、task state artifact 列表投影，以及越界/产物目录来源拒绝
+- 更改的文件
+- `backend/app/contracts/__init__.py`
+- `backend/app/schemas.py`
+- `backend/app/storage.py`
+- `backend/tests/fakes.py`
+- `backend/tests/unit/api/test_artifacts.py`
+- `backend/tests/unit/storage/test_storage.py`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - run artifact 的类型不是前端自推导的附属信息；后端 contracts、schema 和 storage suffix map 必须同步演进
+  - task workspace 到 run artifact 的推广要拒绝 `artifacts/` 自身作为 source，避免把未登记或旧产物绕过当前 run 的显式登记边界
+  - 本轮未做浏览器验证，因为改动仅涉及后端 storage/API 合同，无前端行为变化
 ---

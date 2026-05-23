@@ -60,7 +60,7 @@ class EventRecord(BaseModel):
 class ArtifactRecord(BaseModel):
     id: str | None = None
     name: str
-    type: Literal["html", "markdown", "json", "text"]
+    type: Literal["html", "markdown", "json", "text", "word", "excel", "powerpoint"]
     url: str
     run_id: str | None = None
 
