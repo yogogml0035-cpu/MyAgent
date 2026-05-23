@@ -22,6 +22,7 @@ Source: prd.json
 - 带交付 artifact 的最终回复应在 `workspace-view.ts` 做摘要投影，优先过滤路径行和文件声明行，只保留首个有效结果分句，再追加“请使用下方下载卡片获取”的固定提示。
 - 真实浏览器 E2E 若要 seed `running` 大日志任务而不让切会话时回放 2000+ 历史事件，前端需要先走 `include_events=false` 轻量 task state，再用 `latest_event_id` 作为 `/events` 与 `/stream` 的 cursor；后端 storage/schema/fake storage 必须一起暴露这个字段。
 - 主页面 active thinking/answer 状态行不能把所有流式 chunk 再拼成 `details.rawJson`；2000+ chunk 会让 `buildLiveLogItems()` 在渲染期反复序列化巨量 diagnostics，滚动和点击都会卡住。主页面应只保留 chunk/char 计数摘要，完整内容继续留给 run 级 JSONL 下载。
+- 流式状态行如果复用已有 `status` item，`displayJson` 合并必须使用 `replaceDisplayOnMerge` 覆盖为当前 stream summary；否则旧的 `status_update` 或隐藏快照 display record 会污染后续 `assistant_*_delta` 投影与测试断言。
 
 ## 2026-05-24 02:10 - US-001
 - 实现了主对话轻量日志投影：`assistant_thinking_delta`、`assistant_answer_delta`、`values_snapshot` 和 `final_answer` 默认只输出摘要，不再把大段正文塞进主页面展开内容
@@ -137,4 +138,16 @@ Source: prd.json
   - `buildLiveLogItems()` 的性能热点不仅在可见行数量，还在每次 render 时是否重新 `JSON.stringify` 大块 diagnostics；即使只渲染 1 行，若把 2000+ chunk 留在 active row diagnostics 里，滚动和点击也会卡
   - 专用 E2E 的日志区域点击依赖主页面确实渲染出 `.logList`；一旦前端 runtime error 或诊断对象退化成大对象，失败点可能表现为滚轮/定位超时，而不是更直观的断言失败
   - 本轮通过命令：`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts`、`cd frontend && npm run typecheck`、`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=/mnt/d/AgentProject/MyAgent/frontend/e2e-playwright/e2e-20260524060543/task-log-artifact-delivery MYAGENT_E2E_ACCESS_TOKEN=... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`
+---
+## 2026-05-24 06:31 - US-006
+- 修正 `workspace-view.ts` 的流式 diagnostics 合并逻辑：thinking/answer 行的 display 层始终保持轻量 summary，流式原始记录只在分段结束后回填到对应 run 的 raw diagnostics，避免已有状态行被 `values_snapshot` 或前序 status display 污染
+- 复跑并通过 validator 指向的前端单测、专用 Playwright 大日志/产物交付 E2E、邻近 `runtime-contracts` 浏览器回归，以及前端 `typecheck`、`lint`、全量 `npm test`、`build`
+- 更改的文件
+- `frontend/app/workspace-view.ts`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - 流式状态行如果复用已有 `status` item，`displayJson` 必须用 `replaceDisplayOnMerge` 明确覆盖为 stream summary；否则前一个 `status_update` 或隐藏快照的 display record 会污染后续 `assistant_*_delta` 断言和页面展示
+  - 对 thinking/answer 流采用“display 轻量、raw 延迟回填”的双轨策略更稳：运行中 active 行不携带成百上千 chunk，终态或分段结束后仍能把当前段真实 `rawRecord` 留给 run-scoped JSONL 和 diagnostics
+  - 专用浏览器 E2E 依赖后端真实 `8001`；如果端口未常驻，先确认 `curl http://127.0.0.1:8001/health` 可达，再执行 `test_task_log_artifact_delivery.spec.mjs`，否则会在 `api/tasks` seed 阶段直接 `ECONNREFUSED`
+- 验证命令通过：`cd frontend && npm run typecheck`、`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts tests/workspace/test_task_workspace.test.ts`、`cd frontend && npm run lint`、`cd frontend && npm test`、`cd frontend && npm run build`、`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=/mnt/d/AgentProject/MyAgent/frontend/e2e-playwright/e2e-20260524062801/task-log-artifact-delivery MYAGENT_E2E_ACCESS_TOKEN=... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`、`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=/mnt/d/AgentProject/MyAgent/frontend/e2e-playwright/e2e-20260524062801/runtime-contracts MYAGENT_E2E_ACCESS_TOKEN=... npx playwright test e2e-playwright/test_runtime_contracts.spec.mjs --reporter=line`
 ---

@@ -219,11 +219,13 @@ export function buildLiveLogItems(
   let answerStreamChunkCount = 0;
   let answerStreamCharacterCount = 0;
   let answerStreamLastLog: ExecutionLog | undefined;
+  let answerStreamLogs: ExecutionLog[] = [];
   let thinkingStreamItem: LiveStatusLogItem | undefined;
   let thinkingStreamBaseDetails: LiveLogDiagnostics | undefined;
   let thinkingStreamChunkCount = 0;
   let thinkingStreamCharacterCount = 0;
   let thinkingStreamLastLog: ExecutionLog | undefined;
+  let thinkingStreamLogs: ExecutionLog[] = [];
 
   function consumeHiddenDiagnostics() {
     if (hiddenDiagnosticLogs.length === 0) {
@@ -242,20 +244,42 @@ export function buildLiveLogItems(
     return hiddenDetails ? mergeLiveLogDiagnostics(hiddenDetails, details) : details;
   }
 
-  function resetThinkingStreamSegment() {
+  function clearThinkingStreamSegment() {
     thinkingStreamItem = undefined;
     thinkingStreamBaseDetails = undefined;
     thinkingStreamChunkCount = 0;
     thinkingStreamCharacterCount = 0;
     thinkingStreamLastLog = undefined;
+    thinkingStreamLogs = [];
   }
 
-  function resetAnswerStreamSegment() {
+  function clearAnswerStreamSegment() {
     answerStreamItem = undefined;
     answerStreamBaseDetails = undefined;
     answerStreamChunkCount = 0;
     answerStreamCharacterCount = 0;
     answerStreamLastLog = undefined;
+    answerStreamLogs = [];
+  }
+
+  function finalizeThinkingStreamSegment() {
+    if (thinkingStreamItem) {
+      const rawRecords = buildClosedStreamRawRecords(thinkingStreamLogs);
+      if (rawRecords.length > 0) {
+        thinkingStreamItem.details = withLiveLogRawRecords(thinkingStreamItem.details, rawRecords);
+      }
+    }
+    clearThinkingStreamSegment();
+  }
+
+  function finalizeAnswerStreamSegment() {
+    if (answerStreamItem) {
+      const rawRecords = buildClosedStreamRawRecords(answerStreamLogs);
+      if (rawRecords.length > 0) {
+        answerStreamItem.details = withLiveLogRawRecords(answerStreamItem.details, rawRecords);
+      }
+    }
+    clearAnswerStreamSegment();
   }
 
   function pushStatusItem(log: ExecutionLog, text: string) {
@@ -287,6 +311,7 @@ export function buildLiveLogItems(
     thinkingStreamChunkCount += 1;
     thinkingStreamCharacterCount += thinkingContent.length;
     thinkingStreamLastLog = log;
+    thinkingStreamLogs.push(log);
     const streamDetails = buildThinkingStreamDiagnostics({
       characterCount: thinkingStreamCharacterCount,
       chunkCount: thinkingStreamChunkCount,
@@ -329,6 +354,7 @@ export function buildLiveLogItems(
     answerStreamChunkCount += 1;
     answerStreamCharacterCount += answerContent.length;
     answerStreamLastLog = log;
+    answerStreamLogs.push(log);
     lastAnswerCreatedAt = log.createdAt;
     lastAnswerDetails = buildAnswerStreamDiagnostics({
       characterCount: answerStreamCharacterCount,
@@ -400,19 +426,19 @@ export function buildLiveLogItems(
     }
 
     if (log.type === "assistant_answer_delta") {
-      resetThinkingStreamSegment();
+      finalizeThinkingStreamSegment();
       upsertAnswerStreamItem(log);
       return;
     }
 
     if (log.type === "assistant_thinking_delta") {
-      resetAnswerStreamSegment();
+      finalizeAnswerStreamSegment();
       upsertThinkingStreamItem(log);
       return;
     }
 
-    resetThinkingStreamSegment();
-    resetAnswerStreamSegment();
+    finalizeThinkingStreamSegment();
+    finalizeAnswerStreamSegment();
 
     // Detect cancel events to handle them specially
     if (log.type === "task_cancelled" || log.live?.resultStatus === "cancelled") {
@@ -491,6 +517,11 @@ export function buildLiveLogItems(
     activeCreatedAt = log.createdAt;
     activeDetails = statusItem.details;
   });
+
+  if (!isTaskActive(status)) {
+    finalizeThinkingStreamSegment();
+    finalizeAnswerStreamSegment();
+  }
 
   if (!isTaskActive(status) && hiddenDiagnosticLogs.length > 0) {
     const target = [...items].reverse().find((item) => item.kind === "status");
@@ -664,12 +695,15 @@ function buildAnswerStreamDiagnostics({
       content_hidden: true,
     }),
   });
-  return buildStreamStatusDiagnostics({
-    createdAt: lastLog?.createdAt,
-    message: "AI正在生成结果",
-    payload,
-    runId: lastLog?.runId ?? undefined,
+  const summaryRecord = stripUndefinedValues({
     type: "assistant_answer_delta",
+    message: "AI正在生成结果",
+    created_at: lastLog?.createdAt,
+    run_id: lastLog?.runId ?? undefined,
+    payload,
+  });
+  return buildStreamStatusDiagnostics({
+    summaryRecord,
   });
 }
 
@@ -690,37 +724,26 @@ function buildThinkingStreamDiagnostics({
       content_hidden: true,
     }),
   });
-  return buildStreamStatusDiagnostics({
-    createdAt: lastLog?.createdAt,
-    message: "AI正在思考",
-    payload,
-    runId: lastLog?.runId ?? undefined,
+  const summaryRecord = stripUndefinedValues({
     type: "assistant_thinking_delta",
+    message: "AI正在思考",
+    created_at: lastLog?.createdAt,
+    run_id: lastLog?.runId ?? undefined,
+    payload,
+  });
+  return buildStreamStatusDiagnostics({
+    summaryRecord,
   });
 }
 
 function buildStreamStatusDiagnostics({
-  createdAt,
-  message,
-  payload,
-  runId,
-  type,
+  summaryRecord,
 }: {
-  createdAt?: string;
-  message: string;
-  payload: Record<string, unknown>;
-  runId?: string;
-  type: "assistant_answer_delta" | "assistant_thinking_delta";
+  summaryRecord: Record<string, unknown>;
 }): LiveLogDiagnostics {
-  return buildLiveLogDiagnosticsFromRecord(
-    stripUndefinedValues({
-      type,
-      message,
-      created_at: createdAt,
-      run_id: runId,
-      payload,
-    }),
-  );
+  return buildLiveLogDiagnosticsFromRecords([summaryRecord], summaryRecord, {
+    replaceDisplayOnMerge: true,
+  });
 }
 
 function buildSyntheticLogDiagnostics(type: string, message: string): LiveLogDiagnostics {
@@ -800,6 +823,25 @@ function withLiveLogDisplayRecord(
   return buildLiveLogDiagnosticsFromRecords(details.records, [displayRecord], {
     replaceDisplayOnMerge: true,
   });
+}
+
+function withLiveLogRawRecords(
+  details: LiveLogDiagnostics,
+  rawRecords: unknown[],
+): LiveLogDiagnostics {
+  return buildLiveLogDiagnosticsFromRecords(
+    [...details.records, ...rawRecords],
+    details.displayRecords,
+    {
+      replaceDisplayOnMerge: details.replaceDisplayOnMerge,
+    },
+  );
+}
+
+function buildClosedStreamRawRecords(logs: ExecutionLog[]) {
+  return logs.flatMap((log) =>
+    isPlainRecord(log.rawRecord) ? [buildRunDiagnosticRecord(log)] : [],
+  );
 }
 
 function buildCompactHiddenLogDisplayRecords(logs: ExecutionLog[]) {
