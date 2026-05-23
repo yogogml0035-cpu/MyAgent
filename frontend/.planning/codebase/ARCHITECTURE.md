@@ -1,320 +1,184 @@
-<!-- refreshed: 2026-05-22 -->
-# Architecture
+<!-- refreshed: 2026-05-24 -->
+# 前端架构
 
-**Analysis Date:** 2026-05-22
+**分析日期：** 2026-05-24
 
-## System Overview
+## 系统总览
+
+`frontend/` 是 MyAgent 的浏览器工作区。它是一个 Next.js App Router 单页应用，通过 React 组件、控制器 hook、传输适配器和纯状态/视图转换模块，把后端任务、SSE 事件、上传资源、模型/技能选项和产物下载呈现给用户。
 
 ```text
-┌─────────────────────────────────────────────────────────────┐
-│                 Next.js App Router Shell                    │
-│ `frontend/app/layout.tsx` + `frontend/app/page.tsx`          │
-└──────────────────────────┬──────────────────────────────────┘
-                           │
-                           ▼
-┌─────────────────────────────────────────────────────────────┐
-│                 Client Chat Workspace                       │
-├──────────────────┬──────────────────┬───────────────────────┤
-│  History Sidebar │  Conversation    │  Composer             │
-│ `ChatSidebar.tsx`│ `TaskConversation`│ `ChatComposer.tsx`   │
-└────────┬─────────┴────────┬─────────┴──────────┬────────────┘
-         │                  │                    │
-         └──────────────────┴──────────┬─────────┘
-                                        ▼
-┌─────────────────────────────────────────────────────────────┐
-│                Workspace Controller Hook                    │
-│ `frontend/hooks/use-task-workspace.ts`                      │
-│ React state, effects, task actions, SSE lifecycle            │
-└───────────────┬──────────────────────┬──────────────────────┘
-                │                      │
-                ▼                      ▼
-┌──────────────────────────────┐ ┌────────────────────────────┐
-│ REST/SSE API Adapter          │ │ Pure State/View Adapters   │
-│ `frontend/lib/task-api.ts`    │ │ `frontend/app/task-state.ts`│
-│ fetch/EventSource/blob calls  │ │ `frontend/app/workspace-view.ts` │
-└───────────────┬──────────────┘ └────────────────────────────┘
-                │
-                ▼
-┌─────────────────────────────────────────────────────────────┐
-│       Backend HTTP API, browser file/blob/clipboard APIs     │
-│       `/api/tasks`, `/api/models`, `/api/skills`, SSE stream │
-└─────────────────────────────────────────────────────────────┘
+Next.js app shell
+  -> TaskWorkspace
+  -> ChatSidebar / TaskConversation / ChatComposer
+  -> useTaskWorkspace
+  -> frontend/lib/task-api.ts
+  -> frontend/app/task-state.ts + workspace-view.ts
+  -> backend HTTP API / SSE / artifact blob
 ```
 
-## Component Responsibilities
+## 组件职责
 
-| Component | Responsibility | File |
-|-----------|----------------|------|
-| Root layout | Loads global CSS, page metadata, Chinese locale shell, and icon metadata. | `frontend/app/layout.tsx` |
-| Home route | Keeps routing thin and delegates the root page to the workspace component. | `frontend/app/page.tsx` |
-| TaskWorkspace | Composes sidebar, conversation, and composer; passes only hook-owned values and handlers into child components. | `frontend/components/chat/TaskWorkspace.tsx` |
-| ChatSidebar | Renders conversation history, new conversation, rename/delete menus, and clear-all action. | `frontend/components/chat/ChatSidebar.tsx` |
-| TaskConversation | Renders user/assistant messages, run progress logs, diagnostics JSON, artifact cards, copy buttons, and auto-scroll behavior. | `frontend/components/chat/TaskConversation.tsx` |
-| ChatComposer | Owns local picker UI for message input, model selection, file picker, slash skill picker, selected skill chips, send, and stop controls. | `frontend/components/chat/ChatComposer.tsx` |
-| useTaskWorkspace | Owns browser task state, initialization effects, task submission, history mutations, polling/SSE merge logic, artifact open/download, and user-facing errors. | `frontend/hooks/use-task-workspace.ts` |
-| Task API adapter | Centralizes backend REST, multipart upload, SSE EventSource, artifact blob fetch, and browser-safe access-token attachment. | `frontend/lib/task-api.ts` |
-| Task state adapter | Defines task/message/log/artifact types, normalizes backend payloads, translates known backend text, builds message/artifact requests, and validates trusted artifact URLs. | `frontend/app/task-state.ts` |
-| Workspace view adapter | Builds history items, run groups, conversation stream items, live log rows, diagnostics JSON, display labels, timestamps, and keyboard intent helpers. | `frontend/app/workspace-view.ts` |
-| File/model/skill helpers | Keep upload file partitioning, model display metadata, and slash skill matching out of React components. | `frontend/app/file-upload.ts`, `frontend/app/model-ui.ts`, `frontend/app/skill-selection.ts` |
-| Global styles | Defines design tokens, two-column shell, responsive workspace layout, chat cards, composer, history menu, progress logs, and mobile breakpoints. | `frontend/app/globals.css` |
+| 组件 | 职责 | 入口 |
+| --- | --- | --- |
+| Root layout | 加载全局 CSS、metadata、中文 shell 和 icon metadata | `frontend/app/layout.tsx` |
+| Home route | 保持路由薄层，只渲染工作区组件 | `frontend/app/page.tsx` |
+| TaskWorkspace | 组合历史侧栏、对话流、输入区，把 hook 状态和 handler 传给子组件 | `frontend/components/chat/TaskWorkspace.tsx` |
+| ChatSidebar | 渲染历史会话、新建、重命名、删除、清空历史 | `frontend/components/chat/ChatSidebar.tsx` |
+| TaskConversation | 渲染用户/AI 消息、运行进度、诊断 JSON、产物卡片、复制和自动滚动 | `frontend/components/chat/TaskConversation.tsx` |
+| ChatComposer | 管理输入框、模型选择、文件选择、slash 技能选择、技能 chips、发送和停止控件 | `frontend/components/chat/ChatComposer.tsx` |
+| useTaskWorkspace | 拥有浏览器 task state、初始化、提交、历史 mutation、SSE merge、artifact 打开/下载和错误提示 | `frontend/hooks/use-task-workspace.ts` |
+| API adapter | 集中封装 fetch、multipart upload、EventSource、artifact blob、access token | `frontend/lib/task-api.ts` |
+| State adapter | 标准化后端 payload，定义前端 task/message/log/artifact 类型，校验 artifact URL | `frontend/app/task-state.ts` |
+| View adapter | 构建 history item、run group、conversation stream item、live log row、diagnostics JSON、显示标签 | `frontend/app/workspace-view.ts` |
+| Helpers | 上传文件过滤、模型展示、技能选择和 slash token 逻辑 | `frontend/app/file-upload.ts`, `frontend/app/model-ui.ts`, `frontend/app/skill-selection.ts` |
+| Styles | 视觉 token、两栏布局、聊天卡片、输入区、菜单、日志和响应式断点 | `frontend/app/globals.css` |
 
-## Pattern Overview
+## 分层结构
 
-**Overall:** Single-route client workspace with a controller hook, transport adapter, and pure normalization/view-model modules.
+### 路由与布局
 
-**Key Characteristics:**
-- Keep `frontend/app/page.tsx` as a routing delegate; put workspace behavior in `frontend/hooks/use-task-workspace.ts` and UI rendering in `frontend/components/chat/`.
-- Route all backend I/O through `frontend/lib/task-api.ts`; do not call `fetch` for task APIs directly from components.
-- Normalize backend payloads at `frontend/app/task-state.ts` before storing or rendering them.
-- Build render-oriented collections in `frontend/app/workspace-view.ts` instead of embedding grouping/sorting rules in JSX.
-- Use relative imports; `frontend/tsconfig.json` does not define path aliases.
-- Keep browser-exposed configuration limited to `NEXT_PUBLIC_*` values documented in `frontend/.env.example` and `frontend/README.md`.
+- 位置：`frontend/app/layout.tsx`, `frontend/app/page.tsx`。
+- 负责 Next.js app shell、metadata、global CSS import 和根路由委托。
+- 不承载任务状态、API 调用或业务逻辑。
 
-## Layers
+### 聊天 UI 组件
 
-**Routing and Layout:**
-- Purpose: Provide the Next.js app shell and the single root route.
-- Location: `frontend/app/layout.tsx`, `frontend/app/page.tsx`
-- Contains: `RootLayout`, metadata, global CSS import, root `Home` route.
-- Depends on: Next metadata types, `frontend/components/chat/TaskWorkspace.tsx`.
-- Used by: Next.js app router.
+- 位置：`frontend/components/chat/`。
+- 组件应由 props 控制，局部只保留 picker、menu、scroll、disclosure 等 UI 状态。
+- 不直接调用后端 task API。
 
-**Chat UI Components:**
-- Purpose: Render the workspace as stateless or locally-interactive UI surfaces.
-- Location: `frontend/components/chat/`
-- Contains: `TaskWorkspace`, `ChatSidebar`, `TaskConversation`, `ChatComposer`, `RobotAvatar`, `TypewriterText`.
-- Depends on: `frontend/hooks/use-task-workspace.ts`, `frontend/app/workspace-view.ts`, `frontend/app/task-state.ts`, `react-markdown`, `remark-gfm`.
-- Used by: `frontend/app/page.tsx`.
+### 工作区控制器
 
-**Workspace Controller:**
-- Purpose: Own browser state, side effects, task lifecycle actions, and child component props.
-- Location: `frontend/hooks/use-task-workspace.ts`
-- Contains: React state for the active task, status, messages, logs, artifacts, task summaries, uploads, models, skills, busy flags, copied feedback, and error notices.
-- Depends on: `frontend/lib/task-api.ts`, `frontend/app/task-state.ts`, `frontend/app/workspace-view.ts`, `frontend/app/model-ui.ts`, `frontend/app/file-upload.ts`.
-- Used by: `frontend/components/chat/TaskWorkspace.tsx`.
+- 位置：`frontend/hooks/use-task-workspace.ts`。
+- 拥有 task 初始化、任务提交、文件上传、取消、会话切换、历史 mutation、SSE 生命周期、事件恢复、产物打开/下载、复制反馈等状态和副作用。
 
-**Backend Transport:**
-- Purpose: Adapt browser fetch/EventSource/blob calls to the backend API contract.
-- Location: `frontend/lib/task-api.ts`
-- Contains: `requestTaskJson`, model/skill/task fetchers, task creation, upload, message post, cancel, rename, delete, event cursor fetch, SSE creation, artifact blob fetch.
-- Depends on: `frontend/app/task-state.ts` for URL resolution, normalization, payload builders, and error formatting.
-- Used by: `frontend/hooks/use-task-workspace.ts`.
+### 后端传输边界
 
-**State Normalization and Contracts:**
-- Purpose: Convert untrusted backend JSON into typed frontend state and safe request structures.
-- Location: `frontend/app/task-state.ts`
-- Contains: `TaskState`, `ChatMessage`, `ExecutionLog`, `TaskRunRecord`, `TaskSummary`, `Artifact`, `ModelOption`, `SkillOption` re-exports, normalizers, log merge helpers, artifact URL trust checks, error message formatting.
-- Depends on: `frontend/app/skill-selection.ts`.
-- Used by: `frontend/lib/task-api.ts`, `frontend/hooks/use-task-workspace.ts`, `frontend/app/workspace-view.ts`, chat components, tests.
+- 位置：`frontend/lib/task-api.ts`。
+- 所有后端 REST/SSE/blob 请求集中在这里。
+- 负责 token header/query、错误格式化、artifact blob fetch 和 API path。
 
-**View Models and Display Rules:**
-- Purpose: Project normalized state into structures that are convenient for JSX.
-- Location: `frontend/app/workspace-view.ts`
-- Contains: conversation history items, state/workspace notices, run activity groups, live log rows, diagnostics JSON, copy text, status labels, time/file formatting, composer keyboard intent.
-- Depends on: `frontend/app/task-state.ts`.
-- Used by: `frontend/hooks/use-task-workspace.ts`, `frontend/components/chat/TaskConversation.tsx`, `frontend/components/chat/ChatComposer.tsx`, `frontend/components/chat/ChatSidebar.tsx`.
+### 状态标准化与合同
 
-**Feature Helpers:**
-- Purpose: Keep small domain rules reusable and testable.
-- Location: `frontend/app/file-upload.ts`, `frontend/app/model-ui.ts`, `frontend/app/skill-selection.ts`
-- Contains: upload extension support, model display descriptions, skill option normalization, slash token parsing, slash token replacement.
-- Depends on: `frontend/app/task-state.ts` only for model type imports in `frontend/app/model-ui.ts`.
-- Used by: `frontend/hooks/use-task-workspace.ts`, `frontend/components/chat/ChatComposer.tsx`, state/model/upload tests.
+- 位置：`frontend/app/task-state.ts`。
+- 后端 JSON 在进入 React 状态前必须标准化。
+- 这里处理 `snake_case` 到 `camelCase`、事件/log normalization、artifact URL trust、message payload 和错误文案。
 
-**Styling:**
-- Purpose: Define the complete visual system for the shell and chat workspace.
-- Location: `frontend/app/globals.css`
-- Contains: CSS variables, shell layout, sidebar, conversation canvas, message cards, progress logs, composer, model and skill menus, responsive breakpoints.
-- Depends on: class names emitted by `frontend/components/chat/`.
-- Used by: `frontend/app/layout.tsx`.
+### 视图模型与展示规则
 
-## Data Flow
+- 位置：`frontend/app/workspace-view.ts`。
+- 负责历史、run group、conversation stream、live log、diagnostics、copy text、status label、time/file formatting、keyboard intent。
+- JSX 不应内联排序、分组或复杂日志规则。
 
-### Primary Request Path
+### 功能 helper
 
-1. Next.js loads `RootLayout` (`frontend/app/layout.tsx:14`) and the root `Home` route (`frontend/app/page.tsx:3`).
-2. `Home` renders `TaskWorkspace` (`frontend/components/chat/TaskWorkspace.tsx:8`), which calls `useTaskWorkspace` and passes values/handlers into `ChatSidebar`, `TaskConversation`, and `ChatComposer`.
-3. `useTaskWorkspace` initializes model options, task summaries, and skill options through `fetchModelOptions`, `fetchTaskSummaries`, and `fetchSkillOptions` (`frontend/hooks/use-task-workspace.ts:256`, `frontend/hooks/use-task-workspace.ts:263`, `frontend/hooks/use-task-workspace.ts:289`).
-4. A send action enters `handleSubmit` (`frontend/hooks/use-task-workspace.ts:440`), creates a task if needed with `ensureTask` (`frontend/hooks/use-task-workspace.ts:308`), uploads selected files, and posts a message with selected model and skill names.
-5. `frontend/lib/task-api.ts` sends the HTTP calls: `createTask` (`frontend/lib/task-api.ts:82`), `uploadTaskFiles` (`frontend/lib/task-api.ts:141`), and `postTaskMessage` (`frontend/lib/task-api.ts:155`) through `requestTaskJson` (`frontend/lib/task-api.ts:29`).
-6. Backend responses are normalized by `normalizeTaskState` (`frontend/app/task-state.ts:1169`) and stored through `applyTaskState` in `frontend/hooks/use-task-workspace.ts`.
-7. While the task is active, the hook starts SSE with `createTaskEventSource` (`frontend/hooks/use-task-workspace.ts:362`, `frontend/lib/task-api.ts:173`), merges incoming logs with `mergeExecutionLogs` (`frontend/app/task-state.ts:1322`), and refreshes summary/event projections.
-8. The hook builds `runActivityGroups` and `conversationStreamItems` using `buildRunActivityGroups` (`frontend/app/workspace-view.ts:1513`) and `buildConversationStreamItems` (`frontend/app/workspace-view.ts:1620`).
-9. `TaskConversation` renders messages, live log rows, artifacts, and notices (`frontend/components/chat/TaskConversation.tsx:91`).
+- 位置：`frontend/app/file-upload.ts`, `frontend/app/model-ui.ts`, `frontend/app/skill-selection.ts`。
+- 保持小型可测试规则独立于 React 组件。
 
-### Conversation History Flow
+### 样式层
 
-1. `fetchTaskSummaries` reads `/api/tasks` (`frontend/lib/task-api.ts:78`) and `normalizeTaskSummaries` converts entries into `TaskSummary[]` (`frontend/app/task-state.ts`).
-2. `buildConversationHistoryItems` maps summaries to sidebar rows (`frontend/app/workspace-view.ts:1323`).
-3. `ChatSidebar` renders selection, rename, delete, and clear-all controls (`frontend/components/chat/ChatSidebar.tsx:15`).
-4. Selection calls `handleSelectConversation` (`frontend/hooks/use-task-workspace.ts:565`) and then `fetchTask` (`frontend/lib/task-api.ts:97`).
-5. Rename/delete/clear call `renameTask`, `deleteTask`, and repeated `deleteTask` through hook handlers (`frontend/hooks/use-task-workspace.ts:615`, `frontend/hooks/use-task-workspace.ts:655`, `frontend/hooks/use-task-workspace.ts:700`).
+- 位置：`frontend/app/globals.css`。
+- 维护当前 warm-canvas 工作区视觉系统、响应式布局和组件 class。
 
-### Artifact Flow
+## 关键数据流
 
-1. Normalized `Artifact` entries are attached to task state by `normalizeTaskState` (`frontend/app/task-state.ts:1169`).
-2. `buildRunActivityGroups` associates artifacts with run groups (`frontend/app/workspace-view.ts:1513`).
-3. `TaskConversation` exposes open/download controls for artifact cards (`frontend/components/chat/TaskConversation.tsx:91`).
-4. `handleDownloadArtifact` fetches a blob and triggers an `<a download>` click (`frontend/hooks/use-task-workspace.ts:791`).
-5. `handleOpenArtifact` opens a blank window, fetches the blob, and writes a sandboxed iframe preview document (`frontend/hooks/use-task-workspace.ts:812`, `frontend/hooks/use-task-workspace.ts:105`).
-6. `buildArtifactRequest` rejects untrusted artifact URLs before adding the browser token header (`frontend/app/task-state.ts:1205`).
+### 主请求路径
 
-### Upload, Model, and Skill Flow
+1. Next.js 加载 `RootLayout` 和 `Home`。
+2. `Home` 渲染 `TaskWorkspace`。
+3. `TaskWorkspace` 调用 `useTaskWorkspace`，把状态和 handler 传给三个 chat 子组件。
+4. hook 初始化模型、任务摘要和技能选项。
+5. 发送时，hook 创建 task、上传文件、提交 message。
+6. `frontend/lib/task-api.ts` 发送 HTTP 请求。
+7. `frontend/app/task-state.ts` 标准化响应。
+8. running task 通过 `createTaskEventSource` 接收 SSE，并用 `mergeExecutionLogs` 合并。
+9. `workspace-view.ts` 构建 run group 和 conversation stream。
+10. `TaskConversation` 渲染消息、日志和产物。
 
-1. `ChatComposer` renders a native file input, model listbox, slash skill listbox, selected file chips, and selected skill chips (`frontend/components/chat/ChatComposer.tsx:53`).
-2. Selected files are filtered by `partitionSupportedUploadFiles` (`frontend/app/file-upload.ts:19`) before the hook stores them.
-3. Model options are loaded from `/api/models` and restricted to DeepSeek V4 Flash IDs in `frontend/hooks/use-task-workspace.ts`.
-4. Skill options are loaded from `/api/skills`, normalized by `normalizeSkillOptions`, filtered with `filterSkillOptions`, and selected through slash-token helpers (`frontend/app/skill-selection.ts:49`, `frontend/app/skill-selection.ts:59`, `frontend/app/skill-selection.ts:71`, `frontend/app/skill-selection.ts:106`).
-5. `postTaskMessage` serializes selected skill names into the message payload (`frontend/lib/task-api.ts:155`).
+### 会话历史路径
 
-**State Management:**
-- Use React state and refs inside `frontend/hooks/use-task-workspace.ts`; there is no external client state library.
-- Use derived state with `useMemo` for notices, history items, model display options, selected skills, run groups, and conversation stream items.
-- Use refs only for browser-side transient state: latest logs for event cursor recovery and copy-feedback timer cleanup in `frontend/hooks/use-task-workspace.ts`, scroll/detail state in `frontend/components/chat/TaskConversation.tsx`, picker/file input state in `frontend/components/chat/ChatComposer.tsx`, and menu state in `frontend/components/chat/ChatSidebar.tsx`.
-- Treat backend task state and persisted events as authoritative; SSE is a projection merged into local logs and backed by `fetchTaskEvents` recovery.
+- `fetchTaskSummaries` 读取 `/api/tasks`。
+- `normalizeTaskSummaries` 转成 `TaskSummary[]`。
+- `buildConversationHistoryItems` 生成 sidebar rows。
+- 选择会话调用 `fetchTask`；重命名/删除/清空通过 hook handler 调用 API。
 
-## Key Abstractions
+### 产物路径
 
-**TaskState and Related Types:**
-- Purpose: Stable frontend shape for task detail, runs, messages, logs, artifacts, uploads, errors, and needs-input prompts.
-- Examples: `TaskState`, `ChatMessage`, `ExecutionLog`, `TaskRunRecord`, `TaskSummary`, `Artifact` in `frontend/app/task-state.ts`.
-- Pattern: Normalize every backend response before it reaches React rendering.
+- 后端 task state 附带 artifacts。
+- `buildArtifactRequest` 校验当前 API origin、task id、run id、artifact name、query/hash 和路径穿越。
+- 下载通过 `fetchArtifactBlob` + `<a download>`。
+- HTML 预览在 `about:blank` popup 中写入沙盒 iframe，不直接注入主页面。
 
-**ExecutionLog Projection:**
-- Purpose: Preserve raw backend event records while exposing typed live metadata, reasoning traces, file audit traces, search traces, orchestration traces, memory context, and answer/thinking streams.
-- Examples: `normalizeLog` (`frontend/app/task-state.ts:1018`), `buildLiveLogItems` (`frontend/app/workspace-view.ts:200`), `buildRunDiagnosticsJson` (`frontend/app/workspace-view.ts:196`).
-- Pattern: Store typed fields for UI, keep non-enumerable raw records for diagnostics JSON.
+### 上传、模型、技能路径
 
-**ConversationStreamItem:**
-- Purpose: Flatten messages, run logs, streamed answers, and artifact cards into a single ordered render stream.
-- Examples: `ConversationStreamItem` and `buildConversationStreamItems` in `frontend/app/workspace-view.ts`.
-- Pattern: Build ordering outside JSX and render by discriminated `kind`.
+- `ChatComposer` 管理文件 input、模型 listbox、skill slash picker 和 chips。
+- `partitionSupportedUploadFiles` 过滤扩展名。
+- `/api/models` 只用于浏览器安全模型选项，当前 UI 限定 DeepSeek V4 Flash 两个 ID。
+- `/api/skills` 返回 name/description；选中的技能名称随 message payload 发送。
 
-**RunActivityGroup:**
-- Purpose: Associate logs, artifacts, status, and streamed answer content by backend run ID.
-- Examples: `RunActivityGroup` and `buildRunActivityGroups` in `frontend/app/workspace-view.ts`.
-- Pattern: Group run-scoped records before rendering progress cards.
+## 状态管理
 
-**Task API Adapter:**
-- Purpose: Provide one browser transport boundary for REST, multipart, SSE, delete, and artifact blob calls.
-- Examples: `requestTaskJson`, `createTaskEventSource`, `fetchArtifactBlob` in `frontend/lib/task-api.ts`.
-- Pattern: Return normalized frontend types from public API helpers whenever possible.
+- 运行时状态使用 React state/ref，没有外部客户端状态库。
+- `useMemo` 构建 history、model display、selected skills、run groups、conversation stream。
+- refs 只用于瞬态浏览器状态：latest logs、copy timer、scroll/detail、picker/file input、menu。
+- 后端 task state 和持久化 events 是权威；SSE 只是投影，失败后通过 `fetchTaskEvents` 和 `fetchTask` 恢复。
 
-**ArtifactRequest:**
-- Purpose: Prevent token leakage to untrusted artifact URLs and support run-scoped artifact routes.
-- Examples: `buildArtifactRequest`, `trustedApiOrigin`, `assertTrustedArtifactUrl` in `frontend/app/task-state.ts`.
-- Pattern: Construct or validate URLs before issuing browser fetches.
+## 关键抽象
 
-**ModelDisplayOption and SkillOption:**
-- Purpose: Keep backend model/skill records browser-safe and display-ready.
-- Examples: `frontend/app/model-ui.ts`, `frontend/app/skill-selection.ts`.
-- Pattern: Normalize backend records and derive display copy separately from component state.
+- `TaskState`：前端任务详情、runs、messages、logs、artifacts、uploads 和 prompts 的稳定形状。
+- `ExecutionLog`：保存后端 event record，同时暴露 live metadata、reasoning/search/tool/memory/file audit traces。
+- `ConversationStreamItem`：把消息、run logs、产物卡片压平成一条有序渲染流。
+- `RunActivityGroup`：按 run id 聚合 logs、artifacts、status 和 streamed diagnostics。
+- `Task API adapter`：浏览器 REST/SSE/blob 请求的唯一传输边界。
+- `ArtifactRequest`：防止 token 泄露到不可信 artifact URL。
+- `ModelDisplayOption` / `SkillOption`：浏览器安全、显示友好的模型和技能记录。
 
-## Entry Points
+## 入口
 
-**Application Route:**
-- Location: `frontend/app/page.tsx`
-- Triggers: Next.js request for `/`.
-- Responsibilities: Render `TaskWorkspace` only; do not place task orchestration here.
+- `frontend/app/page.tsx`：根路由，只渲染 `TaskWorkspace`。
+- `frontend/app/layout.tsx`：app shell、metadata、global CSS。
+- `frontend/components/chat/TaskWorkspace.tsx`：工作区组件边界。
+- `frontend/hooks/use-task-workspace.ts`：工作区控制器。
+- `frontend/lib/task-api.ts`：后端 API 边界。
+- `frontend/app/globals.css`：全局视觉系统。
+- `frontend/tests/`, `frontend/e2e-playwright/`：自动化验证入口。
 
-**Root Layout:**
-- Location: `frontend/app/layout.tsx`
-- Triggers: Next.js app shell creation.
-- Responsibilities: Set metadata, language, body shell, and global CSS.
+## 架构约束
 
-**Workspace Component Boundary:**
-- Location: `frontend/components/chat/TaskWorkspace.tsx`
-- Triggers: Rendered by `frontend/app/page.tsx`.
-- Responsibilities: Bind `useTaskWorkspace` to presentational chat components.
+- 前端运行在浏览器 event loop，SSE、file picker、clipboard、popup/blob 处理不能阻塞。
+- 浏览器公开配置只能使用 `NEXT_PUBLIC_*`，不能包含 provider key、数据库 URL、Qdrant URL 或客户资料。
+- 生产路由目前只有 `/`；新增路由必须有真实 URL surface。
+- 后端字段在 `task-state.ts` 中标准化，组件消费前端 `camelCase` 类型。
+- artifact 操作必须走 `buildArtifactRequest` 和 `fetchArtifactBlob`。
+- 保持依赖方向：components -> hook -> API/state/view adapters；API -> state adapter；view adapter -> state types。
+- 未配置 path alias，保持相对导入。
+- `.next/`, `.next-dev/`, `node_modules/`, `test-results/`, E2E evidence、`next-env.d.ts`, `*.tsbuildinfo` 都是生成/本地文件。
 
-**Workspace Hook:**
-- Location: `frontend/hooks/use-task-workspace.ts`
-- Triggers: Called by `TaskWorkspace`.
-- Responsibilities: Initialize backend data, mutate task state, manage SSE, expose handlers and derived values.
+## 反模式
 
-**Backend API Boundary:**
-- Location: `frontend/lib/task-api.ts`
-- Triggers: Called by `useTaskWorkspace` and tests.
-- Responsibilities: Convert frontend actions into backend HTTP/SSE/blob requests.
+- 不要在 chat 组件中直接调用 `/api/tasks`、`/api/models`、`/api/skills` 或 artifact routes。
+- 不要在 JSX 中读取原始后端 `snake_case` 字段或 raw event payload。
+- 不要在 JSX 中排序/分组 run logs；扩展 `workspace-view.ts`。
+- 不要直接打开或链接 backend-provided artifact URL。
+- 不要把产品逻辑放进 `frontend/app/page.tsx`。
 
-**Global Styling:**
-- Location: `frontend/app/globals.css`
-- Triggers: Imported by `frontend/app/layout.tsx`.
-- Responsibilities: Supply all runtime CSS for the chat workspace.
+## 错误处理
 
-**Automated Checks:**
-- Location: `frontend/tests/`, `frontend/e2e-playwright/`
-- Triggers: `npm test`, `npm run e2e:runtime-contracts`, and direct `npx playwright test ...` commands from `frontend/`.
-- Responsibilities: Guard architecture boundaries, state adapters, UI helpers, and browser acceptance flows.
+- `requestTaskJson` 统一处理 fetch failure、HTTP error 和用户可读错误。
+- hook 捕获 action failure，设置 `error` 和 `errorLevel`，由 workspace notice 展示。
+- 后端 task error 和 needs-input 由 `workspace-view.ts` 投影成 state notice。
+- SSE error 解析后会刷新事件和 task summary。
+- artifact URL 不可信时，在附加 token 前抛出安全错误。
 
-## Architectural Constraints
+## 横切关注点
 
-- **Threading:** The frontend runs on the browser event loop. SSE callbacks, file picker events, clipboard writes, timers, and popup/blob handling must stay non-blocking inside React event/effect handlers.
-- **Global state:** Module-level constants in `frontend/hooks/use-task-workspace.ts`, `frontend/lib/task-api.ts`, `frontend/app/task-state.ts`, `frontend/app/file-upload.ts`, and `frontend/app/model-ui.ts` are configuration or lookup constants. Mutable application state belongs in React hooks/components.
-- **Runtime configuration:** `TASK_API_BASE_URL` and `TASK_API_ACCESS_TOKEN` are computed at module import in `frontend/lib/task-api.ts`. Browser-exposed configuration must use `NEXT_PUBLIC_MYAGENT_API_BASE_URL`, `NEXT_PUBLIC_API_BASE_URL`, `NEXT_PUBLIC_MYAGENT_TOKEN`, or `NEXT_PUBLIC_AGENT_CHAT_TOKEN`; provider secrets must not be added to frontend code or docs.
-- **Routing:** The application has one production route, `/`, implemented by `frontend/app/page.tsx`. Add route folders under `frontend/app/` only when a real URL surface is required.
-- **Backend field boundary:** Backend `snake_case` and alternative field names are normalized in `frontend/app/task-state.ts`. Components should consume `camelCase` frontend types.
-- **SSE recovery:** SSE updates are merged into logs and complemented by `fetchTaskEvents` with the latest log ID. Do not treat EventSource delivery as the only durable state source.
-- **Artifacts:** Artifact opening/downloading must use `fetchArtifactBlob` and `buildArtifactRequest`; do not render backend-provided artifact URLs directly into clickable links.
-- **Circular imports:** Not detected in the explored frontend source. Preserve the current direction: components -> hook -> API/state/view adapters; API -> state adapter; view adapter -> state types.
-- **Path aliases:** Not configured in `frontend/tsconfig.json`; keep local imports relative unless aliases are added deliberately to config and tests.
-- **Generated directories:** `.next/`, `.next-dev/`, `node_modules/`, `test-results/`, timestamped E2E evidence folders, `next-env.d.ts`, and `*.tsbuildinfo` are generated or local artifacts.
-
-## Anti-Patterns
-
-### Fetching Task APIs From Components
-
-**What happens:** A chat component calls `/api/tasks`, `/api/models`, `/api/skills`, or artifact routes directly.
-**Why it's wrong:** It bypasses shared headers, access-token handling, error formatting, and payload normalization.
-**Do this instead:** Add or extend a function in `frontend/lib/task-api.ts`, then call it from `frontend/hooks/use-task-workspace.ts`.
-
-### Rendering Raw Backend Payloads
-
-**What happens:** JSX reads `snake_case` backend fields or raw event payloads directly.
-**Why it's wrong:** The UI depends on backend shape drift and duplicates translation/normalization rules.
-**Do this instead:** Normalize fields in `frontend/app/task-state.ts` and build display structures in `frontend/app/workspace-view.ts`.
-
-### Embedding Grouping and Log Ordering in JSX
-
-**What happens:** `TaskConversation` sorts logs, groups runs, or filters placeholder messages inline while rendering.
-**Why it's wrong:** The progress timeline is dense and already covered by pure tests around `frontend/app/workspace-view.ts`.
-**Do this instead:** Extend `buildRunActivityGroups`, `buildConversationStreamItems`, or `buildLiveLogItems` in `frontend/app/workspace-view.ts`.
-
-### Opening Artifact URLs Directly
-
-**What happens:** A component links to `artifact.url` or opens a blob URL as the top-level document.
-**Why it's wrong:** Untrusted URLs can leak the browser token or execute generated HTML outside the intended sandbox.
-**Do this instead:** Use `handleDownloadArtifact` and `handleOpenArtifact` in `frontend/hooks/use-task-workspace.ts`, backed by `fetchArtifactBlob` in `frontend/lib/task-api.ts` and `buildSandboxedArtifactPreviewDocument` in `frontend/hooks/use-task-workspace.ts`.
-
-### Adding Product Logic to Route Files
-
-**What happens:** `frontend/app/page.tsx` gains state, handlers, task API calls, or rendering branches.
-**Why it's wrong:** The root route is intentionally a stable delegation point and is guarded by `frontend/tests/workspace/test_frontend_architecture.test.ts`.
-**Do this instead:** Keep product behavior in `frontend/hooks/use-task-workspace.ts`, `frontend/app/*` helpers, and `frontend/components/chat/`.
-
-## Error Handling
-
-**Strategy:** Convert transport and backend failures into user-facing message strings at the API/state boundary, then surface them through hook-owned notice messages.
-
-**Patterns:**
-- `requestTaskJson` wraps fetch failures with `formatRequestFailure` and non-OK responses with `formatHttpErrorMessage` (`frontend/lib/task-api.ts`, `frontend/app/task-state.ts`).
-- `useTaskWorkspace` catches action failures, sets `errorLevel`, and exposes workspace notices through `buildWorkspaceNoticeMessages` (`frontend/hooks/use-task-workspace.ts`, `frontend/app/workspace-view.ts`).
-- Backend task errors and `needs_input` data are projected as state notices through `buildStateNoticeMessages` (`frontend/app/workspace-view.ts:101`).
-- SSE error payloads are parsed by `getSseErrorDetail` and followed by summary/event refresh (`frontend/hooks/use-task-workspace.ts`).
-- Artifact URL validation throws the same user-facing blocked-url message before token-bearing fetches (`frontend/app/task-state.ts`).
-
-## Cross-Cutting Concerns
-
-**Logging:** The frontend does not maintain an application logger. It renders backend event logs and diagnostics through `ExecutionLog`, `buildLiveLogItems`, `buildRunDiagnosticsJson`, and copy-to-clipboard JSONL helpers in `frontend/app/workspace-view.ts`.
-
-**Validation:** Validate backend JSON with `isRecord`, `readString`, bounded readers, and normalizers in `frontend/app/task-state.ts`. Validate upload filenames in `frontend/app/file-upload.ts`. Validate slash skill tokens in `frontend/app/skill-selection.ts`. Validate artifact URL trust in `frontend/app/task-state.ts`.
-
-**Authentication:** Optional browser access tokens are read from `NEXT_PUBLIC_MYAGENT_TOKEN` or `NEXT_PUBLIC_AGENT_CHAT_TOKEN` in `frontend/lib/task-api.ts`. REST requests send `X-MyAgent-Token`; SSE uses a `token` query parameter because browser `EventSource` cannot set custom headers.
-
-**Configuration:** `frontend/.env.example` documents public frontend variables. `frontend/.env.local` is present as ignored local configuration and must not be read or copied into documentation.
-
-**Styling:** Keep global visual tokens and component class styling in `frontend/app/globals.css`; route files and components use class names rather than CSS modules.
+- 前端没有应用 logger，用户可见日志来自后端事件。
+- 后端 JSON 校验使用 `isRecord`、`readString` 等 reader 和 normalizer。
+- 认证 token 来自 `NEXT_PUBLIC_MYAGENT_TOKEN` 或 legacy `NEXT_PUBLIC_AGENT_CHAT_TOKEN`；HTTP 用 header，SSE 用 query。
+- `.env.local` 是 ignored 本地配置，不能读取或复制到文档。
+- 样式集中在 `frontend/app/globals.css`，组件使用 class name。
 
 ---
 
-*Architecture analysis: 2026-05-22*
+*架构分析：2026-05-24*

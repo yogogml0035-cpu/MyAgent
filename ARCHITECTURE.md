@@ -1,4 +1,4 @@
-# MyAgent Architecture
+# MyAgent 架构
 
 本文件是仓库级系统总览。子项目内部实现事实以
 `backend/.planning/codebase/` 和 `frontend/.planning/codebase/` 为准；本文件只保留跨子系统边界、职责和推荐理解路径。

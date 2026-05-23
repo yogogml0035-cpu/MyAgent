@@ -1,4 +1,4 @@
-# MyAgent Agent Map
+# MyAgent 代理导航地图
 
 本文件是仓库级导航入口，适用于整个 `/mnt/d/AgentProject/MyAgent`。它只说明先读哪里、边界在哪里、哪些规则需要同步维护；系统总览放在 `ARCHITECTURE.md`，跨系统接口放在 `INTERFACES.md`，子项目事实放在 `backend/.planning/codebase/` 和 `frontend/.planning/codebase/`。
 

@@ -1,151 +1,108 @@
-# External Integrations
+# 前端集成
 
-**Analysis Date:** 2026-05-22
+**分析日期：** 2026-05-24
 
-## APIs & External Services
+## 运行时服务集成
 
-**MyAgent Backend HTTP API:**
-- MyAgent backend - The frontend uses the backend as its only runtime service integration.
-  - SDK/Client: Browser `fetch` wrapped by `frontend/lib/task-api.ts`.
-  - Base URL: `TASK_API_BASE_URL` in `frontend/lib/task-api.ts`, derived by `resolveApiBaseUrl` in `frontend/app/task-state.ts`.
-  - Auth: optional `NEXT_PUBLIC_MYAGENT_TOKEN` or legacy `NEXT_PUBLIC_AGENT_CHAT_TOKEN`; sent as `X-MyAgent-Token` by `frontend/lib/task-api.ts`.
-  - Endpoints:
-    - `GET /api/models` - Fetch browser-safe model options in `frontend/lib/task-api.ts`.
-    - `GET /api/skills` - Fetch project skill options in `frontend/lib/task-api.ts`.
-    - `GET /api/tasks` - Fetch conversation/task summaries in `frontend/lib/task-api.ts`.
-    - `POST /api/tasks` - Create a task with a selected model in `frontend/lib/task-api.ts`.
-    - `GET /api/tasks/{task_id}` - Fetch task state, messages, events/logs, runs, uploads, and artifacts in `frontend/lib/task-api.ts`.
-    - `PATCH /api/tasks/{task_id}` - Rename a conversation in `frontend/lib/task-api.ts`.
-    - `DELETE /api/tasks/{task_id}` - Delete a conversation in `frontend/lib/task-api.ts`.
-    - `GET /api/tasks/{task_id}/events?after_id=...` - Recover incremental event logs in `frontend/lib/task-api.ts`.
-    - `POST /api/tasks/{task_id}/files` - Upload selected files as multipart form data in `frontend/lib/task-api.ts`.
-    - `POST /api/tasks/{task_id}/messages` - Send user messages, selected model ID, mode, and selected skill names in `frontend/lib/task-api.ts`.
-    - `POST /api/tasks/{task_id}/cancel` - Stop a running task in `frontend/lib/task-api.ts`.
-    - `GET /api/tasks/{task_id}/artifacts/{artifact_name}` - Download task artifacts via `buildArtifactRequest` in `frontend/app/task-state.ts`.
-    - `GET /api/tasks/{task_id}/runs/{run_id}/artifacts/{artifact_name}` - Download run-scoped artifacts via `buildArtifactRequest` in `frontend/app/task-state.ts`.
+### MyAgent 后端 HTTP API
 
-**MyAgent Backend SSE Stream:**
-- Task event stream - The frontend follows running tasks through server-sent events.
-  - SDK/Client: Browser `EventSource` created by `createTaskEventSource` in `frontend/lib/task-api.ts`.
-  - Endpoint: `GET /api/tasks/{task_id}/stream`.
-  - Auth: optional browser token is appended as a `token` query parameter by `frontend/lib/task-api.ts`.
-  - Consumer: `frontend/hooks/use-task-workspace.ts` merges stream events into execution logs, refreshes task summaries, and retries with exponential backoff.
-  - Fallback: `frontend/hooks/use-task-workspace.ts` calls `fetchTaskEvents` and `fetchTask` when SSE fails or sends terminal/state events.
+- 前端运行时只集成 MyAgent 后端。
+- 客户端：`frontend/lib/task-api.ts` 中的浏览器 `fetch` wrapper。
+- Base URL：`TASK_API_BASE_URL`，由 `frontend/app/task-state.ts` 的 `resolveApiBaseUrl` 推导。
+- 认证：可选 `NEXT_PUBLIC_MYAGENT_TOKEN` 或 legacy `NEXT_PUBLIC_AGENT_CHAT_TOKEN`，HTTP 请求使用 `X-MyAgent-Token`。
+- 常用 endpoint：
+  - `GET /api/models`
+  - `GET /api/skills`
+  - `GET /api/tasks`
+  - `POST /api/tasks`
+  - `GET /api/tasks/{task_id}`
+  - `PATCH /api/tasks/{task_id}`
+  - `DELETE /api/tasks/{task_id}`
+  - `GET /api/tasks/{task_id}/events?after_id=...`
+  - `POST /api/tasks/{task_id}/files`
+  - `POST /api/tasks/{task_id}/messages`
+  - `POST /api/tasks/{task_id}/cancel`
+  - `GET /api/tasks/{task_id}/artifacts/{artifact_name}`
+  - `GET /api/tasks/{task_id}/runs/{run_id}/artifacts/{artifact_name}`
 
-**Model and Skill Catalogs:**
-- Backend model registry - `frontend/hooks/use-task-workspace.ts` calls `fetchModelOptions` from `frontend/lib/task-api.ts`, filters UI selection to `deepseek-v4-flash` and `deepseek-v4-flash-thinking`, and displays availability through `frontend/app/model-ui.ts`.
-  - SDK/Client: Browser `fetch` through `frontend/lib/task-api.ts`.
-  - Auth: optional `X-MyAgent-Token`.
-- Backend skill registry - `frontend/hooks/use-task-workspace.ts` calls `fetchSkillOptions`, normalizes only `name` and `description` in `frontend/app/skill-selection.ts`, and sends selected skill names through `postTaskMessage`.
-  - SDK/Client: Browser `fetch` through `frontend/lib/task-api.ts`.
-  - Auth: optional `X-MyAgent-Token`.
+### MyAgent 后端 SSE
 
-**External Provider Services:**
-- Direct browser-to-provider integrations are not detected in `frontend/`.
-- AI model providers, search tools, Postgres, Qdrant, and provider keys are backend responsibilities. `frontend/README.md` states provider secrets stay in backend `.env`; the browser sends only backend-registered model IDs.
-- `frontend/app/workspace-view.ts` and `frontend/app/task-state.ts` display bounded backend event metadata for search, memory, orchestration, reasoning, and tool activity; they do not call those providers directly.
+- 任务事件流使用浏览器 `EventSource`。
+- endpoint：`GET /api/tasks/{task_id}/stream`。
+- 认证：`EventSource` 不能设置自定义 header，因此 token 作为 query 参数。
+- 消费者：`frontend/hooks/use-task-workspace.ts` 合并 stream events、刷新 summary、按有界重试恢复。
+- fallback：SSE 失败或终态后，通过 `fetchTaskEvents` 和 `fetchTask` 恢复。
 
-## Data Storage
+### 模型与技能目录
 
-**Databases:**
-- No database client is used by the frontend runtime.
-  - Connection: Not applicable in `frontend/`.
-  - Client: Not detected in `frontend/package.json` or `frontend/package-lock.json`.
-- Backend task state is read through MyAgent HTTP/SSE APIs in `frontend/lib/task-api.ts`.
-- Playwright E2E specs such as `frontend/e2e-playwright/test_runtime_contracts.spec.mjs` and `frontend/e2e-playwright/test_session_context_memory.spec.mjs` use backend/API/Postgres test setup env vars to seed or verify backend state; this is acceptance-test infrastructure, not a browser runtime database integration.
+- 模型目录来自 `/api/models`，UI 限制为 `deepseek-v4-flash` 和 `deepseek-v4-flash-thinking`。
+- 技能目录来自 `/api/skills`，前端只使用 name/description。
+- 选中的技能名称随 `postTaskMessage` 发送。
+- 前端不直接访问模型 provider、Postgres、Qdrant、SearXNG 或 embedding service。
 
-**File Storage:**
-- Local browser file selection uses the `File` API in `frontend/components/chat/ChatComposer.tsx`.
-- Upload filtering lives in `frontend/app/file-upload.ts`; accepted filenames are `.md`, `.json`, `.txt`, `.docx`, `.xlsx`, and `.xlsm`.
-- Upload transport uses `FormData` and `POST /api/tasks/{task_id}/files` in `frontend/lib/task-api.ts`.
-- Artifact download and preview use backend artifact endpoints, `Response.blob()`, `URL.createObjectURL`, and DOM download/open flows in `frontend/hooks/use-task-workspace.ts`.
-- HTML artifact previews are rendered in a new browser window with a sandboxed iframe document generated by `buildSandboxedArtifactPreviewDocument` in `frontend/hooks/use-task-workspace.ts`.
+## 数据存储
 
-**Caching:**
-- No Redis, browser storage cache, service worker, or data-fetch cache library is detected in `frontend/`.
-- Runtime state is held in React state inside `frontend/hooks/use-task-workspace.ts`.
-- Event deduplication happens in memory through `mergeExecutionLogs` in `frontend/app/task-state.ts`.
+- 前端 runtime 没有数据库 client。
+- task state、messages、events、runs、uploads、artifacts 都来自后端 HTTP/SSE。
+- Playwright specs 可能通过后端/API/Postgres test setup seed 状态；这属于验收基础设施，不是浏览器 runtime 集成。
 
-## Authentication & Identity
+## 文件与 Blob
 
-**Auth Provider:**
-- Custom shared-token boundary handled by the backend.
-  - Implementation: `frontend/lib/task-api.ts` reads `NEXT_PUBLIC_MYAGENT_TOKEN` or legacy `NEXT_PUBLIC_AGENT_CHAT_TOKEN`.
-  - HTTP requests: Token is sent as `X-MyAgent-Token`.
-  - SSE requests: Token is sent as a `token` query parameter because `EventSource` cannot set custom headers.
-  - Browser exposure: All `NEXT_PUBLIC_*` values are bundled for the browser; do not put provider secrets, database URLs, Qdrant URLs, customer data, or private examples in these values.
-- No frontend login page, OAuth provider, cookie session, or app runtime `localStorage` session store is detected in `frontend/app/`, `frontend/components/`, `frontend/hooks/`, or `frontend/lib/`.
-- `frontend/e2e-playwright/test_storage_memory_e2e.mjs` uses `localStorage` only for an E2E harness token scenario; it is not used by the production app runtime.
+- 浏览器文件选择：`ChatComposer.tsx` 的 native file input。
+- 上传过滤：`frontend/app/file-upload.ts`，当前扩展名 `.md`, `.json`, `.txt`, `.docx`, `.xlsx`, `.xlsm`。
+- 上传传输：`FormData` + `POST /api/tasks/{task_id}/files`。
+- 产物下载/预览：后端 artifact endpoint、`Response.blob()`、`URL.createObjectURL`、DOM download/open flow。
+- HTML 预览：`buildSandboxedArtifactPreviewDocument` 在 popup 内写入 sandboxed iframe。
 
-## Browser APIs
+## 缓存
 
-**Network:**
-- `fetch` - REST requests in `frontend/lib/task-api.ts`.
-- `EventSource` - SSE stream requests in `frontend/lib/task-api.ts` and lifecycle management in `frontend/hooks/use-task-workspace.ts`.
+- 未检测到 Redis、浏览器 storage cache、service worker 或 data-fetch cache library。
+- 运行时状态保存在 React state。
+- 事件去重由 `mergeExecutionLogs` 在内存中完成。
 
-**Files and Blobs:**
-- `File` and file input selection - `frontend/components/chat/ChatComposer.tsx`.
-- `FormData` - Multipart uploads in `frontend/lib/task-api.ts`.
-- `Blob` / `Response.blob()` - Artifact retrieval in `frontend/lib/task-api.ts`.
-- `URL.createObjectURL` and `URL.revokeObjectURL` - Artifact download and preview lifecycle in `frontend/hooks/use-task-workspace.ts`.
+## 认证与身份
 
-**DOM and Clipboard:**
-- `navigator.clipboard.writeText` - Copy messages/logs/diagnostics in `frontend/hooks/use-task-workspace.ts`.
-- `window.open`, `document.open`, `document.write`, and sandboxed iframe markup - HTML artifact previews in `frontend/hooks/use-task-workspace.ts`.
-- `document.createElement("a")` - Download trigger in `frontend/hooks/use-task-workspace.ts`.
-- `window.confirm` - Destructive conversation actions in `frontend/hooks/use-task-workspace.ts` and `frontend/components/chat/ChatSidebar.tsx`.
-- `document.addEventListener` / `document.removeEventListener` - Outside-click and Escape-key handling in `frontend/components/chat/ChatComposer.tsx` and `frontend/components/chat/ChatSidebar.tsx`.
-- `window.requestAnimationFrame` and `window.cancelAnimationFrame` - Composer focus and log auto-scroll behavior in `frontend/components/chat/ChatComposer.tsx` and `frontend/components/chat/TaskConversation.tsx`.
-- `Intl.DateTimeFormat` and `Intl.Segmenter` - Time formatting and title grapheme segmentation in `frontend/app/workspace-view.ts` and `frontend/app/task-state.ts`.
+- 自定义共享 token 由后端验证。
+- HTTP 请求 token 来自 `NEXT_PUBLIC_MYAGENT_TOKEN` 或 legacy `NEXT_PUBLIC_AGENT_CHAT_TOKEN`，通过 `X-MyAgent-Token` 发送。
+- SSE token 通过 query 参数发送。
+- `NEXT_PUBLIC_*` 会进入浏览器 bundle，不能包含 provider key、数据库 URL、Qdrant URL、客户数据或私密样例。
+- 未检测到登录页、OAuth、cookie session 或生产 runtime localStorage session store。
 
-## Monitoring & Observability
+## 浏览器 API
 
-**Error Tracking:**
-- None detected in `frontend/package.json`, `frontend/app/`, `frontend/components/`, `frontend/hooks/`, or `frontend/lib/`.
+- Network：`fetch`, `EventSource`。
+- Files/Blobs：`File`, `FormData`, `Blob`, `URL.createObjectURL`, `URL.revokeObjectURL`。
+- DOM/Clipboard：`navigator.clipboard.writeText`, `window.open`, `document.write`, `document.createElement("a")`, `window.confirm`, document listeners, `requestAnimationFrame`。
+- Formatting：`Intl.DateTimeFormat`, `Intl.Segmenter`。
 
-**Logs:**
-- Frontend user-facing logs are backend task events normalized by `frontend/app/task-state.ts` and rendered by `frontend/components/chat/TaskConversation.tsx`.
-- Diagnostic JSON and JSONL copy flows are generated client-side in `frontend/app/workspace-view.ts` and copied through `frontend/hooks/use-task-workspace.ts`.
-- Browser E2E evidence is documented in `frontend/e2e-playwright/README.md` and stored in local timestamped `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/` folders.
+## 可观测性
 
-## CI/CD & Deployment
+- 未检测到前端错误追踪 SDK。
+- 用户可见日志来自后端 task events，经 `task-state.ts` 标准化并由 `TaskConversation.tsx` 渲染。
+- diagnostics JSON/JSONL copy 由 `workspace-view.ts` 生成。
+- 浏览器 E2E evidence 存在本地时间戳目录，不能提交。
 
-**Hosting:**
-- No hosting platform configuration is detected inside `frontend/`.
-- The production command is `npm run build` followed by `npm run start` from `frontend/package.json`.
+## CI/CD 与部署
 
-**CI Pipeline:**
-- No frontend-local CI workflow is detected inside `frontend/`.
-- Validation commands available from `frontend/package.json` are `npm run typecheck`, `npm test`, `npm run lint`, `npm run build`, and `npm run e2e:runtime-contracts`.
+- 未检测到 frontend-local CI workflow 或 hosting provider 配置。
+- 生产命令为 `npm run build` + `npm run start`。
+- 可用验证命令：`npm run typecheck`, `npm test`, `npm run lint`, `npm run build`, `npm run e2e:runtime-contracts`。
 
-## Environment Configuration
+## 环境变量
 
-**Required env vars:**
-- `NEXT_PUBLIC_MYAGENT_API_BASE_URL` - Optional browser backend base URL. Use `auto` or leave unset to derive port `8001` from the current page hostname. Defined in `frontend/.env.example`; resolved in `frontend/app/task-state.ts`.
-- `NEXT_PUBLIC_MYAGENT_TOKEN` - Optional browser-exposed MyAgent access token. Defined in `frontend/.env.example`; read in `frontend/lib/task-api.ts`.
-- `NEXT_PUBLIC_API_BASE_URL` - Legacy backend base URL fallback accepted by `frontend/lib/task-api.ts`.
-- `NEXT_PUBLIC_AGENT_CHAT_TOKEN` - Legacy access-token fallback accepted by `frontend/lib/task-api.ts`.
-- `NEXT_WATCH_POLL_INTERVAL_MS` - Optional watch polling interval for `frontend/next.config.mjs`.
-- `MYAGENT_E2E_BASE_URL` - E2E frontend base URL for `frontend/e2e-playwright/*.mjs`.
-- `MYAGENT_E2E_API_URL` - E2E backend API base URL for `frontend/e2e-playwright/*.mjs`.
-- `MYAGENT_E2E_EVIDENCE_DIR` - E2E screenshot/evidence output path for `frontend/e2e-playwright/*.mjs`.
-- `MYAGENT_E2E_ACCESS_TOKEN` - Optional E2E API token used by `frontend/e2e-playwright/*.mjs`.
-- `MYAGENT_E2E_TASK_ROOT`, `MYAGENT_E2E_EXPECT_UPLOAD_LIMIT_BYTES`, `MYAGENT_E2E_POSTGRES_CONTAINER`, `MYAGENT_E2E_POSTGRES_USER`, `MYAGENT_E2E_POSTGRES_DB`, `MYAGENT_DEFAULT_USER_ID`, and `MYAGENT_E2E_PYTHON` - Scenario-specific E2E backend setup variables documented or used in `frontend/e2e-playwright/README.md` and specs.
+- `NEXT_PUBLIC_MYAGENT_API_BASE_URL`：可选后端 URL。
+- `NEXT_PUBLIC_MYAGENT_TOKEN`：可选浏览器 token。
+- `NEXT_PUBLIC_API_BASE_URL`、`NEXT_PUBLIC_AGENT_CHAT_TOKEN`：legacy fallback。
+- `NEXT_WATCH_POLL_INTERVAL_MS`：watch polling。
+- E2E 变量：`MYAGENT_E2E_BASE_URL`, `MYAGENT_E2E_API_URL`, `MYAGENT_E2E_EVIDENCE_DIR`, `MYAGENT_E2E_ACCESS_TOKEN` 以及场景特定后端 setup 变量。
+- `frontend/.env.local` 是 ignored 本地配置，不能读取、引用或提交。
 
-**Secrets location:**
-- `frontend/.env.local` exists and is ignored by `frontend/.gitignore`; do not read, quote, or commit its values.
-- `frontend/.env.example` is safe documentation for browser-exposed variable names.
-- Provider keys, database URLs, Qdrant URLs, and private customer data must remain in backend runtime configuration, not in `NEXT_PUBLIC_*` variables.
+## Webhook 和回调
 
-## Webhooks & Callbacks
-
-**Incoming:**
-- None detected in `frontend/`. The Next app has no route handlers under `frontend/app/api/`.
-
-**Outgoing:**
-- REST calls and SSE connections go to the MyAgent backend from `frontend/lib/task-api.ts`.
-- No outbound webhook, telemetry, analytics, email, payment, or third-party SDK callbacks are detected in `frontend/`.
+- 未检测到 `frontend/app/api/` route handler 或 incoming webhook。
+- outgoing 只指向 MyAgent 后端。
+- 未检测到 telemetry、analytics、email、payment 或第三方 SDK callback。
 
 ---
 
-*Integration audit: 2026-05-22*
+*集成审计：2026-05-24*

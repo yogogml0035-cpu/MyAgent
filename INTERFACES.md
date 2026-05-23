@@ -1,4 +1,4 @@
-# MyAgent Interfaces
+# MyAgent 接口边界
 
 本文件记录仓库级接口边界。具体端点实现和内部类型以
 `backend/.planning/codebase/`、`frontend/.planning/codebase/` 和源代码为准。

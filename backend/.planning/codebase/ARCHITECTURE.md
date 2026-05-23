@@ -1,352 +1,185 @@
-<!-- refreshed: 2026-05-22 -->
-# Architecture
+<!-- refreshed: 2026-05-24 -->
+# 后端架构
 
-**Analysis Date:** 2026-05-22
+**分析日期：** 2026-05-24
 
-## System Overview
+## 系统总览
+
+`backend/` 是 MyAgent 的任务生命周期和运行时权威边界。它用 FastAPI 提供 HTTP/SSE API，用 Postgres 保存任务、运行、消息、事件和长期记忆元数据，用本地文件系统保存上传与产物，并在进程内通过 DeepAgents/LangGraph 执行 agent run。
 
 ```text
-+--------------------------------------------------------------------+
-|                         FastAPI Application                         |
-|                         `backend/app/main.py`                       |
-+-------------------+-------------------+----------------------------+
-| Task lifecycle    | Files/artifacts    | Models/skills/streaming    |
-| `backend/app/api/`| `backend/app/api/` | `backend/app/api/`          |
-+---------+---------+---------+---------+-------------+--------------+
-          |                   |                       |
-          v                   v                       v
-+--------------------------------------------------------------------+
-|                     Application Services                            |
-| Runner: `backend/app/runner/core.py`                                |
-| Context: `backend/app/conversation_context.py`                      |
-| Memory: `backend/app/memory.py`                                     |
-+-------------------+-------------------+----------------------------+
-          |                   |                       |
-          v                   v                       v
-+--------------------------------------------------------------------+
-|                  Agent, Tools, Streaming, Schemas                   |
-| Agent factory: `backend/app/agent/factory.py`                       |
-| Tool registry: `backend/app/tools/registry.py`                      |
-| Resource tools: `backend/app/execution/resources.py`                |
-| Stream adapters: `backend/app/streaming/`                           |
-| DTOs/contracts: `backend/app/schemas.py`, `backend/app/contracts/`  |
-+-------------------+-------------------+----------------------------+
-          |                   |                       |
-          v                   v                       v
-+--------------------------------------------------------------------+
-|                    Persistence and External Services                 |
-| PostgreSQL task/event store: `backend/app/storage.py`               |
-| Local task files: `backend/storage/sessions/<task_id>/`             |
-| DeepSeek model API, SearXNG, DashScope embeddings, Qdrant memory    |
-+--------------------------------------------------------------------+
+FastAPI app (`backend/app/main.py`)
+  -> API routers (`backend/app/api/`)
+  -> TaskRunner (`backend/app/runner/core.py`)
+  -> Agent factory / tools / resources (`backend/app/agent/`, `backend/app/tools/`, `backend/app/execution/`)
+  -> Storage / memory / stream adapters (`backend/app/storage.py`, `backend/app/memory.py`, `backend/app/streaming/`)
+  -> Postgres / local files / DeepSeek / DashScope embeddings / Qdrant / SearXNG
 ```
 
-## Component Responsibilities
-
-| Component | Responsibility | File |
-|-----------|----------------|------|
-| App factory | Creates the FastAPI app, loads settings, wires storage/memory/runner, installs routers, auth, CORS, and body limits. | `backend/app/main.py` |
-| Task API | Owns task CRUD, run creation, model validation, project-skill selection, cancellation, and event reads. | `backend/app/api/tasks.py` |
-| File API | Accepts task uploads only when a task is not running and delegates validation/storage to the storage layer. | `backend/app/api/files.py` |
-| Artifact API | Serves latest or run-scoped artifacts from storage-resolved paths. | `backend/app/api/artifacts.py` |
-| Streaming API | Polls persisted task events and emits Server-Sent Events for browser clients. | `backend/app/api/streaming.py` |
-| Model API | Returns browser-safe registered model options with availability flags. | `backend/app/api/models.py` |
-| Skills API | Returns browser-safe project skill metadata from `backend/skills/*/SKILL.md`. | `backend/app/api/skills.py` |
-| Task runner | Builds agents, injects context and memory, streams LangGraph events, appends events, and finalizes task status. | `backend/app/runner/core.py` |
-| Agent factory | Builds DeepAgents/LangGraph agents with model, tools, workspace backend, read-only skills backend, scratch state, and optional store. | `backend/app/agent/factory.py` |
-| Platform tools | Aggregates task resource tools and SearXNG search tools for each agent run. | `backend/app/tools/registry.py` |
-| Resource execution | Exposes uploaded task resources through list/inspect/read text/read table LangChain tools. | `backend/app/execution/resources.py` |
-| Storage | Persists lifecycle state, messages, events, runs, memory records, agent store items, tool cache, uploads, and artifacts. | `backend/app/storage.py` |
-| Memory service | Uses DashScope embeddings and Qdrant for long-term memory recall/indexing, with canonical memory rows in Postgres. | `backend/app/memory.py` |
-| Conversation context | Builds deterministic same-session context from Postgres messages, summaries, and fresh tool cache. | `backend/app/conversation_context.py` |
-| Stream adapter | Normalizes LangGraph v2 streaming chunks into platform event dictionaries. | `backend/app/streaming/v2_adapter.py` |
-| Event converter | Converts normalized stream events into persisted `EventRecord` values and live metadata payloads. | `backend/app/streaming/event_converter.py` |
-| Schemas | Defines Pydantic request/response models and task/event DTO contracts. | `backend/app/schemas.py` |
-| Contracts | Defines event/resource/artifact dataclasses and payload helpers used by storage and tools. | `backend/app/contracts/__init__.py` |
-
-## Pattern Overview
-
-**Overall:** Layered FastAPI backend with an in-process asynchronous agent runner, PostgreSQL-backed task/event state, local per-task file workspaces, and LangGraph/DeepAgents execution graphs.
-
-**Key Characteristics:**
-- HTTP routers in `backend/app/api/` stay thin: read dependencies from `request.app.state`, validate request state, and delegate to storage or runner services.
-- `backend/app/main.py` is the composition root. Add new long-lived services there so tests can inject fakes through `create_app(...)`.
-- The task lifecycle is persisted in Postgres tables and mirrored into `TaskState` Pydantic models; files remain under task-scoped local directories.
-- Agent execution is process-local. `backend/app/config.py` rejects multi-worker deployments because active run tracking lives in `TaskRunner._active_runs`.
-- Streaming clients consume stored events, not raw LangGraph streams. The runner converts raw stream chunks into `EventRecord` rows before the SSE endpoint polls them.
-- Project skills are files under `backend/skills/<skill>/SKILL.md`; browser-facing skill APIs expose only names and descriptions.
-
-## Layers
-
-**HTTP/API Layer:**
-- Purpose: Define REST and SSE endpoints, translate domain errors to HTTP status codes, and use Pydantic response models.
-- Location: `backend/app/api/`
-- Contains: `tasks.py`, `files.py`, `artifacts.py`, `streaming.py`, `models.py`, `skills.py`, `deps.py`
-- Depends on: `backend/app/schemas.py`, `backend/app/storage.py`, `backend/app/models/registry.py`, `backend/app/skills/project.py`
-- Used by: FastAPI app wiring in `backend/app/main.py`
-
-**Composition and Runtime Layer:**
-- Purpose: Load settings, construct shared services, attach app state, enforce request/security limits, initialize runtime dependencies.
-- Location: `backend/app/main.py`
-- Contains: `create_app`, lifespan startup, auth middleware, CORS setup, health endpoint.
-- Depends on: `Settings`, `PostgresTaskStorage`, `AgentMemoryService`, `ConversationContextBuilder`, `PostgresAgentStore`, `TaskRunner`.
-- Used by: `uvicorn app.main:app` and tests through `create_app(...)`.
-
-**Runner/Orchestration Layer:**
-- Purpose: Start/cancel background runs, build agents, assemble model input, stream execution events, finalize task state, and schedule memory writes.
-- Location: `backend/app/runner/core.py`
-- Contains: `TaskRunner`, runner storage/memory protocols, terminal event payload helpers.
-- Depends on: `backend/app/agent/factory.py`, `backend/app/tools/registry.py`, `backend/app/conversation_context.py`, `backend/app/memory.py`, `backend/app/streaming/`.
-- Used by: task endpoints in `backend/app/api/tasks.py`.
-
-**Agent Construction Layer:**
-- Purpose: Convert app settings into a DeepAgents/LangGraph graph with a model, platform tools, workspace backend, skills backend, scratch state, and optional LangGraph store.
-- Location: `backend/app/agent/`
-- Contains: `factory.py`, `middleware.py`
-- Depends on: `deepagents`, `langgraph`, `backend/app/models/provider.py`, `backend/app/config.py`.
-- Used by: `TaskRunner.start(...)`.
-
-**Tool and Resource Layer:**
-- Purpose: Provide LangChain tools outside DeepAgents built-ins, especially uploaded resource inspection and local SearXNG search.
-- Location: `backend/app/tools/`, `backend/app/execution/`
-- Contains: `get_platform_tools`, `create_resource_tools`, `LocalResourceExecutionAdapter`, `create_searxng_search_tool`.
-- Depends on: task workspace paths from `Settings.workspace_root`, upload helpers from `backend/app/storage.py`, SearXNG URL from settings.
-- Used by: `TaskRunner.start(...)` when building each agent run.
-
-**Persistence Layer:**
-- Purpose: Persist task state, runs, messages, event log, agent store, context summaries, tool cache, and long-term memory rows; manage upload/artifact files.
-- Location: `backend/app/storage.py`
-- Contains: `PostgresTaskStorage`, upload validation helpers, artifact resolvers, task/event serializers.
-- Depends on: `psycopg`, local filesystem, Pydantic schemas, event/resource contracts.
-- Used by: API routes, runner, memory service, resource tools, agent store adapter.
-
-**Memory and Context Layer:**
-- Purpose: Rehydrate same-session context and cross-session memories without exposing sensitive content back into model prompts.
-- Location: `backend/app/conversation_context.py`, `backend/app/memory.py`, `backend/app/security/scanner.py`
-- Contains: `ConversationContextBuilder`, `AgentMemoryService`, `DashScopeEmbeddingClient`, `QdrantMemoryIndex`, secret scanners/redactors.
-- Depends on: storage protocols, DeepSeek model provider for memory extraction, DashScope embeddings, Qdrant.
-- Used by: `TaskRunner.start(...)` before agent invocation and after successful completion.
-
-**Streaming Layer:**
-- Purpose: Normalize LangGraph stream chunks, convert them to persisted platform events, and expose stored event records as SSE.
-- Location: `backend/app/streaming/`, `backend/app/api/streaming.py`
-- Contains: `stream_agent`, `extract_final_answer`, `convert_stream_event`, SSE formatters and endpoint polling loop.
-- Depends on: LangGraph `CompiledStateGraph`, `EventRecord`, storage event reads.
-- Used by: `TaskRunner.start(...)` and browser clients calling `/api/tasks/{task_id}/stream`.
-
-**Configuration and Model Layer:**
-- Purpose: Load environment settings, expose safe model IDs, and create concrete LangChain chat model instances.
-- Location: `backend/app/config.py`, `backend/app/models/`
-- Contains: `Settings`, `MODEL_REGISTRY`, `load_settings`, `create_model`, registry availability checks, DeepSeek thinking wrapper.
-- Depends on: environment variables loaded from `backend/.env` by code, `langchain-deepseek`, `langchain-openai` wrappers.
-- Used by: app startup, task validation, runner, title generation, memory extraction.
-
-## Data Flow
-
-### Primary Task Run Path
-
-1. Browser posts `TaskCreateRequest` to `POST /api/tasks` or `MessageRequest` to `POST /api/tasks/{task_id}/messages` (`backend/app/api/tasks.py:81`, `backend/app/api/tasks.py:154`).
-2. The task router resolves the model, validates model availability, validates selected project skills, and calls `storage.create_task(...)` or `storage.start_run(...)` (`backend/app/api/tasks.py:86`, `backend/app/api/tasks.py:160`, `backend/app/api/tasks.py:168`).
-3. `PostgresTaskStorage.start_run(...)` moves the task to `running`, creates a run row, and inserts the user message (`backend/app/storage.py:592`).
-4. The router starts an in-process background task through `runner.start_background(...)` (`backend/app/api/tasks.py:102`, `backend/app/api/tasks.py:178`).
-5. `TaskRunner.start(...)` creates the per-task workspace, gets platform tools, builds the DeepAgent, injects conversation context, recalls memory, adds resource manifest context, and appends the user message (`backend/app/runner/core.py:119`, `backend/app/runner/core.py:123`, `backend/app/runner/core.py:133`, `backend/app/runner/core.py:153`, `backend/app/runner/core.py:169`).
-6. `stream_agent(...)` reads LangGraph v2 `messages`, `updates`, and `values` stream modes and yields normalized event dicts (`backend/app/streaming/v2_adapter.py:46`).
-7. `convert_stream_event(...)` converts normalized stream events into `EventRecord` instances (`backend/app/streaming/event_converter.py:37`).
-8. `TaskRunner.start_background(...)` appends each event through storage, extracts the final answer from the latest graph state, updates the task to `complete`, appends a `final_answer` event, and schedules memory persistence (`backend/app/runner/core.py:228`, `backend/app/runner/core.py:245`, `backend/app/runner/core.py:256`, `backend/app/runner/core.py:275`, `backend/app/runner/core.py:287`).
-
-### Live Streaming Path
-
-1. Browser opens `GET /api/tasks/{task_id}/stream` (`backend/app/api/streaming.py:77`).
-2. The streaming route verifies the task exists through storage and returns `StreamingResponse` with `text/event-stream` (`backend/app/api/streaming.py:79`, `backend/app/api/streaming.py:84`).
-3. `_event_stream(...)` polls `storage.read_events(...)` after the last emitted event ID and yields full `EventRecord` JSON payloads (`backend/app/api/streaming.py:44`, `backend/app/api/streaming.py:52`).
-4. When `runner.is_running(task_id)` is false, the endpoint drains remaining events, yields `format_sse_done()`, and closes (`backend/app/api/streaming.py:56`, `backend/app/api/streaming.py:64`).
-
-### Upload and Resource Tool Path
-
-1. Browser uploads files with `POST /api/tasks/{task_id}/files` (`backend/app/api/files.py:21`).
-2. The endpoint rejects missing tasks and running tasks, then passes upload limits from settings to `storage.save_uploads(...)` (`backend/app/api/files.py:25`, `backend/app/api/files.py:29`, `backend/app/api/files.py:33`).
-3. `PostgresTaskStorage.save_uploads(...)` validates filename, type, duplicates, JSON validity, byte limits, and writes files under `<task_root>/<task_id>/uploads/` (`backend/app/storage.py:738`).
-4. Storage emits `file_uploaded` events with stable upload resource refs (`backend/app/storage.py:786`, `backend/app/storage.py:793`).
-5. On the next run, `TaskRunner` registers resource tools and injects a resource manifest message when uploads exist (`backend/app/runner/core.py:121`, `backend/app/runner/core.py:169`).
-6. `LocalResourceExecutionAdapter` resolves resources inside the task workspace and executes `list_uploaded_resources`, `inspect_resource`, `read_resource_text`, or `read_resource_table` (`backend/app/execution/resources.py:114`, `backend/app/execution/resources.py:155`).
-
-### Artifact Download Path
-
-1. The frontend uses artifact URLs generated from `TaskState.artifacts` (`backend/app/storage.py:1781`).
-2. Latest artifact downloads use `/api/tasks/{task_id}/artifacts/{artifact_name}` and run-scoped downloads use `/api/tasks/{task_id}/runs/{run_id}/artifacts/{artifact_name}` (`backend/app/api/artifacts.py:32`, `backend/app/api/artifacts.py:39`).
-3. Storage normalizes artifact names, validates run IDs, checks run artifact membership, and resolves only paths inside the task artifact directories (`backend/app/storage.py:1484`, `backend/app/storage.py:1495`, `backend/app/storage.py:1825`).
-
-### Model and Skill Discovery Path
-
-1. `GET /api/models` calls `list_available_models(settings)` and returns only model registry metadata plus an availability flag (`backend/app/api/models.py:13`, `backend/app/models/registry.py:29`).
-2. `GET /api/skills` scans `backend/skills/*/SKILL.md` and returns name/description pairs only (`backend/app/api/skills.py:13`, `backend/app/skills/project.py:15`).
-3. Task messages can include selected skills. The task API validates names and prefixes the user message with `[$skill]` references before starting the run (`backend/app/api/tasks.py:162`, `backend/app/skills/project.py:35`).
-4. The agent factory mounts configured skill directories as read-only DeepAgents filesystem routes under `/skills/` (`backend/app/agent/factory.py:51`, `backend/app/agent/factory.py:102`).
-
-### Long-Term Memory Path
-
-1. App startup constructs `AgentMemoryService` when external services are required (`backend/app/main.py:56`).
-2. Startup probes Qdrant collection shape and DashScope embedding availability (`backend/app/memory.py:240`).
-3. Before a run, the runner calls memory recall in a thread; memory recall skips sensitive input, embeds the query, searches Qdrant, filters by score, and emits context as a system message (`backend/app/runner/core.py:153`, `backend/app/memory.py:274`).
-4. After a completed final answer, the runner schedules memory extraction and persistence without blocking task completion (`backend/app/runner/core.py:287`, `backend/app/runner/core.py:388`).
-5. Memory extraction calls the configured DeepSeek model, stores canonical rows in Postgres, and upserts vector payloads into Qdrant (`backend/app/memory.py:328`, `backend/app/memory.py:408`).
-
-**State Management:**
-- Request-independent shared services live on `app.state` in `backend/app/main.py:87`.
-- Active run tasks are held in process memory at `TaskRunner._active_runs` (`backend/app/runner/core.py:99`).
-- Durable task lifecycle state is stored in Postgres tables created by `PostgresTaskStorage.initialize(...)` (`backend/app/storage.py:329`).
-- File bytes for uploads and artifacts remain on local disk under `Settings.task_root` / `Settings.workspace_root` (`backend/app/config.py:80`, `backend/app/storage.py:316`).
-- LangGraph store operations are backed by the Postgres `agent_store_items` table through `PostgresAgentStore` (`backend/app/agent_store.py:20`, `backend/app/storage.py:1149`).
-
-## Key Abstractions
-
-**`Settings`:**
-- Purpose: Immutable runtime configuration loaded from `backend/.env` and process environment.
-- Examples: `backend/app/config.py:12`, `backend/app/config.py:76`
-- Pattern: Dataclass with typed fields, default values, and explicit environment parsers. Extend this for any new backend-wide config.
-
-**Pydantic API Schemas:**
-- Purpose: Define request and response shapes for tasks, messages, events, artifacts, runs, summaries, and model options.
-- Examples: `backend/app/schemas.py`
-- Pattern: Keep browser/API contracts in Pydantic models and use these models as route `response_model` values.
-
-**`TaskRunner`:**
-- Purpose: Orchestrates one agent run from model/tool construction through stream conversion and terminal state updates.
-- Examples: `backend/app/runner/core.py:83`
-- Pattern: Use injected storage and memory protocols, append platform events through storage, and never make routers stream raw agent chunks directly.
-
-**`PostgresTaskStorage`:**
-- Purpose: Owns all durable task state and local task-file path safety.
-- Examples: `backend/app/storage.py:313`
-- Pattern: Public methods lock around DB operations, validate task/run/artifact IDs, and return `TaskState` or records rather than raw database rows.
-
-**`EventRecord`:**
-- Purpose: Shared event DTO for persistent logs, SSE streams, and frontend live metadata.
-- Examples: `backend/app/schemas.py:47`, `backend/app/streaming/event_converter.py:37`
-- Pattern: Add new runtime event types by updating normalized streaming/event conversion and storing full payload metadata.
-
-**Resource References:**
-- Purpose: Stable `myagent://...` identities for uploaded resources and generated artifacts.
-- Examples: `backend/app/contracts/__init__.py:51`, `backend/app/contracts/__init__.py:63`
-- Pattern: Use `build_upload_resource_ref(...)` and `build_artifact_ref(...)`; do not invent ad hoc URL or ID formats.
-
-**Project Skills:**
-- Purpose: User-selectable instructions stored as local `SKILL.md` files and mounted read-only for agents.
-- Examples: `backend/app/skills/project.py:10`, `backend/skills/code_review/SKILL.md`, `backend/skills/web_research/SKILL.md`
-- Pattern: Add a directory under `backend/skills/<skill-name>/SKILL.md` with YAML frontmatter containing `name` and `description`.
-
-**Agent Store:**
-- Purpose: LangGraph `BaseStore` implementation backed by storage methods and the `agent_store_items` table.
-- Examples: `backend/app/agent_store.py:20`, `backend/app/storage.py:1149`
-- Pattern: Keep LangGraph store calls behind `PostgresAgentStore`; add storage methods first when store behavior expands.
+## 组件职责
 
-## Entry Points
+| 组件 | 职责 | 入口 |
+| --- | --- | --- |
+| 应用组装 | 创建 FastAPI app，加载 settings，接入 storage、memory、runner、auth、CORS 和请求体限制 | `backend/app/main.py` |
+| 任务 API | 创建/读取/重命名/删除 task，发送 message，创建 run，校验模型和技能，取消运行，读取事件 | `backend/app/api/tasks.py` |
+| 文件 API | 在 task 非运行时接受上传，委托 storage 做文件名、格式、大小、JSON 和重复校验 | `backend/app/api/files.py` |
+| 产物 API | 通过 storage resolver 提供 latest 或 run-scoped artifact 下载 | `backend/app/api/artifacts.py` |
+| SSE API | 轮询持久化事件并输出 Server-Sent Events | `backend/app/api/streaming.py` |
+| 模型 API | 返回浏览器安全的模型元数据和 availability 标记 | `backend/app/api/models.py` |
+| 技能 API | 从 `backend/skills/*/SKILL.md` 返回浏览器安全的技能名称和描述 | `backend/app/api/skills.py` |
+| Runner | 构建 agent，注入上下文/记忆/资源 manifest，流式转换事件，更新终态并调度记忆写入 | `backend/app/runner/core.py` |
+| Agent factory | 构建 DeepAgents/LangGraph graph，挂载 workspace、只读 skill backend、tools、store 和 scratch state | `backend/app/agent/factory.py` |
+| 平台工具 | 聚合上传资源工具和 SearXNG 搜索工具 | `backend/app/tools/registry.py`, `backend/app/execution/resources.py` |
+| Storage | 持久化任务、run、消息、事件、agent store、工具缓存、长期记忆、上传和产物 | `backend/app/storage.py` |
+| Memory | 用 DashScope-compatible embeddings 与 Qdrant 做长期记忆 recall/index，Postgres 保存 canonical rows | `backend/app/memory.py` |
+| 上下文 | 从 Postgres message、summary 和新鲜 tool cache 构建同会话上下文 | `backend/app/conversation_context.py` |
+| Streaming | 把 LangGraph v2 chunks 规范化为平台事件并写入事件日志 | `backend/app/streaming/` |
 
-**Uvicorn ASGI App:**
-- Location: `backend/app/main.py:245`
-- Triggers: `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`
-- Responsibilities: Expose the app created by `create_app()` for local development and deployment.
+## 分层结构
 
-**Testable App Factory:**
-- Location: `backend/app/main.py:38`
-- Triggers: tests and app import.
-- Responsibilities: Allow injection of settings, storage, memory service, and title generator.
+### HTTP/API 层
 
-**Task REST API:**
-- Location: `backend/app/api/tasks.py:81`
-- Triggers: Browser task creation, message sends, cancellation, renames, deletes, and event history fetches.
-- Responsibilities: Enforce task lifecycle rules and delegate execution to `TaskRunner`.
+- 位置：`backend/app/api/`
+- 负责 REST/SSE endpoint、请求状态校验、HTTP 错误映射和 Pydantic response model。
+- 路由保持薄层，依赖 `request.app.state` 获取 storage、runner、settings 等服务。
 
-**SSE Stream API:**
-- Location: `backend/app/api/streaming.py:77`
-- Triggers: Browser live-log subscriptions.
-- Responsibilities: Stream persisted task events until the runner stops.
+### 组装与运行时层
 
-**File Upload API:**
-- Location: `backend/app/api/files.py:21`
-- Triggers: Browser task file uploads.
-- Responsibilities: Enforce not-running state and upload limits before storage writes.
+- 位置：`backend/app/main.py`
+- `create_app(...)` 是依赖注入入口，测试可以传入 fake storage、memory service 或 title generator。
+- app lifespan 负责初始化 storage/memory/agent store，并在启动时中断陈旧 running task。
 
-**Artifact Download API:**
-- Location: `backend/app/api/artifacts.py:32`
-- Triggers: Browser artifact link clicks.
-- Responsibilities: Serve storage-resolved task artifacts.
+### Runner 编排层
 
-**Memory Admin CLI:**
-- Location: `backend/app/memory_admin.py:34`
-- Triggers: `python -m app.memory_admin reset-qdrant` or `rebuild-qdrant` from the backend environment.
-- Responsibilities: Reset or rebuild the Qdrant memory index using configured storage and memory services.
+- 位置：`backend/app/runner/core.py`
+- `TaskRunner` 管理 active run、取消、超时、流事件落库、终态事件、final answer 和 completed-run memory write。
+- 当前 active run map 是进程内状态，不能绕过单 worker 保护。
 
-## Architectural Constraints
+### Agent 构建层
 
-- **Threading:** FastAPI runs on the event loop; blocking context/memory operations are sent to threads with `asyncio.to_thread(...)` in `backend/app/runner/core.py:135`, `backend/app/runner/core.py:357`, and `backend/app/runner/core.py:403`.
-- **In-process runner:** `TaskRunner._active_runs` is process-local (`backend/app/runner/core.py:99`), and `enforce_single_process_runtime()` rejects multi-worker deployments (`backend/app/config.py:194`).
-- **Database requirement:** Production app startup requires `MYAGENT_DATABASE_URL`; missing DB config is collected as a startup error in `backend/app/main.py:50`.
-- **Memory requirement:** When production services are required, memory startup requires DashScope and Qdrant config through `AgentMemoryService` (`backend/app/main.py:56`, `backend/app/memory.py:220`).
-- **Local access default:** API requests require either a configured access token or a loopback client (`backend/app/main.py:206`).
-- **Filesystem boundaries:** Task directories, relative writes, artifact paths, run IDs, and resource workspaces are validated before filesystem access (`backend/app/storage.py:464`, `backend/app/storage.py:1353`, `backend/app/storage.py:1420`, `backend/app/execution/resources.py:231`).
-- **Upload limits:** Multipart body size, upload count, per-file size, request size, and JSON body size come from `Settings` and are enforced in middleware and storage (`backend/app/main.py:116`, `backend/app/storage.py:738`).
-- **Global state:** Safe module-level registries/constants exist for model IDs, upload formats, event type mapping, and subagent definitions in `backend/app/config.py`, `backend/app/storage.py`, `backend/app/streaming/event_converter.py`, and `backend/app/subagents/definitions.py`.
-- **Circular imports:** No circular dependency chain is detected in the scanned backend files. Preserve the direction `api -> services/storage -> schemas/contracts`; do not import API modules from runner, storage, tools, models, or memory code.
+- 位置：`backend/app/agent/`
+- 把 settings 转成 DeepAgents graph，接入模型、工具、workspace backend、只读 skills backend 和可选 LangGraph store。
+- `/skills/` 是只读虚拟挂载；task 文件写入仍限制在当前 task workspace。
 
-## Anti-Patterns
+### 工具与资源层
 
-### Router-Owned Business Logic
+- 位置：`backend/app/tools/`, `backend/app/execution/`
+- 上传文件不是自动上下文，只通过 `list_uploaded_resources`、`inspect_resource`、`read_resource_text`、`read_resource_table` 暴露。
+- SearXNG 搜索工具只通过 settings 中的 URL 注册和调用。
 
-**What happens:** A route directly implements storage mutation, model calls, or agent execution instead of calling service/storage helpers.
-**Why it's wrong:** It bypasses `create_app(...)` dependency injection and makes tests/fakes harder to use.
-**Do this instead:** Keep routes thin like `backend/app/api/tasks.py:154` and delegate to `PostgresTaskStorage`, `TaskRunner`, or a new service wired in `backend/app/main.py`.
+### 持久化层
 
-### Raw Filesystem Access Outside Storage/Resource Adapters
+- 位置：`backend/app/storage.py`
+- Postgres 是任务、run、message、event、agent store、tool cache 和 long-term memory metadata 的权威来源。
+- 上传和产物文件在本地 task 根目录下按 task/run 归档，所有路径都必须经过 storage 或 resource adapter 校验。
 
-**What happens:** New code resolves task upload or artifact paths manually in an API route or tool.
-**Why it's wrong:** It bypasses path traversal protections and artifact/run membership checks in `PostgresTaskStorage`.
-**Do this instead:** Use `storage.save_uploads(...)`, `storage.resolve_artifact(...)`, `storage.resolve_run_artifact(...)`, or resource adapter helpers in `backend/app/execution/resources.py`.
+### 记忆与上下文层
 
-### Streaming Raw LangGraph Chunks To Clients
+- 位置：`backend/app/conversation_context.py`, `backend/app/memory.py`, `backend/app/security/scanner.py`
+- 普通上下文只消费 canonical messages、summary 和受控 cache；不能把 reasoning/tool raw diagnostics 注入普通历史。
+- 长期记忆写入以 Postgres canonical row 为准，Qdrant 是可重建的向量索引。
 
-**What happens:** New streaming endpoints emit raw LangGraph `astream(...)` chunks directly.
-**Why it's wrong:** The frontend expects full `EventRecord` payloads with platform `live` metadata, and persisted event history is the authoritative replay source.
-**Do this instead:** Normalize with `backend/app/streaming/v2_adapter.py`, convert with `backend/app/streaming/event_converter.py`, append through storage, and let `backend/app/api/streaming.py` stream stored records.
+### 流事件层
 
-### Multi-Worker Deployment With Active Runs
+- 位置：`backend/app/streaming/`
+- `v2_adapter.py` 兼容 LangGraph v2 dict chunk 和旧 tuple chunk。
+- `event_converter.py` 生成 `EventRecord`，SSE endpoint 只投影已持久化事件。
 
-**What happens:** Uvicorn/Gunicorn worker count is increased while runs remain tracked by in-process `asyncio.Task` objects.
-**Why it's wrong:** Active run state splits across processes while API requests and SSE clients may hit different workers.
-**Do this instead:** Keep a single backend worker unless the runner is moved to an external queue/worker system; `backend/app/config.py:194` enforces this for known worker-count env vars.
+## 关键数据流
 
-### Treating Uploaded Files As Chat Context
+### 任务运行路径
 
-**What happens:** Prompts or features assume uploaded document contents are already included in the user message.
-**Why it's wrong:** Uploads are task resources on disk and are only exposed through resource tools and manifests.
-**Do this instead:** Use `list_uploaded_resources`, `inspect_resource`, `read_resource_text`, and `read_resource_table` from `backend/app/execution/resources.py`.
+1. 浏览器调用 `POST /api/tasks` 或 `POST /api/tasks/{task_id}/messages`。
+2. 任务路由校验模型 availability、项目技能和 task 状态。
+3. `PostgresTaskStorage.start_run(...)` 把 task 置为 `running`，创建 run row 并写入用户消息。
+4. 路由调用 `TaskRunner.start_background(...)`。
+5. Runner 创建 task workspace，构建工具和 agent，注入同会话上下文、长期记忆和资源 manifest。
+6. `stream_agent(...)` 读取 LangGraph v2 stream modes 并输出规范化事件。
+7. `convert_stream_event(...)` 转成 `EventRecord`，storage 按 task seq 落库。
+8. Runner 提取最终答案，更新 task 终态，追加 `final_answer` 和终端事件，并异步调度记忆写入。
 
-## Error Handling
+### SSE 路径
 
-**Strategy:** API routes convert expected domain exceptions to HTTP errors, runner terminal failures become task events/status updates, and optional context/memory steps fail soft unless startup requires the service.
+1. 浏览器打开 `GET /api/tasks/{task_id}/stream`。
+2. 后端检查 task 存在并返回 `text/event-stream`。
+3. `_event_stream(...)` 使用 `storage.read_events(... after_id=last_event_id)` 轮询并输出完整事件 JSON。
+4. runner 结束后，SSE 先 drain 剩余事件，再发送 done 并关闭。
 
-**Patterns:**
-- Translate missing/invalid task state into `HTTPException` in API routes (`backend/app/api/tasks.py:41`, `backend/app/api/files.py:25`, `backend/app/api/artifacts.py:23`).
-- Reject bad client input with 400, conflicts with 409, oversize uploads/JSON with 413, and missing auth with 401/403 (`backend/app/main.py:108`, `backend/app/api/tasks.py:166`, `backend/app/api/files.py:40`).
-- Convert request validation errors to a stable frontend-safe message (`backend/app/main.py:99`).
-- Mark timeout, cancellation, and generic runner failures with persisted terminal events (`backend/app/runner/core.py:294`, `backend/app/runner/core.py:312`, `backend/app/runner/core.py:329`).
-- Continue without optional memory/context pieces when recall, event payload generation, or resource manifest provisioning fails during a run (`backend/app/runner/core.py:352`, `backend/app/runner/core.py:367`, `backend/app/runner/core.py:380`).
-- Return user-readable error strings from SearXNG tools instead of crashing the agent (`backend/app/tools/searxng_search.py:117`).
+### 上传与资源工具路径
 
-## Cross-Cutting Concerns
+1. 浏览器用 `POST /api/tasks/{task_id}/files` 上传。
+2. API 拒绝 missing task 和 running task。
+3. Storage 校验文件名、扩展名、重复、大小、JSON 内容和请求限制，写入 `<task>/uploads/`。
+4. Storage 追加 `file_uploaded` 事件和稳定 `resource_ref`。
+5. 下一轮 run 中，Runner 注入资源 manifest，agent 通过资源工具按需读取。
 
-**Logging:** Uses Python `logging.getLogger(__name__)` in service modules such as `backend/app/main.py`, `backend/app/runner/core.py`, `backend/app/memory.py`, `backend/app/tools/searxng_search.py`, and `backend/app/skills/loader.py`.
+### 产物下载路径
 
-**Validation:** Pydantic validates request/response shape in `backend/app/schemas.py`; storage validates filenames, run IDs, task paths, artifact paths, upload formats, JSON uploads, and request state in `backend/app/storage.py`.
-
-**Authentication:** `backend/app/main.py` requires `MYAGENT_ACCESS_TOKEN` for non-local API access and accepts bearer token, `X-MyAgent-Token`, `X-Agent-Chat-Token`, or `token` query parameter when configured.
-
-**Configuration:** `backend/app/config.py` loads `backend/.env` before environment reads, but documentation and code should reference `backend/.env.example` for variable names. Do not read or quote secret values from `backend/.env`.
-
-**Secret Handling:** `backend/app/security/scanner.py` redacts provider key names, token fields, bearer tokens, and canary patterns before context/memory use.
-
-**Testing Hooks:** `create_app(...)` accepts fake storage/memory/title-generator dependencies, and tests use `backend/tests/fakes.py` as the in-memory storage implementation.
+1. 产物元数据由 storage 归入 task state。
+2. latest artifact 使用 `/api/tasks/{task_id}/artifacts/{artifact_name}`。
+3. run-scoped artifact 使用 `/api/tasks/{task_id}/runs/{run_id}/artifacts/{artifact_name}`。
+4. Storage 校验 artifact name、run id、run artifact membership 和路径边界。
+
+### 模型和技能发现路径
+
+- `/api/models` 只返回 `MODEL_REGISTRY` 中浏览器安全的 ID 和 availability。
+- `/api/skills` 只读取仓库内 `backend/skills` 的 name/description，不暴露技能正文和本地路径。
+- message payload 可以带 selected skill names；后端校验后把可见 `[$skill]` 引用加入实际 message。
+
+## 关键抽象
+
+- `Settings`：不可变运行配置，集中在 `backend/app/config.py`。
+- Pydantic schemas：浏览器/API 合同在 `backend/app/schemas.py`。
+- `TaskRunner`：单次 agent run 的编排边界。
+- `PostgresTaskStorage`：持久状态和本地文件安全边界。
+- `EventRecord`：事件日志、SSE 和前端 live metadata 的共享 DTO。
+- Resource refs：上传和产物用 `myagent://...` 稳定身份，不应发明临时 URL/ID。
+- Project skills：`backend/skills/<skill>/SKILL.md`，frontmatter 只需 name/description。
+- `PostgresAgentStore`：LangGraph `BaseStore` 的 Postgres 适配层。
+
+## 入口
+
+- ASGI app：`backend/app/main.py`，本地命令 `uv run uvicorn app.main:app --reload --host 127.0.0.1 --port 8001`。
+- 可测试 app factory：`create_app(...)`。
+- 任务 API：`backend/app/api/tasks.py`。
+- SSE API：`backend/app/api/streaming.py`。
+- 文件上传 API：`backend/app/api/files.py`。
+- 产物下载 API：`backend/app/api/artifacts.py`。
+- 记忆管理 CLI：`backend/app/memory_admin.py`。
+
+## 架构约束
+
+- 当前 runner 是进程内 active-run 模型；`backend/app/config.py` 会拒绝多 worker 环境变量。
+- SSE 是持久化事件投影，不是原始 LangGraph stream；前端恢复依赖有序事件日志。
+- 上传、产物、workspace 和 run id 必须经过 storage/resource adapter 的路径校验。
+- `backend/.env` 可以存在但不能被文档、测试、截图或知识包读取/引用具体值；配置事实使用 `.env.example` 和代码。
+- 生产启动需要 Postgres，记忆能力需要 Qdrant 和 DashScope-compatible embedding 配置。
+- API 访问默认只允许 loopback；对外暴露必须配置 token 与 CORS。
+
+## 反模式
+
+- 不要在 router 中直接实现存储变更、模型调用或 agent 执行；应委托 storage、runner 或服务层。
+- 不要在 API route 或工具里手写上传/产物路径解析；用 storage resolver 和 resource adapter。
+- 不要把原始 LangGraph chunks 直接推给浏览器；必须规范化、落库，再由 SSE 投影。
+- 不要把 worker 数调大来“扩容”当前 runner；需要先设计外部队列、租约、心跳和跨进程事件发布。
+- 不要假设上传文件内容已在 chat context 中；agent 必须通过资源工具读取。
+
+## 错误处理
+
+- API route 把缺失/无效状态映射为 `HTTPException`，常见状态码为 400、401/403、404、409、413。
+- 请求体校验错误被转换为前端可读的稳定消息。
+- runner 超时、取消和异常都要写入终端事件和 task 状态。
+- 记忆 recall、资源 manifest 或事件 payload 生成失败时，如果不影响主 run，应记录并降级继续。
+- 工具函数对预期失败返回结构化错误或用户可读错误字符串，不应让 agent run 崩溃。
+
+## 横切关注点
+
+- 日志：服务模块使用 `logging.getLogger(__name__)`。
+- 校验：Pydantic、storage path validators、upload validators 和 secret scanner 共同承担边界校验。
+- 认证：`backend/app/main.py` 支持 bearer/header/query token；query token 主要服务 SSE 兼容但有 URL 暴露风险。
+- 配置：`backend/app/config.py` 读取 `.env` 和环境变量；文档只引用变量名，不引用真实值。
+- 测试：`create_app(...)` 支持 fake 依赖，`backend/tests/fakes.py` 是主要内存 storage fake。
 
 ---
 
-*Architecture analysis: 2026-05-22*
+*架构分析：2026-05-24*

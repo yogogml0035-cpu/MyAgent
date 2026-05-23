@@ -1,254 +1,131 @@
-# Codebase Structure
+# 前端代码结构
 
-**Analysis Date:** 2026-05-22
+**分析日期：** 2026-05-24
 
-## Directory Layout
+## 目录布局
 
 ```text
 frontend/
-├── app/                         # Next app route files, global CSS, pure frontend domain/view helpers
-│   ├── layout.tsx               # Root app shell and metadata
-│   ├── page.tsx                 # Root route delegating to TaskWorkspace
-│   ├── globals.css              # Global design tokens and chat workspace styles
-│   ├── task-state.ts            # Backend payload normalization and frontend state contracts
-│   ├── workspace-view.ts        # View-model builders for conversation/history/progress logs
-│   ├── file-upload.ts           # Supported upload file rules
-│   ├── model-ui.ts              # Model display metadata
-│   └── skill-selection.ts       # Browser-safe skill normalization and slash picker helpers
-├── components/
-│   └── chat/                    # Client chat workspace components
-├── hooks/                       # React controller hooks
-├── lib/                         # Browser transport/API adapters
-├── tests/                       # Node test runner unit and boundary tests
-├── e2e-playwright/              # Reusable Playwright specs plus ignored evidence folders
-├── .planning/codebase/          # Generated frontend codebase maps
-├── package.json                 # Scripts and dependency manifest
-├── package-lock.json            # npm lockfile
-├── next.config.mjs              # Next dev/build configuration
-├── tsconfig.json                # TypeScript configuration
-├── eslint.config.mjs            # ESLint flat config
-├── .env.example                 # Public frontend env example
-└── README.md                    # Frontend setup and E2E instructions
+|-- app/                         # Next route、全局 CSS、纯状态/视图 helper
+|   |-- layout.tsx               # Root app shell 和 metadata
+|   |-- page.tsx                 # 根路由，委托 TaskWorkspace
+|   |-- globals.css              # 全局 token 和工作区样式
+|   |-- task-state.ts            # 后端 payload 标准化和前端状态合同
+|   |-- workspace-view.ts        # 会话/历史/进度日志 view model
+|   |-- file-upload.ts           # 上传文件规则
+|   |-- model-ui.ts              # 模型展示元数据
+|   `-- skill-selection.ts       # 技能标准化和 slash picker helper
+|-- components/
+|   `-- chat/                    # 聊天工作区组件
+|-- hooks/                       # React 控制器 hooks
+|-- lib/                         # 浏览器传输/API adapter
+|-- tests/                       # Node test runner 单测和边界测试
+|-- e2e-playwright/              # Playwright specs 和本地证据目录
+|-- .planning/codebase/          # 前端事实文档
+|-- package.json                 # scripts 和依赖
+|-- package-lock.json            # npm lockfile
+|-- next.config.mjs              # Next dev/build 配置
+|-- tsconfig.json                # TypeScript 配置
+|-- eslint.config.mjs            # ESLint flat config
+|-- .env.example                 # 浏览器公开 env 示例
+`-- README.md                    # 前端 setup 和 E2E 指南
 ```
 
-## Directory Purposes
+## 目录职责
 
-**`frontend/app/`:**
-- Purpose: Own the Next app shell, root route, global stylesheet, and pure frontend domain/view helper modules.
-- Contains: `frontend/app/layout.tsx`, `frontend/app/page.tsx`, `frontend/app/globals.css`, `frontend/app/task-state.ts`, `frontend/app/workspace-view.ts`, `frontend/app/file-upload.ts`, `frontend/app/model-ui.ts`, `frontend/app/skill-selection.ts`, `frontend/app/icon.svg`.
-- Key files: `frontend/app/page.tsx`, `frontend/app/task-state.ts`, `frontend/app/workspace-view.ts`.
+- `frontend/app/`：Next shell、根路由、全局样式、纯状态/视图/helper 模块。
+- `frontend/components/chat/`：聊天工作区 React 组件，包括 sidebar、conversation、composer、avatar、typewriter。
+- `frontend/hooks/`：跨组件状态机和浏览器副作用，当前核心是 `use-task-workspace.ts`。
+- `frontend/lib/`：后端 REST/SSE/blob 传输 adapter。
+- `frontend/tests/`：Node test-runner 单测和架构边界测试。
+- `frontend/e2e-playwright/`：浏览器验收 specs 和未提交的截图/证据输出。
+- `frontend/.planning/codebase/`：本文件所在的前端事实层。
+- root config：package scripts、Next distDir、TypeScript、ESLint、公开 env 示例和 README。
 
-**`frontend/components/chat/`:**
-- Purpose: Own all chat workspace React components.
-- Contains: `frontend/components/chat/TaskWorkspace.tsx`, `frontend/components/chat/ChatSidebar.tsx`, `frontend/components/chat/TaskConversation.tsx`, `frontend/components/chat/ChatComposer.tsx`, `frontend/components/chat/RobotAvatar.tsx`, `frontend/components/chat/TypewriterText.tsx`.
-- Key files: `frontend/components/chat/TaskWorkspace.tsx`, `frontend/components/chat/TaskConversation.tsx`, `frontend/components/chat/ChatComposer.tsx`, `frontend/components/chat/ChatSidebar.tsx`.
+## 关键文件
 
-**`frontend/hooks/`:**
-- Purpose: Own React hook state machines and browser effects that coordinate multiple components.
-- Contains: `frontend/hooks/use-task-workspace.ts`.
-- Key files: `frontend/hooks/use-task-workspace.ts`.
+### 入口
 
-**`frontend/lib/`:**
-- Purpose: Own browser transport adapters and shared clients.
-- Contains: `frontend/lib/task-api.ts`.
-- Key files: `frontend/lib/task-api.ts`.
+- `frontend/app/layout.tsx`：root layout、metadata、icon、global CSS。
+- `frontend/app/page.tsx`：根 `/` route，渲染 `TaskWorkspace`。
+- `frontend/components/chat/TaskWorkspace.tsx`：client workspace composition boundary。
+- `frontend/hooks/use-task-workspace.ts`：工作区运行时状态和动作边界。
+- `frontend/lib/task-api.ts`：后端 API/SSE/blob 边界。
 
-**`frontend/tests/`:**
-- Purpose: Own Node test-runner unit and architecture tests for pure helpers, transport adapters, and source boundaries.
-- Contains: `frontend/tests/workspace/`, `frontend/tests/state/`, `frontend/tests/model/`, `frontend/tests/upload/`.
-- Key files: `frontend/tests/workspace/test_frontend_architecture.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`, `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_workspace_view.test.ts`.
+### 配置
 
-**`frontend/e2e-playwright/`:**
-- Purpose: Own browser acceptance specs and local screenshot/evidence output.
-- Contains: committed specs such as `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`, `frontend/e2e-playwright/test_progress_log_disclosure.spec.mjs`, `frontend/e2e-playwright/test_multi_session_thinking_audit.spec.mjs`, `frontend/e2e-playwright/test_skill_selector_full_loop.spec.mjs`, plus ignored `e2e-YYYYMMDDHHMMSS/` evidence directories.
-- Key files: `frontend/e2e-playwright/README.md`, `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`.
+- `frontend/package.json`：dev、build、start、typecheck、test、E2E、lint scripts。
+- `frontend/next.config.mjs`：开发输出 `.next-dev`，生产输出 `.next`，关闭 dev indicators，配置 polling watch interval。
+- `frontend/tsconfig.json`：strict TypeScript，包含 `.next/types` 和 `.next-dev/types`。
+- `frontend/eslint.config.mjs`：Next core web vitals 和 TypeScript lint，忽略生成目录。
+- `frontend/.env.example`：安全公开变量名来源，不读取 `.env.local`。
+- `frontend/README.md`：setup、WSL/Windows 路径提醒、API base URL、endpoint summary、E2E 指南。
 
-**`frontend/.planning/codebase/`:**
-- Purpose: Store generated frontend codebase reference documents for GSD planning and execution.
-- Contains: `frontend/.planning/codebase/ARCHITECTURE.md`, `frontend/.planning/codebase/STRUCTURE.md`.
-- Key files: `frontend/.planning/codebase/ARCHITECTURE.md`, `frontend/.planning/codebase/STRUCTURE.md`.
+### 核心逻辑
 
-**Root config files:**
-- Purpose: Define package scripts, Next output directories, TypeScript checking, linting, public env examples, ignored artifacts, and frontend developer instructions.
-- Contains: `frontend/package.json`, `frontend/package-lock.json`, `frontend/next.config.mjs`, `frontend/tsconfig.json`, `frontend/eslint.config.mjs`, `frontend/.env.example`, `frontend/.gitignore`, `frontend/README.md`.
-- Key files: `frontend/package.json`, `frontend/next.config.mjs`, `frontend/tsconfig.json`, `frontend/eslint.config.mjs`.
+- `frontend/app/task-state.ts`：类型、payload normalization、event/log normalization、artifact URL trust、错误文案。
+- `frontend/app/workspace-view.ts`：conversation ordering、run grouping、progress log display、diagnostics JSON、status label。
+- `frontend/hooks/use-task-workspace.ts`：task create/upload/message/cancel、SSE retry/backfill、history mutation、artifact open/download。
+- `frontend/lib/task-api.ts`：tasks/models/skills/events/files/messages/cancel/artifacts 的 HTTP method 和 path。
+- `frontend/app/file-upload.ts`：上传扩展名规则。
+- `frontend/app/model-ui.ts`：模型 picker 展示。
+- `frontend/app/skill-selection.ts`：技能标准化、过滤和 slash-token 行为。
 
-## Key File Locations
+### UI 组件
 
-**Entry Points:**
-- `frontend/app/layout.tsx`: Root layout, metadata, icon registration, global CSS import.
-- `frontend/app/page.tsx`: Root `/` route; renders `TaskWorkspace`.
-- `frontend/components/chat/TaskWorkspace.tsx`: Client workspace composition boundary.
-- `frontend/hooks/use-task-workspace.ts`: Runtime state/action boundary for the workspace.
-- `frontend/lib/task-api.ts`: Backend REST/SSE/blob transport boundary.
+- `TaskWorkspace.tsx`：把 hook state 传入 sidebar、conversation、composer。
+- `ChatSidebar.tsx`：历史列表、重命名、删除、清空。
+- `TaskConversation.tsx`：transcript、Markdown、progress logs、diagnostics、artifact actions。
+- `ChatComposer.tsx`：textarea、file input、upload preview、model picker、skill picker、send/stop。
+- `RobotAvatar.tsx`：共享 AI avatar。
+- `TypewriterText.tsx`：客户端 Markdown typewriter。
 
-**Configuration:**
-- `frontend/package.json`: npm scripts for dev, build, start, typecheck, test, E2E runtime contracts, and lint.
-- `frontend/next.config.mjs`: Disables dev indicators, uses `.next-dev` for dev output and `.next` for production output, configures polling watch interval.
-- `frontend/tsconfig.json`: Strict TypeScript config with Next typegen outputs from `.next/types` and `.next-dev/types`.
-- `frontend/eslint.config.mjs`: Next core web vitals and TypeScript lint config with generated directories ignored.
-- `frontend/.env.example`: Documents public browser env variables; use it instead of reading `frontend/.env.local`.
-- `frontend/README.md`: Setup, WSL/Windows path warning, public API base URL behavior, endpoint summary, and E2E acceptance guidance.
+### 测试
 
-**Core Logic:**
-- `frontend/app/task-state.ts`: Types, backend normalization, event/log normalization, artifact URL validation, error formatting.
-- `frontend/app/workspace-view.ts`: Conversation stream ordering, run grouping, progress log rendering models, diagnostic JSON formatting, status labels.
-- `frontend/hooks/use-task-workspace.ts`: Task creation, upload, message send, cancellation, SSE retries, event cursor recovery, conversation history mutations, artifact open/download.
-- `frontend/lib/task-api.ts`: HTTP methods and endpoint paths for tasks, models, skills, events, files, messages, cancel, artifacts.
-- `frontend/app/file-upload.ts`: Upload extension rules shared by hook, composer, and tests.
-- `frontend/app/model-ui.ts`: Model presentation metadata for the composer picker.
-- `frontend/app/skill-selection.ts`: Skill option normalization and slash-token picker behavior.
+- `frontend/tests/workspace/test_frontend_architecture.test.ts`：source boundary 和配置期望。
+- `frontend/tests/workspace/test_task_workspace.test.ts`：hook 行为、SSE helper、artifact preview、model/skill wiring。
+- `frontend/tests/workspace/test_task_api.test.ts`：API adapter exports 和 payload。
+- `frontend/tests/workspace/test_workspace_view.test.ts`：conversation/log/diagnostics/order/display helper。
+- `frontend/tests/state/test_task_state.test.ts`：状态标准化、artifact security、message payload、event translation。
+- `frontend/tests/state/test_skill_selection.test.ts`：slash skill helper。
+- `frontend/tests/model/test_model_ui.test.ts`：模型展示 helper。
+- `frontend/tests/upload/test_file_upload.test.ts`：上传规则。
+- `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`：真实前后端运行合同验收。
 
-**UI Components:**
-- `frontend/components/chat/TaskWorkspace.tsx`: Pass hook state into sidebar, conversation, and composer.
-- `frontend/components/chat/ChatSidebar.tsx`: History list, rename/delete menu, clear history.
-- `frontend/components/chat/TaskConversation.tsx`: Transcript, markdown messages, live progress logs, diagnostics panels, artifact actions.
-- `frontend/components/chat/ChatComposer.tsx`: Textarea, file input, upload preview, model picker, skill picker, send/stop controls.
-- `frontend/components/chat/RobotAvatar.tsx`: Shared assistant avatar.
-- `frontend/components/chat/TypewriterText.tsx`: Client-side markdown typewriter effect.
+## 命名约定
 
-**Styling:**
-- `frontend/app/globals.css`: All global CSS variables and workspace styles.
-- `frontend/app/icon.svg`: App icon used by `frontend/app/layout.tsx`.
+- Next route 文件使用框架名：`layout.tsx`, `page.tsx`。
+- `frontend/app/` 纯 helper 使用 kebab-case：`task-state.ts`, `workspace-view.ts`。
+- React component 文件使用 PascalCase。
+- hook 文件使用 `use-*.ts`。
+- API adapter 按领域命名：`task-api.ts`。
+- Node tests 使用 `test_*.test.ts`。
+- Playwright specs 使用 `test_*.spec.mjs`。
+- 导出：组件 PascalCase，hook 用 `use*`，纯函数 camelCase，类型 PascalCase。
 
-**Testing:**
-- `frontend/tests/workspace/test_frontend_architecture.test.ts`: Source-boundary tests for route/component/hook/API layering and config expectations.
-- `frontend/tests/workspace/test_task_workspace.test.ts`: Hook behavior, SSE helpers, artifact preview, model gating, skill wiring, busy-state behavior.
-- `frontend/tests/workspace/test_task_api.test.ts`: API adapter exports, skill normalization through the adapter, message payload structure.
-- `frontend/tests/workspace/test_workspace_view.test.ts`: Conversation, log, diagnostics, ordering, and display helper tests.
-- `frontend/tests/state/test_task_state.test.ts`: Task state normalization, artifact request security, message payloads, event translation.
-- `frontend/tests/state/test_skill_selection.test.ts`: Slash skill selection helpers.
-- `frontend/tests/model/test_model_ui.test.ts`: Model picker display helpers.
-- `frontend/tests/upload/test_file_upload.test.ts`: Supported upload file rules.
-- `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`: Browser runtime contract acceptance against real frontend/backend services.
-- `frontend/e2e-playwright/README.md`: Scenario-specific Playwright command matrix and screenshot evidence rules.
+## 新代码落位
 
-## Naming Conventions
+- 新 route：加在 `frontend/app/`，共享 UI 放 `frontend/components/`。
+- 新工作区行为：状态/副作用放 `use-task-workspace.ts`；标准化放 `task-state.ts`；展示分组/标签放 `workspace-view.ts`；UI 放 chat component 和 `globals.css`。
+- 新后端 API 操作：`frontend/lib/task-api.ts` 增加 transport，`task-state.ts` 增加类型/normalizer，hook 接入。
+- 新 conversation rendering 规则：纯 projection 在 `workspace-view.ts`，JSX 在 `TaskConversation.tsx`，样式在 `globals.css`。
+- 新 composer control：UI 状态在 `ChatComposer.tsx`，跨组件/后端行为在 hook，复用规则抽到 `frontend/app/`。
+- 新上传格式：先改 `file-upload.ts`，再配套 composer、后端、单测和 E2E。
+- 新模型行为：`model-ui.ts`、hook availability gating、`ChatComposer.tsx`。
+- 新技能选择行为：`skill-selection.ts`、`ChatComposer.tsx`、`task-api.ts`、hook。
 
-**Files:**
-- Next app route files use framework names: `frontend/app/layout.tsx`, `frontend/app/page.tsx`.
-- Pure helper modules under `frontend/app/` use kebab-case: `frontend/app/task-state.ts`, `frontend/app/workspace-view.ts`, `frontend/app/file-upload.ts`, `frontend/app/model-ui.ts`, `frontend/app/skill-selection.ts`.
-- React component files use PascalCase: `frontend/components/chat/TaskWorkspace.tsx`, `frontend/components/chat/ChatComposer.tsx`.
-- Hook files use `use-*.ts`: `frontend/hooks/use-task-workspace.ts`.
-- Browser API adapters use domain names under `frontend/lib/`: `frontend/lib/task-api.ts`.
-- Node tests use `test_*.test.ts`: `frontend/tests/workspace/test_task_workspace.test.ts`.
-- Playwright specs use `test_*.spec.mjs`: `frontend/e2e-playwright/test_skill_selector.spec.mjs`.
+## 特殊目录
 
-**Directories:**
-- Product source directories are lowercase by responsibility: `frontend/app/`, `frontend/components/`, `frontend/hooks/`, `frontend/lib/`, `frontend/tests/`, `frontend/e2e-playwright/`.
-- Component subdirectories are domain-oriented lowercase: `frontend/components/chat/`.
-- Test subdirectories group by surface: `frontend/tests/workspace/`, `frontend/tests/state/`, `frontend/tests/model/`, `frontend/tests/upload/`.
-- E2E evidence directories use timestamped `e2e-YYYYMMDDHHMMSS/` names under `frontend/e2e-playwright/`.
-
-**Exports:**
-- React components use PascalCase named exports: `TaskWorkspace`, `TaskConversation`, `ChatComposer`, `ChatSidebar`.
-- React hooks use camelCase `use*` exports: `useTaskWorkspace`.
-- Pure functions and helpers use camelCase named exports: `normalizeTaskState`, `buildRunActivityGroups`, `fetchTaskSummaries`.
-- Types use PascalCase named exports: `TaskState`, `ExecutionLog`, `ConversationStreamItem`, `ModelDisplayOption`.
-
-## Where to Add New Code
-
-**New Route:**
-- Primary code: add a route directory/file under `frontend/app/`.
-- Shared workspace code: keep reusable UI in `frontend/components/chat/` or a new domain component folder under `frontend/components/`.
-- Tests: add source-boundary or behavior tests under `frontend/tests/workspace/`; add browser specs under `frontend/e2e-playwright/` when user-visible behavior changes.
-
-**New Workspace Behavior:**
-- State and side effects: `frontend/hooks/use-task-workspace.ts`.
-- Pure state normalization or backend field mapping: `frontend/app/task-state.ts`.
-- Render ordering, grouping, labels, diagnostics, or copy text: `frontend/app/workspace-view.ts`.
-- UI controls or layout: `frontend/components/chat/` and `frontend/app/globals.css`.
-- Tests: `frontend/tests/workspace/` plus relevant `frontend/e2e-playwright/test_*.spec.mjs`.
-
-**New Backend Endpoint or API Operation:**
-- Transport function: `frontend/lib/task-api.ts`.
-- Request/response types and normalizers: `frontend/app/task-state.ts`.
-- Hook integration: `frontend/hooks/use-task-workspace.ts`.
-- Tests: `frontend/tests/workspace/test_task_api.test.ts`, `frontend/tests/state/test_task_state.test.ts`, and browser E2E when behavior is visible.
-
-**New Conversation Rendering Rule:**
-- Pure projection: `frontend/app/workspace-view.ts`.
-- JSX renderer: `frontend/components/chat/TaskConversation.tsx`.
-- Styles: `frontend/app/globals.css`.
-- Tests: `frontend/tests/workspace/test_workspace_view.test.ts` and progress-related Playwright specs in `frontend/e2e-playwright/`.
-
-**New Composer Control:**
-- UI state and DOM events: `frontend/components/chat/ChatComposer.tsx`.
-- Workspace-owned state or backend action: `frontend/hooks/use-task-workspace.ts`.
-- Pure helper rules: add to `frontend/app/` as a focused kebab-case module when rules are reusable and testable.
-- Styles: `frontend/app/globals.css`.
-- Tests: `frontend/tests/workspace/test_task_workspace.test.ts` or a new focused test under `frontend/tests/`.
-
-**New Upload Format:**
-- Extension support and labels: `frontend/app/file-upload.ts`.
-- Composer behavior: `frontend/components/chat/ChatComposer.tsx` only if UI changes are required.
-- Tests: `frontend/tests/upload/test_file_upload.test.ts`, `frontend/e2e-playwright/test_resource_upload_harness.spec.mjs`, and `frontend/e2e-playwright/test_upload_preview_design.spec.mjs` when file picker or preview UI changes.
-
-**New Model UI Behavior:**
-- Display metadata: `frontend/app/model-ui.ts`.
-- Availability gating and allowed model list: `frontend/hooks/use-task-workspace.ts`.
-- Picker rendering: `frontend/components/chat/ChatComposer.tsx`.
-- Tests: `frontend/tests/model/test_model_ui.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`.
-
-**New Skill Selection Behavior:**
-- Skill normalization/filtering/token logic: `frontend/app/skill-selection.ts`.
-- Picker/chip rendering: `frontend/components/chat/ChatComposer.tsx`.
-- API loading: `frontend/lib/task-api.ts` and `frontend/hooks/use-task-workspace.ts`.
-- Tests: `frontend/tests/state/test_skill_selection.test.ts`, `frontend/tests/workspace/test_task_api.test.ts`, `frontend/e2e-playwright/test_skill_selector.spec.mjs`, `frontend/e2e-playwright/test_skill_selector_full_loop.spec.mjs`.
-
-**Utilities:**
-- Shared frontend domain helpers: put focused modules in `frontend/app/` when they are pure and app-specific.
-- Browser transport helpers: put them in `frontend/lib/`.
-- React stateful helpers: put hooks in `frontend/hooks/`.
-- Avoid creating broad `utils` modules unless a repeated pattern has a clear domain and tests.
-
-## Special Directories
-
-**`frontend/.planning/codebase/`:**
-- Purpose: Generated codebase maps consumed by planning/execution agents.
-- Generated: Yes
-- Committed: Yes, when codebase documentation is refreshed.
-
-**`frontend/.next/`:**
-- Purpose: Next production build output and generated type files.
-- Generated: Yes
-- Committed: No; ignored by `frontend/.gitignore`.
-
-**`frontend/.next-dev/`:**
-- Purpose: Next dev server output selected by `frontend/next.config.mjs`.
-- Generated: Yes
-- Committed: No; ignored by `frontend/.gitignore`.
-
-**`frontend/node_modules/`:**
-- Purpose: npm dependency installation.
-- Generated: Yes
-- Committed: No; ignored by `frontend/.gitignore`.
-
-**`frontend/test-results/`:**
-- Purpose: Playwright and local test output.
-- Generated: Yes
-- Committed: No; ignored by `frontend/.gitignore`.
-
-**`frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`:**
-- Purpose: Local browser acceptance screenshots, fixtures, downloads, and evidence.
-- Generated: Yes
-- Committed: No; keep evidence local and reference it in delivery notes.
-
-**`frontend/next-env.d.ts`:**
-- Purpose: Next.js generated TypeScript environment declarations.
-- Generated: Yes
-- Committed: No; ignored by `frontend/.gitignore`.
-
-**`frontend/tsconfig.tsbuildinfo`:**
-- Purpose: TypeScript incremental build cache.
-- Generated: Yes
-- Committed: No; ignored by `frontend/.gitignore`.
-
-**`frontend/.env.local`:**
-- Purpose: Local browser-exposed frontend environment overrides.
-- Generated: Local configuration
-- Committed: No; ignored by `frontend/.gitignore` and not safe to read or quote.
+- `.planning/codebase/`：生成的前端事实文档，按任务需要提交。
+- `.next/`：生产 build 输出，忽略。
+- `.next-dev/`：dev server 输出，忽略。
+- `node_modules/`：依赖安装，忽略。
+- `test-results/`：Playwright/local test 输出，忽略。
+- `e2e-playwright/e2e-YYYYMMDDHHMMSS/`：本地验收截图和证据，忽略但可在交付说明引用。
+- `next-env.d.ts`：Next 生成，忽略。
+- `tsconfig.tsbuildinfo`：TypeScript 增量缓存，忽略。
+- `.env.local`：本地浏览器公开 env override，忽略且不安全读取。
 
 ---
 
-*Structure analysis: 2026-05-22*
+*结构分析：2026-05-24*

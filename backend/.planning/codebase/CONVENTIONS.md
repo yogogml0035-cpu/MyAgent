@@ -1,117 +1,81 @@
-# Coding Conventions
+# 后端编码约定
 
-**Analysis Date:** 2026-05-22
+**分析日期：** 2026-05-24
 
-## Naming Patterns
+## 命名模式
 
-**Files:**
-- Use lowercase snake_case Python module names for application code: `backend/app/task_titles.py`, `backend/app/memory_admin.py`, `backend/app/reasoning_trace.py`.
-- Group HTTP routers by API surface under `backend/app/api/`: `backend/app/api/tasks.py`, `backend/app/api/files.py`, `backend/app/api/artifacts.py`, `backend/app/api/streaming.py`.
-- Group domain packages by responsibility under `backend/app/`: agent construction in `backend/app/agent/`, model providers in `backend/app/models/`, streaming conversion in `backend/app/streaming/`, security scanning in `backend/app/security/`, skill discovery in `backend/app/skills/`, resource tools in `backend/app/execution/`.
-- Use `__init__.py` in package directories even when empty: `backend/app/api/__init__.py`, `backend/app/runner/__init__.py`, `backend/tests/unit/api/__init__.py`.
-- Test files use `test_<subject>.py` and mirror the app package when practical: `backend/tests/unit/api/test_tasks.py` covers `backend/app/api/tasks.py`; `backend/tests/unit/streaming/test_event_converter.py` covers `backend/app/streaming/event_converter.py`.
-- Built-in project skills live under `backend/skills/<skill-name>/SKILL.md`, for example `backend/skills/web_research/SKILL.md` and `backend/skills/code_review/SKILL.md`.
+- 应用模块使用小写 `snake_case`：`task_titles.py`, `memory_admin.py`, `reasoning_trace.py`。
+- HTTP route 按 API surface 分组：`api/tasks.py`, `api/files.py`, `api/artifacts.py`, `api/streaming.py`。
+- 领域包按职责分组：`agent/`, `models/`, `streaming/`, `security/`, `skills/`, `execution/`, `tools/`。
+- 包目录保留 `__init__.py`。
+- pytest 文件使用 `test_<subject>.py`，尽量镜像 app package。
+- 项目技能放在 `backend/skills/<skill-name>/SKILL.md`。
+- 公共函数、私有 helper、fixture 都用 `snake_case`；模块私有 helper 用 `_` 前缀。
+- 有副作用或校验语义的函数优先动词开头：`validate_run_id`, `normalize_artifact_name`, `authorize_task_request`。
+- async 函数用于 I/O 或 event-loop 边界：API handler、runner start/cancel、streaming。
+- module constants 使用 `UPPER_SNAKE_CASE`。
+- DTO 和服务类使用 `PascalCase`。
 
-**Functions:**
-- Use snake_case for public functions, private helpers, and pytest fixtures: `create_app()` in `backend/app/main.py`, `load_settings()` in `backend/app/config.py`, `safe_filename()` in `backend/app/storage.py`, `app_client()` in `backend/tests/unit/api/test_tasks.py`.
-- Prefix module-private helper functions with `_`: `_storage()`, `_runner()`, `_get_existing_task()` in `backend/app/api/tasks.py`; `_run_searxng_search()` and `_search_params()` in `backend/app/tools/searxng_search.py`; `_sanitize_memory_segment()` in `backend/app/memory.py`.
-- Use verb-first names for stateful operations and validators: `validate_run_id()` in `backend/app/storage.py`, `normalize_artifact_name()` in `backend/app/storage.py`, `authorize_task_request()` in `backend/app/main.py`.
-- Async functions are used at I/O or event-loop boundaries: `create_task()` and `send_message()` in `backend/app/api/tasks.py`, `TaskRunner.start()` and `TaskRunner.cancel()` in `backend/app/runner/core.py`.
+## 类型约定
 
-**Variables:**
-- Use snake_case for locals and parameters: `task_id`, `run_id`, `memory_context`, `max_upload_file_bytes`.
-- Use UPPER_SNAKE_CASE for module constants: `DEEPSEEK_V4_FLASH_MODEL_ID` in `backend/app/config.py`, `UPLOAD_CHUNK_SIZE` in `backend/app/storage.py`, `SEARCH_TOOL_NAME` in `backend/app/tools/searxng_search.py`, `SENSITIVE_REDACTION` in `backend/app/security/scanner.py`.
-- Use descriptive collection names with typed literals where the value set is stable: `TaskStatus` in `backend/app/schemas.py`, `ArtifactType` in `backend/app/storage.py`, `EventLevel` in `backend/app/contracts/__init__.py`.
+- API request/response 使用 Pydantic `BaseModel`，集中在 `backend/app/schemas.py`。
+- 不可变内部 record 和配置使用 frozen dataclass，如 `Settings`, `RetrievedMemory`, resource records。
+- 注入依赖使用 `Protocol`，如 `RunnerStorage`, `RunnerMemoryService`, `ConversationStorage`, `LongTermMemoryStorage`。
+- 使用 Python 3.11 语法：`str | None`, `list[EventRecord]`, `dict[str, Any]`。
+- 稳定字符串域使用 `Literal` 或 `TypeAlias`。
 
-**Types:**
-- Use Pydantic `BaseModel` classes for request and response DTOs in `backend/app/schemas.py`.
-- Use frozen `@dataclass` classes for immutable internal records and configuration: `Settings` in `backend/app/config.py`, `RetrievedMemory` and `ExtractedMemory` in `backend/app/memory.py`, resource records in `backend/app/execution/resources.py`.
-- Use `Protocol` for structural dependencies that are injected into services: `RunnerStorage` and `RunnerMemoryService` in `backend/app/runner/core.py`, `LongTermMemoryStorage` in `backend/app/memory.py`, `ConversationStorage` in `backend/app/conversation_context.py`.
-- Use modern Python 3.11 union syntax and generic built-ins: `str | None`, `list[EventRecord]`, `dict[str, Any]`.
-- Use `Literal` and `TypeAlias` for constrained string domains: `TaskMode`, `InputScope`, and `TaskStatus` in `backend/app/schemas.py`; `UploadSourceFormat` in `backend/app/storage.py`.
+## 代码风格
 
-## Code Style
+- Ruff 是格式和 lint 权威，配置在 `backend/pyproject.toml`。
+- 目标 Python 版本是 3.11，尽量控制 100 字符行宽。
+- 模块顶部使用 `from __future__ import annotations`。
+- 文本文件 I/O 显式指定 UTF-8。
+- `# noqa` 只用于窄范围、有意的例外。
+- 导入顺序：future、标准库、第三方、本地 `app.*`、测试专用 `tests.*`。
+- pytest 配置了 `pythonpath = ["."]`，测试中导入 `app.*`。
+- 应用模块内既有相对导入也有 `app.*` 绝对导入，编辑时跟随周围风格。
 
-**Formatting:**
-- Ruff is the formatting and linting authority through `backend/pyproject.toml`.
-- Use Python 3.11 syntax; `backend/pyproject.toml` sets `requires-python = ">=3.11"` and Ruff `target-version = "py311"`.
-- Keep line length at 100 characters where practical; `backend/pyproject.toml` sets `tool.ruff.line-length = 100`, while rule `E501` is ignored for occasional long literals.
-- Add `from __future__ import annotations` at the top of Python modules; this appears across `backend/app/config.py`, `backend/app/main.py`, `backend/app/storage.py`, and tests.
-- Prefer explicit UTF-8 file I/O for text: `read_text(encoding="utf-8")` and `write_text(..., encoding="utf-8")` in `backend/app/config.py`, `backend/app/storage.py`, `backend/app/skills/loader.py`, and tests.
+## 错误处理
 
-**Linting:**
-- Ruff lint rules selected in `backend/pyproject.toml`: `E`, `F`, `I`, `UP`, `B`, `SIM`.
-- Ignored Ruff rules in `backend/pyproject.toml`: `B008`, `B904`, `E501`, `UP017`.
-- Mypy is configured in `backend/pyproject.toml` with `check_untyped_defs = true`, `warn_unused_ignores = true`, and `ignore_missing_imports = true`.
-- Use `# noqa` only for narrow, intentional exceptions, such as Starlette private request body hooks in `backend/app/main.py`.
+- API route 把 storage/validation error 转成明确 HTTP response。
+- 404 表示 task/artifact 不存在，400 表示输入无效，409 表示运行状态冲突，413 表示上传或请求过大。
+- 对不应泄露内部细节的包装使用 `from None`；保留底层 cause 时使用 `from exc`。
+- 领域异常集中定义并跨边界处理：`RequestBodyTooLarge`, `ModelProviderError`, `MemoryServiceError`, `UploadConflictError`, `UploadLimitError`, `SecretScanViolation`。
+- 工具函数对预期失败返回结构化或可读错误，不让 agent run 崩溃。
+- 可恢复后台失败应 log 后继续，例如标题生成、memory recall、resource manifest、memory extraction。
+- 生产必需服务缺失应在 startup fail fast。
 
-## Import Organization
+## 日志
 
-**Order:**
-1. `from __future__ import annotations`
-2. Standard library imports: `logging`, `pathlib.Path`, `typing`, `dataclasses`, `collections.abc`
-3. Third-party imports: `fastapi`, `httpx`, `pydantic`, `langchain_core`, `psycopg`, `openpyxl`, `docx`
-4. Local `app.*` imports
-5. Test-only `tests.*` imports
+- 使用 Python 标准 `logging`。
+- 需要日志的模块定义 `logger = logging.getLogger(__name__)`。
+- 正常生命周期用 `logger.info()`。
+- 可恢复异常用 `logger.warning(..., exc_info=True)`。
+- 重新抛出的未知 runner failure 用 `logger.exception()`。
+- 不记录 secret 值；secret 扫描和脱敏在 `backend/app/security/scanner.py`。
 
-**Path Aliases:**
-- Runtime and tests import from the backend root using absolute package paths like `from app.config import Settings` and `from tests.fakes import InMemoryTaskStorage`.
-- `backend/pyproject.toml` sets `pythonpath = ["."]` for pytest, so new tests should import `app.*` directly rather than using relative imports.
-- Inside application modules, both package-relative imports and absolute `app.*` imports are present. Follow the local module style: `backend/app/main.py` uses relative imports such as `from .config import Settings`, while routers in `backend/app/api/tasks.py` use `from app.config import Settings`.
+## 注释
 
-## Error Handling
+- 模块 docstring 用于说明清晰的所有权或集成边界。
+- 公共 helper 和服务如果定义合同，应写简短 docstring。
+- 行内注释只解释非显然行为或兼容性要求，例如 final-answer synthetic event、LangGraph store 兼容。
+- 不要写复述赋值或断言的空注释。
 
-**Patterns:**
-- API routers translate storage and validation errors into explicit `HTTPException` responses. Use `404` for missing tasks or artifacts, `400` for invalid input, `409` for running-state conflicts, and `413` for upload/request limits, following `backend/app/api/tasks.py`, `backend/app/api/files.py`, and `backend/app/api/artifacts.py`.
-- Suppress exception chaining with `from None` when internal details should not leak to API callers, as in `_get_existing_task()` in `backend/app/api/tasks.py`.
-- Preserve exception causes with `from exc` when wrapping lower-level failures into domain errors, as in `backend/app/memory.py` and upload handling in `backend/app/storage.py`.
-- Use custom exception classes for domain boundaries: `RequestBodyTooLarge` in `backend/app/main.py`, `ModelProviderError` in `backend/app/models/provider.py`, `MemoryServiceError` in `backend/app/memory.py`, `UploadConflictError` and `UploadLimitError` in `backend/app/storage.py`, `SecretScanViolation` in `backend/app/security/scanner.py`.
-- Tool-facing functions return structured or readable error payloads instead of crashing the agent when failures are expected. Examples: SearXNG returns strings prefixed by `错误：` in `backend/app/tools/searxng_search.py`; resource tools return `{"ok": False, "error": {...}}` in `backend/app/execution/resources.py`.
-- Recoverable background failures should log and continue when the user-facing task can proceed. Examples: title generation in `backend/app/api/tasks.py`, memory recall and resource manifest provisioning in `backend/app/runner/core.py`, memory extraction in `backend/app/memory.py`.
-- Startup should fail fast when required production services are missing: `create_app()` collects missing `MYAGENT_DATABASE_URL`, DashScope, or Qdrant failures in `backend/app/main.py`.
+## 函数与模块设计
 
-## Logging
+- route function 保持小而薄，把状态变更委托给 storage、runner、model、memory 或 execution module。
+- 大型 orchestrator 可存在于 `storage.py`、`runner/core.py`、`execution/resources.py`，但应守住单一领域边界。
+- 可选行为用 keyword-only 参数表达。
+- 边界返回 typed DTO 或 domain record。
+- 避免 broad re-export；多数 `__init__.py` 只作为 package marker。
 
-**Framework:** Python standard `logging`
+## 技能相关约束
 
-**Patterns:**
-- Define `logger = logging.getLogger(__name__)` at module scope for modules that log: `backend/app/main.py`, `backend/app/api/tasks.py`, `backend/app/runner/core.py`, `backend/app/memory.py`, `backend/app/skills/loader.py`, `backend/app/task_titles.py`.
-- Use `logger.info()` for expected lifecycle events, such as interrupted running tasks in `backend/app/main.py` and skipped sensitive memory recall in `backend/app/memory.py`.
-- Use `logger.warning(..., exc_info=True)` for recoverable failures where stack traces help diagnostics but execution continues, such as long-term memory recall in `backend/app/runner/core.py` and skill discovery read failures in `backend/app/skills/loader.py`.
-- Use `logger.exception()` when re-raising unexpected runner failures, as in `TaskRunner.start()` in `backend/app/runner/core.py`.
-- Do not log or emit secret values. Secret scanning and redaction live in `backend/app/security/scanner.py`; configuration documents secret variable names in `backend/.env.example` without requiring secret values.
-
-## Comments
-
-**When to Comment:**
-- Use module docstrings for files with clear ownership or integration boundaries: `backend/app/tools/searxng_search.py`, `backend/app/tools/filesystem_bridge.py`, `backend/app/agent/factory.py`, `backend/app/api/tasks.py`.
-- Use class/function docstrings for public helpers and services that define contracts: `Settings` in `backend/app/config.py`, `TaskRunner.start()` in `backend/app/runner/core.py`, `_ReadOnlyBackend` in `backend/app/agent/factory.py`.
-- Add short inline comments only for non-obvious behavior or compatibility requirements, such as final-answer synthetic events in `backend/app/runner/core.py` and defensive future LangGraph operation handling in `backend/app/agent_store.py`.
-- Do not add comments that restate a single obvious assignment or assertion.
-
-**JSDoc/TSDoc:**
-- Not applicable. This backend is Python-only.
-
-## Function Design
-
-**Size:** Keep API route functions small and delegate stateful behavior to storage, runner, model, memory, or execution modules. Larger orchestrators are acceptable in `backend/app/storage.py`, `backend/app/runner/core.py`, and `backend/app/execution/resources.py` when they protect a single domain boundary.
-
-**Parameters:** Prefer explicit typed parameters and keyword-only options for optional behavior. Examples: `create_model(model_id, settings, *, temperature=0.0)` in `backend/app/models/provider.py`, `TaskRunner.start(..., *, model=None, run_id, on_event=None)` in `backend/app/runner/core.py`, and storage methods in `backend/app/storage.py`.
-
-**Return Values:** Return typed DTOs or domain records at boundaries: FastAPI handlers return Pydantic models from `backend/app/schemas.py`; storage returns `TaskState`, `TaskSummary`, `EventRecord`, and dataclass records from `backend/app/storage.py`; resource execution returns `ExecutionResult` from `backend/app/execution/resources.py`.
-
-## Module Design
-
-**Exports:** Prefer direct named exports from focused modules. Avoid broad re-export layers except package markers. Examples: import `create_app` from `backend/app/main.py`, `TaskRunner` from `backend/app/runner/core.py`, `create_model` from `backend/app/models/provider.py`, and `discover_skills` from `backend/app/skills/loader.py`.
-
-**Barrel Files:** `__init__.py` files mostly mark packages and are not used as broad barrel modules. Keep new code importable from its implementation module unless an existing package explicitly exposes a stable public surface.
-
-**Skill-defined constraints:**
-- Project skills are first-class runtime content. Keep built-in skills under `backend/skills/<skill-name>/SKILL.md` and discover them through `backend/app/skills/project.py` and `backend/app/skills/loader.py`.
-- Skill files are mounted read-only into DeepAgents through `backend/app/agent/factory.py`; preserve the `_ReadOnlyBackend` pattern when changing skill access.
-- `backend/skills/web_research/SKILL.md` assumes SearXNG-backed search via `backend/app/tools/searxng_search.py`.
-- `backend/skills/code_review/SKILL.md` frames code-review behavior around quality, security, best practices, performance, and test coverage; keep backend review support aligned with `backend/app/security/scanner.py` and the test patterns in `backend/tests/unit/security/`.
+- 项目技能是运行时一等内容，放在 `backend/skills/<skill>/SKILL.md`。
+- 技能文件通过 `backend/app/skills/project.py` 和 `backend/app/skills/loader.py` 发现。
+- 运行时技能源被 `backend/app/agent/factory.py` 只读挂载；更改 skill access 时保留 `_ReadOnlyBackend` 模式。
+- `web_research` 依赖 SearXNG 工具，`code_review` 依赖安全、测试和代码质量约定。
 
 ---
 
-*Convention analysis: 2026-05-22*
+*约定分析：2026-05-24*

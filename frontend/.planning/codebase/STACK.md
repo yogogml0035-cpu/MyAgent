@@ -1,102 +1,91 @@
-# Technology Stack
+# 前端技术栈
 
-**Analysis Date:** 2026-05-22
+**分析日期：** 2026-05-24
 
-## Languages
+## 语言
 
-**Primary:**
-- TypeScript 5.9.3 - App logic, React components, hooks, API adapters, and unit tests under `frontend/app/`, `frontend/components/`, `frontend/hooks/`, `frontend/lib/`, and `frontend/tests/`.
-- TSX / React JSX - Client UI components in `frontend/components/chat/*.tsx` and the App Router entrypoint in `frontend/app/page.tsx`.
+- TypeScript：应用逻辑、React 组件、hooks、API adapter、unit tests。
+- TSX / React JSX：chat workspace 组件和 App Router entry。
+- JavaScript / ESM：Next、ESLint、Playwright 配置和 specs。
+- CSS：`frontend/app/globals.css` 的全局样式和设计 token。
+- SVG：app icon 和少量组件内图形。
 
-**Secondary:**
-- JavaScript / ESM - Next, ESLint, and Playwright configuration/spec files in `frontend/next.config.mjs`, `frontend/eslint.config.mjs`, and `frontend/e2e-playwright/*.mjs`.
-- CSS - Global styling and design tokens in `frontend/app/globals.css`.
-- SVG - App icon in `frontend/app/icon.svg` and inline icon geometry in components such as `frontend/components/chat/RobotAvatar.tsx`.
+## 运行时和包管理
 
-## Runtime
+- 浏览器运行时：DOM APIs、EventSource、File、FormData、Blob、Clipboard、Window popup。
+- Node.js：Next、tests、lint、build、Playwright。
+- 包管理：npm，lockfile 为 `frontend/package-lock.json`。
+- `frontend/package.json` 未声明 `packageManager` 或 `engines`；Next dependency 自身约束 Node 版本。
 
-**Environment:**
-- Browser runtime - The production UI runs in the browser, using DOM APIs declared by `frontend/tsconfig.json` (`dom`, `dom.iterable`, `esnext`).
-- Node.js - Required for Next.js, unit tests, linting, builds, and Playwright. `frontend/package-lock.json` resolves `next@15.5.18`, whose engine range is `^18.18.0 || ^19.8.0 || >= 20.0.0`.
-- Local observed tool runtime - `node v24.14.1` and `npm 11.11.0` are available in this workspace.
+## 核心框架
 
-**Package Manager:**
-- npm 11.11.0 - Use npm scripts from `frontend/package.json`.
-- Lockfile: present at `frontend/package-lock.json` with lockfile version 3.
-- No `packageManager` or `engines` field is declared in `frontend/package.json`; rely on the Next.js engine range from `frontend/package-lock.json`.
+- Next.js 15：App Router、metadata、dev/build/start。
+- React 19：client component state、effects 和 rendering。
+- React DOM：浏览器渲染。
+- `react-markdown`：渲染 AI Markdown。
+- `remark-gfm`：支持 GitHub-flavored Markdown。
 
-## Frameworks
+## 测试与开发工具
 
-**Core:**
-- Next.js 15.5.18 - App Router application shell, metadata, build, dev server, and production server. Entry files are `frontend/app/layout.tsx` and `frontend/app/page.tsx`.
-- React 19.2.5 - Client component state, effects, and rendering in `frontend/components/chat/*.tsx` and `frontend/hooks/use-task-workspace.ts`.
-- React DOM 19.2.5 - Browser rendering through Next.js.
+- Node `node:test`：通过 `tsx` 运行 TypeScript 单测。
+- `tsx`：Node tests 的 TypeScript loader。
+- Playwright / `@playwright/test`：浏览器 E2E。
+- TypeScript compiler：`next typegen && tsc --noEmit`。
+- ESLint flat config：`eslint-config-next` 的 core web vitals 和 TypeScript 规则。
+- PostCSS：由 package override 固定。
 
-**Testing:**
-- Node `node:test` - Unit tests run through `node --test --import tsx tests/*/test_*.test.ts` from `frontend/package.json`.
-- `tsx` 4.21.0 - TypeScript loader for Node test files in `frontend/tests/`.
-- Playwright 1.60.0 / `@playwright/test` 1.60.0 - Browser E2E specs under `frontend/e2e-playwright/`, including `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`.
+## 关键依赖
 
-**Build/Dev:**
-- Next build/dev/start - Scripts in `frontend/package.json` run `next dev -p 3001`, `next build`, and `next start -p 3001`.
-- TypeScript compiler 5.9.3 - `frontend/package.json` runs `next typegen && tsc --noEmit`; strict type checking is configured in `frontend/tsconfig.json`.
-- ESLint 9.39.4 with `eslint-config-next` 15.5.15 - Flat config in `frontend/eslint.config.mjs` extends `next/core-web-vitals` and `next/typescript`.
-- PostCSS 8.5.11 - Forced through the `overrides` section in `frontend/package.json`.
+- `next`：routing、build output、dev server、production server。
+- `react`, `react-dom`：交互式 task workspace。
+- `react-markdown`, `remark-gfm`：AI markdown 展示。
+- `@playwright/test`：浏览器验收。
+- `typescript`, `tsx`：类型检查和 TypeScript tests。
+- `eslint`, `eslint-config-next`：lint。
+- `@types/node`, `@types/react`, `@types/react-dom`：类型声明。
 
-## Key Dependencies
+## 配置
 
-**Critical:**
-- `next` 15.5.18 - Owns routing, build output, dev server, and production serving for `frontend/app/`.
-- `react` 19.2.5 and `react-dom` 19.2.5 - Own the interactive task workspace in `frontend/components/chat/TaskWorkspace.tsx`.
-- `react-markdown` 10.1.0 - Renders assistant Markdown messages in `frontend/components/chat/TaskConversation.tsx` and `frontend/components/chat/TypewriterText.tsx`.
-- `remark-gfm` 4.0.1 - Enables GitHub-flavored Markdown rendering in `frontend/components/chat/TaskConversation.tsx` and `frontend/components/chat/TypewriterText.tsx`.
+- `NEXT_PUBLIC_MYAGENT_API_BASE_URL`：后端 base URL；`auto` 或未设置时由当前页面 hostname 推导 `:8001`。
+- `NEXT_PUBLIC_API_BASE_URL`：legacy fallback。
+- `NEXT_PUBLIC_MYAGENT_TOKEN`：可选浏览器访问 token。
+- `NEXT_PUBLIC_AGENT_CHAT_TOKEN`：legacy token fallback。
+- `NEXT_WATCH_POLL_INTERVAL_MS`：Next watch polling interval，默认 `300`。
+- `.env.local` 可能存在但被忽略，不能读取或文档化真实值。
 
-**Infrastructure:**
-- `@playwright/test` 1.60.0 - Runtime browser acceptance tests under `frontend/e2e-playwright/`.
-- `typescript` 5.9.3 - Strict type validation for `frontend/app/`, `frontend/components/`, `frontend/hooks/`, `frontend/lib/`, and `frontend/tests/`.
-- `tsx` 4.21.0 - Loads TypeScript tests for the Node test runner.
-- `eslint` 9.39.4 and `eslint-config-next` 15.5.15 - Lint rules for Next.js and TypeScript in `frontend/eslint.config.mjs`.
-- `@types/node` 22.19.17, `@types/react` 19.2.14, and `@types/react-dom` 19.2.3 - Type declarations resolved in `frontend/package-lock.json`.
+## package scripts
 
-## Configuration
+```bash
+cd frontend
+npm run dev                 # Next dev on 3001, 使用 polling env
+npm run build               # Next production build
+npm run start               # next start -p 3001
+npm run typecheck           # next typegen && tsc --noEmit
+npm test                    # Node unit tests through tsx
+npm run lint                # eslint . --max-warnings=0
+npm run e2e:runtime-contracts
+```
 
-**Environment:**
-- Browser-facing runtime configuration is documented in `frontend/.env.example`.
-- `NEXT_PUBLIC_MYAGENT_API_BASE_URL` controls the backend base URL. `auto` or an unset value derives `http://<current page hostname>:8001` in `frontend/app/task-state.ts`.
-- `NEXT_PUBLIC_API_BASE_URL` is a legacy fallback read by `frontend/lib/task-api.ts`.
-- `NEXT_PUBLIC_MYAGENT_TOKEN` is an optional browser-exposed access token read by `frontend/lib/task-api.ts`.
-- `NEXT_PUBLIC_AGENT_CHAT_TOKEN` is a legacy browser-exposed token fallback read by `frontend/lib/task-api.ts`.
-- `NEXT_WATCH_POLL_INTERVAL_MS` controls Next watch polling in `frontend/next.config.mjs`; the default is `300`.
-- `.env.local` exists under `frontend/.env.local` and is ignored by `frontend/.gitignore`; do not read or document its values.
+## 构建配置
 
-**Build:**
-- `frontend/package.json` scripts:
-  - `npm run dev` starts Next on port `3001` with polling env vars for Windows/WSL-friendly file watching.
-  - `npm run build` runs `next build`.
-  - `npm run start` runs `next start -p 3001`.
-  - `npm run typecheck` runs `next typegen && tsc --noEmit`.
-  - `npm test` runs Node unit tests through `tsx`.
-  - `npm run lint` runs `eslint . --max-warnings=0`.
-  - `npm run e2e:runtime-contracts` runs `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`.
-- `frontend/next.config.mjs` sets `distDir` to `.next-dev` for development and `.next` for production builds.
-- `frontend/next.config.mjs` disables dev indicators and configures `watchOptions.pollIntervalMs`.
-- `frontend/tsconfig.json` uses `target: ES2017`, `module: esnext`, `moduleResolution: bundler`, `strict: true`, `jsx: preserve`, and includes generated Next types from `.next/types/**/*.ts` and `.next-dev/types/**/*.ts`.
-- `frontend/eslint.config.mjs` ignores `.next/**`, `.next-dev*/**`, `node_modules/**`, and `next-env.d.ts`.
-- `frontend/.gitignore` excludes `node_modules/`, `.next/`, `.next-dev*/`, `coverage/`, `*.tsbuildinfo`, `next-env.d.ts`, `.env`, and `.env*.local`.
+- `frontend/next.config.mjs`：dev 输出 `.next-dev`，production 输出 `.next`。
+- `frontend/tsconfig.json`：`strict: true`、`moduleResolution: "bundler"`、`jsx: "preserve"`。
+- `frontend/eslint.config.mjs`：忽略 `.next/**`、`.next-dev*/**`、`node_modules/**`、`next-env.d.ts`。
+- `frontend/.gitignore`：忽略依赖、Next 输出、coverage、tsbuildinfo、generated env、`.env*.local`。
 
-## Platform Requirements
+## 平台要求
 
-**Development:**
-- Work from a consistent path style. `frontend/README.md` directs WSL development through `/mnt/d/AgentProject/MyAgent/frontend` and warns against mixing Windows `D:\AgentProject\MyAgent\frontend` build artifacts with WSL dev-server execution.
-- Backend availability is expected at port `8001` when `NEXT_PUBLIC_MYAGENT_API_BASE_URL` is unset or set to `auto`; frontend dev/start uses port `3001`.
-- Backend CORS must allow the frontend origin. `frontend/README.md` pairs `NEXT_PUBLIC_MYAGENT_API_BASE_URL` changes with backend `MYAGENT_CORS_ORIGINS` changes.
-- Provider secrets stay in the backend environment. `frontend/README.md` states the browser only sends backend-registered model IDs such as `deepseek-v4-flash` and `deepseek-v4-flash-thinking`.
+- 默认本地前端端口 `3001`，后端端口 `8001`。
+- WSL 开发建议使用 `/mnt/d/AgentProject/MyAgent/frontend`，避免混用 Windows/WSL 生成物。
+- 后端 CORS 必须允许前端 origin；改 API base URL 时同步检查后端 CORS。
+- provider secrets 留在后端，浏览器只发送安全 model ID 和可选本地访问 token。
 
-**Production:**
-- Production serving uses Next.js through `npm run build` followed by `npm run start` from `frontend/package.json`.
-- The default production port is `3001` through `next start -p 3001`.
-- No hosting provider, deployment adapter, or CI deployment workflow is detected inside `frontend/`.
+## 生产事实
+
+- 生产命令是 `npm run build` 后 `npm run start`。
+- 默认 production port 为 `3001`。
+- 当前仓库未确认 hosting provider、deployment adapter 或 CI deployment workflow。
 
 ---
 
-*Stack analysis: 2026-05-22*
+*技术栈分析：2026-05-24*

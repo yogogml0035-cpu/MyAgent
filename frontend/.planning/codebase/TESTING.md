@@ -1,247 +1,116 @@
-# Testing Patterns
+# 前端测试模式
 
-**Analysis Date:** 2026-05-22
+**分析日期：** 2026-05-24
 
-## Test Framework
+## 测试框架
 
-**Runner:**
-- Unit runner: Node.js built-in `node:test`, invoked through `tsx` for TypeScript files.
-- E2E runner: Playwright `@playwright/test` 1.60.x from `frontend/package.json`.
-- Config: Not detected for Node test, Jest, Vitest, or Playwright config files in `frontend/`; tests rely on CLI defaults and per-spec setup.
+- Unit runner：Node.js 内置 `node:test`，通过 `tsx` 执行 TypeScript。
+- E2E runner：Playwright `@playwright/test`。
+- 断言：Node `assert/strict` 或 `assert`，E2E 使用 Playwright `expect`。
+- 未检测到 Jest、Vitest 或 Playwright config 文件；当前 specs 依赖 CLI defaults 和 spec 内配置。
 
-**Assertion Library:**
-- Unit assertions use Node assertions: `node:assert/strict` in most files and `node:assert` in `frontend/tests/workspace/test_task_api.test.ts` and `frontend/tests/workspace/test_task_workspace.test.ts`.
-- E2E assertions use Playwright `expect` from `@playwright/test`.
+## 常用命令
 
-**Run Commands:**
 ```bash
-npm test                      # Run all Node unit tests from frontend/
-npm run typecheck             # Generate Next types and run TypeScript no-emit checking
-npm run lint                  # Run ESLint with zero warnings
-npm run build                 # Build the Next.js production bundle
-npm run e2e:runtime-contracts # Run the runtime contract Playwright spec
-npx playwright test e2e-playwright/test_skill_selector.spec.mjs --reporter=line # Run one E2E spec
+cd frontend
+npm test
+npm run typecheck
+npm run lint
+npm run build
+npm run e2e:runtime-contracts
+npx playwright test e2e-playwright/test_skill_selector.spec.mjs --reporter=line
 ```
 
-## Test File Organization
+## 测试组织
 
-**Location:**
-- Unit tests live under `frontend/tests/<area>/` and import modules from `frontend/app/`, `frontend/hooks/`, `frontend/lib/`, and `frontend/components/`.
-- E2E acceptance specs live under `frontend/e2e-playwright/` and use local evidence folders under `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/`.
-
-**Naming:**
-- Unit tests are named `test_*.test.ts`: `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_workspace_view.test.ts`, `frontend/tests/upload/test_file_upload.test.ts`.
-- Playwright specs are named `test_*.spec.mjs` for most browser specs: `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`, `frontend/e2e-playwright/test_upload_preview_design.spec.mjs`.
-- One Playwright file uses `.mjs` without `.spec`: `frontend/e2e-playwright/test_storage_memory_e2e.mjs`; run it explicitly when needed.
-
-**Structure:**
 ```text
 frontend/tests/
-├── model/       # Model picker presentation helpers
-├── state/       # Task state normalization, artifact request safety, payloads
-├── upload/      # Upload file support and selected-file UI design guardrails
-└── workspace/   # Workspace view helpers, hook boundaries, API exports, component source contracts
+|-- model/       # 模型 picker 展示 helper
+|-- state/       # task state normalization、artifact security、payload
+|-- upload/      # 上传规则和 preview guardrails
+`-- workspace/   # workspace view、hook boundary、API exports、source contracts
 
 frontend/e2e-playwright/
-├── README.md                         # E2E evidence and scenario command guide
-├── test_runtime_contracts.spec.mjs   # Live backend/frontend artifact and upload contract
-├── test_*_spec.mjs                   # Browser acceptance scenarios
-└── e2e-YYYYMMDDHHMMSS/               # Local screenshots and artifacts, not committed
+|-- README.md
+|-- test_runtime_contracts.spec.mjs
+|-- test_*_spec.mjs
+`-- e2e-YYYYMMDDHHMMSS/   # 本地证据，不能提交
 ```
 
-## Test Structure
+## 命名和结构
 
-**Suite Organization:**
-```typescript
-import assert from "node:assert/strict";
-import test from "node:test";
+- unit tests：`test_*.test.ts`。
+- Playwright specs：多数为 `test_*.spec.mjs`。
+- `test_storage_memory_e2e.mjs` 是无 `.spec` 的手动/legacy 运行入口。
+- 纯 helper 测试优先顶层 `test("behavior", () => {})`。
+- `describe`/`it` 主要用于 grouped module export 或 source-boundary checks。
+- 测试名写具体可观察行为。
+- 对 deterministic helper 可直接 `assert.deepEqual` 完整返回对象。
+- source-text assertion 只用于架构边界、视觉 token guard 或生成/config 约束。
 
-import { normalizeTaskState } from "../../app/task-state";
+## Mock 规则
 
-test("normalizeTaskState maps unknown backend statuses to unknown instead of running", () => {
-  const state = normalizeTaskState({ task_id: "task-1", status: "paused" }, "fallback");
+应该 mock：
 
-  assert.equal(state.status, "unknown");
-});
-```
+- Node unit tests 中的 `globalThis.fetch`，用于测试 REST adapter。
+- DOM-like object 的最小 typed shape，用于纯 DOM helper。
+- Playwright `page.route` 只用于明确 frontend-only 场景。
 
-**Patterns:**
-- Prefer top-level `test("behavior", () => {})` for pure helpers, as in `frontend/tests/state/test_task_state.test.ts` and `frontend/tests/workspace/test_workspace_view.test.ts`.
-- Use `describe` / `it` only for grouped module export or source-boundary checks, as in `frontend/tests/workspace/test_task_api.test.ts` and `frontend/tests/workspace/test_task_workspace.test.ts`.
-- Keep test names behavior-oriented and specific: examples include "buildArtifactRequest rejects external artifact URLs before sending tokens" in `frontend/tests/state/test_task_state.test.ts` and "scrollLogListToBottomIfPinned does not fight intentional upward scrolling" in `frontend/tests/workspace/test_task_conversation_scroll.test.ts`.
-- Use direct assertions against full returned objects when the helper is pure and deterministic: `assert.deepEqual` in `frontend/tests/upload/test_file_upload.test.ts` and `frontend/tests/model/test_model_ui.test.ts`.
-- Use source-text assertions only for architectural boundaries, visual token guards, or generated/config constraints that are otherwise hard to execute in Node: `frontend/tests/workspace/test_frontend_architecture.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`, `frontend/tests/upload/test_upload_preview_design.test.ts`.
+不应该 mock：
 
-## Mocking
+- runtime contract path；`test_runtime_contracts.spec.mjs` 必须使用真实前端、后端 API、task storage 和 artifacts。
+- 行为变更不能只靠 Node source assertion 代替 browser E2E。
+- mock/fixture/screenshot/evidence 不能包含 credentials、provider key、access token、客户文档或私密本地路径。
 
-**Framework:** No standalone mocking framework is used.
+## Fixture 和数据
 
-**Patterns:**
-```typescript
-const originalFetch = globalThis.fetch;
+- 小型 unit fixture 放在测试文件内。
+- E2E fixture writer 放在拥有该场景的 spec 内。
+- 运行截图和 fixture 输出放在 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/<scenario>/`。
 
-globalThis.fetch = (async (input, init) => {
-  return new Response(JSON.stringify([{ name: "web-research", description: "Search" }]), {
-    status: 200,
-  });
-}) as typeof fetch;
+## 测试类型
 
-try {
-  assert.deepStrictEqual(await api.fetchSkillOptions(), [
-    { name: "web-research", description: "Search" },
-  ]);
-} finally {
-  globalThis.fetch = originalFetch;
-}
-```
+### Unit
 
-**What to Mock:**
-- Mock `globalThis.fetch` in Node unit tests when exercising browser REST adapters without a live backend, as in `frontend/tests/workspace/test_task_api.test.ts`.
-- Mock DOM-like objects with minimal typed shapes for pure DOM helpers, as in `frontend/tests/workspace/test_task_conversation_scroll.test.ts`.
-- Use `page.route` only for bounded browser scenarios that focus on frontend-only interactions, such as skill slash picker behavior in `frontend/e2e-playwright/test_skill_selector.spec.mjs` and resource upload harness message interception in `frontend/e2e-playwright/test_resource_upload_harness.spec.mjs`.
+- 覆盖纯转换、数据标准化、格式化、request building、安全 guard、source boundary 和 DOM-independent helper。
+- 主要文件：`test_task_state.test.ts`, `test_workspace_view.test.ts`, `test_task_conversation_scroll.test.ts`, `test_model_ui.test.ts`, `test_file_upload.test.ts`, `test_skill_selection.test.ts`。
 
-**What NOT to Mock:**
-- Do not mock the runtime task contract path when validating backend/frontend integration; `frontend/e2e-playwright/test_runtime_contracts.spec.mjs` uses the real frontend, real backend API, task storage, and artifacts.
-- Do not replace live browser acceptance with Node-only source assertions for behavior changes. `frontend/README.md` requires browser-side E2E for bug fixes, features, and behavior changes.
-- Do not commit credentials, provider keys, access tokens, customer documents, or private local paths in mocks, fixtures, screenshots, or evidence folders.
+### Integration / Browser Runtime
 
-## Fixtures and Factories
+- 浏览器/runtime 集成在 Playwright specs。
+- `test_runtime_contracts.spec.mjs` 覆盖 live task creation、model metadata、artifact open/download、upload limit、access token 和浏览器可见合同。
+- `test_skill_selector_full_loop.spec.mjs` 覆盖真实 `/api/skills`、task 创建、message submission、selected skill payload、历史 reload。
+- 一些 specs 通过 public API 和 Postgres-backed setup seed backend state。
 
-**Test Data:**
-```typescript
-function baseState(overrides: Partial<TaskState> = {}): TaskState {
-  return {
-    id: "task-1",
-    status: "running",
-    statusLabel: "running",
-    runs: [],
-    messages: [],
-    logs: [],
-    artifacts: [],
-    uploadCount: 0,
-    needsInput: null,
-    ...overrides,
-  };
-}
-```
+### E2E
 
-**Location:**
-- Keep small unit fixtures inline in the test file: `baseState` in `frontend/tests/state/test_task_state.test.ts`, `candidate` in `frontend/tests/upload/test_file_upload.test.ts`, `scrollElement` in `frontend/tests/workspace/test_task_conversation_scroll.test.ts`.
-- Keep E2E fixture writers inside the spec that owns them: `writeFixtureFiles` in `frontend/e2e-playwright/test_upload_preview_design.spec.mjs`, `seedCompletedArtifactTask` in `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`.
-- Store run-specific screenshots and generated fixture files under `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/<scenario>/`, as documented in `frontend/e2e-playwright/README.md`.
+- 前端行为变更必须跑 Playwright E2E。
+- runtime-contract/full-loop specs 默认使用实际服务：frontend `3001`，backend `8001`。
+- 视觉或交互改动需要保存截图到 timestamped evidence 目录。
+- 影响响应式布局时应覆盖桌面和窄屏/移动状态。
 
-## Coverage
+## 常见断言模式
 
-**Requirements:** No enforced coverage threshold or coverage command is detected in `frontend/package.json`.
+- API adapter：mock `fetch` 后断言 normalized browser-safe 结果。
+- artifact security：`assert.throws` 校验外部 URL 在发送 token 前被拒绝。
+- Playwright：设置 `baseURL`，进入页面，断言用户可见 UI，保存 screenshot。
 
-**View Coverage:**
-```bash
-# Not configured in frontend/package.json.
-```
+## 标准质量门
 
-**Notes:**
-- `frontend/.gitignore` ignores `coverage/`, but no coverage tool is configured.
-- Use focused unit tests plus Playwright acceptance evidence as the active verification practice.
+- TypeScript/React/build 行为变更：`npm run typecheck`, `npm test`, `npm run lint`, `npm run build`。
+- 文档或代码变更：`git diff --check`。
+- 浏览器行为变更：运行目标 Playwright spec 和邻近 regression spec。
+- runtime contract：设置 `MYAGENT_E2E_BASE_URL`, `MYAGENT_E2E_API_URL`, `MYAGENT_E2E_TASK_ROOT`, `MYAGENT_E2E_EVIDENCE_DIR`, access token/Postgres env 后运行。
 
-## Test Types
+## 场景选择
 
-**Unit Tests:**
-- Scope pure transformations, data normalization, formatting, request building, security guards, source boundaries, and DOM-independent helpers.
-- Main files: `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_workspace_view.test.ts`, `frontend/tests/workspace/test_task_conversation_scroll.test.ts`, `frontend/tests/model/test_model_ui.test.ts`, `frontend/tests/upload/test_file_upload.test.ts`, `frontend/tests/state/test_skill_selection.test.ts`.
-- Unit tests run in Node, so browser APIs must be mocked or avoided. Keep browser-heavy behavior in Playwright.
-
-**Integration Tests:**
-- Browser/runtime integration lives in Playwright specs under `frontend/e2e-playwright/`.
-- `frontend/e2e-playwright/test_runtime_contracts.spec.mjs` verifies live task creation, model metadata, artifact open/download, upload limits, access token propagation, and browser-visible contract behavior.
-- `frontend/e2e-playwright/test_skill_selector_full_loop.spec.mjs` verifies real `/api/skills`, task creation, message submission, selected skill payloads, persisted user-visible skill references, and history reload.
-- Specs that seed backend state use public API calls plus Postgres-backed setup helpers through Docker, as in `frontend/e2e-playwright/test_progress_log_disclosure.spec.mjs`, `frontend/e2e-playwright/test_multi_session_thinking_audit.spec.mjs`, and `frontend/e2e-playwright/test_history_scroll_clear.spec.mjs`.
-
-**E2E Tests:**
-- Playwright E2E is required for frontend behavior changes.
-- Use actual services on frontend `3001` and backend `8001` for runtime-contract and full-loop specs unless the spec is explicitly frontend-only.
-- Save screenshots under `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/<scenario>/` and keep these evidence folders uncommitted.
-- For visual or interaction work, capture desktop and narrow/mobile states when the scenario affects responsive layout.
-
-## Common Patterns
-
-**Async Testing:**
-```typescript
-test("fetchSkillOptions keeps only browser-safe string fields", async () => {
-  const api = await import("../../lib/task-api");
-  const originalFetch = globalThis.fetch;
-
-  globalThis.fetch = (async () =>
-    new Response(JSON.stringify([{ name: "web-research", description: "Search" }]), {
-      status: 200,
-    })) as typeof fetch;
-
-  try {
-    assert.deepStrictEqual(await api.fetchSkillOptions(), [
-      { name: "web-research", description: "Search" },
-    ]);
-  } finally {
-    globalThis.fetch = originalFetch;
-  }
-});
-```
-
-**Error Testing:**
-```typescript
-test("buildArtifactRequest rejects external artifact URLs before sending tokens", () => {
-  assert.throws(
-    () =>
-      buildArtifactRequest(
-        { id: "report", name: "report.html", url: "https://evil.example/report.html" },
-        "task-1",
-        "http://localhost:8001",
-        "secret-token",
-      ),
-    /产物 URL 不受信任/,
-  );
-});
-```
-
-**Playwright E2E Pattern:**
-```javascript
-import fs from "node:fs";
-import path from "node:path";
-import { expect, test } from "@playwright/test";
-
-const BASE_URL = process.env.MYAGENT_E2E_BASE_URL || "http://127.0.0.1:3001";
-const EVIDENCE_DIR = process.env.MYAGENT_E2E_EVIDENCE_DIR;
-
-test.use({ baseURL: BASE_URL });
-
-test("scenario name", async ({ page }) => {
-  const evidenceDir = requirePath(EVIDENCE_DIR, "MYAGENT_E2E_EVIDENCE_DIR");
-  fs.mkdirSync(evidenceDir, { recursive: true });
-
-  await page.goto("/");
-  await expect(page.getByPlaceholder("尽管问...")).toBeVisible();
-  await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "01-ready.png") });
-});
-```
-
-## Verification Practices
-
-**Standard Quality Gate:**
-- Run `npm run typecheck`, `npm test`, `npm run lint`, and `npm run build` from `frontend/` for code changes that affect TypeScript, React, or build behavior.
-- Run `git diff --check` for whitespace and conflict marker checks when changing docs or code.
-
-**Browser Acceptance:**
-- For behavior changes, run a targeted Playwright spec plus any adjacent regression spec named in `frontend/e2e-playwright/README.md`.
-- For runtime contracts, run `npm run e2e:runtime-contracts` with `MYAGENT_E2E_BASE_URL`, `MYAGENT_E2E_API_URL`, `MYAGENT_E2E_TASK_ROOT`, `MYAGENT_E2E_EVIDENCE_DIR`, and local access-token/Postgres env as needed.
-- For UI-only controls that can be isolated safely, use bounded `page.route` mocks and still capture screenshots, as in `frontend/e2e-playwright/test_skill_selector.spec.mjs`.
-- For full task lifecycle, do not mock `/api/tasks`, `/api/skills`, or message submission; use `frontend/e2e-playwright/test_skill_selector_full_loop.spec.mjs` or `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`.
-
-**Scenario Selection:**
-- Upload formats or selected file preview: `frontend/tests/upload/test_file_upload.test.ts`, `frontend/tests/upload/test_upload_preview_design.test.ts`, `frontend/e2e-playwright/test_upload_preview_design.spec.mjs`, `frontend/e2e-playwright/test_resource_upload_harness.spec.mjs`.
-- Skill slash picker or selected skill payloads: `frontend/tests/state/test_skill_selection.test.ts`, `frontend/tests/workspace/test_task_api.test.ts`, `frontend/e2e-playwright/test_skill_selector.spec.mjs`, `frontend/e2e-playwright/test_skill_selector_full_loop.spec.mjs`.
-- Progress timeline, logs, diagnostics, or copy behavior: `frontend/tests/workspace/test_workspace_view.test.ts`, `frontend/tests/workspace/test_task_conversation_scroll.test.ts`, `frontend/e2e-playwright/test_progress_log_disclosure.spec.mjs`, `frontend/e2e-playwright/test_multi_session_thinking_audit.spec.mjs`.
-- History sidebar rename/delete/clear or scroll behavior: `frontend/tests/workspace/test_frontend_architecture.test.ts`, `frontend/e2e-playwright/test_history_menu_affordance.spec.mjs`, `frontend/e2e-playwright/test_history_scroll_clear.spec.mjs`.
-- Model picker or unavailable model behavior: `frontend/tests/model/test_model_ui.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`, `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`.
-- Artifact URL safety, preview, download, or access tokens: `frontend/tests/state/test_task_state.test.ts`, `frontend/tests/workspace/test_task_workspace.test.ts`, `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`.
+- 上传/文件 preview：`tests/upload/` 和 upload 相关 Playwright specs。
+- skill picker/payload：skill selection unit tests、task API tests、skill selector E2E。
+- progress/log/diagnostics/copy：workspace view tests、conversation scroll tests、progress-log/multi-session E2E。
+- history rename/delete/clear/scroll：frontend architecture tests 和 history 相关 E2E。
+- model picker/unavailable model：model UI tests、task workspace tests、runtime contracts。
+- artifact URL/preview/download/token：task state tests、task workspace tests、runtime contracts。
 
 ---
 
-*Testing analysis: 2026-05-22*
+*测试分析：2026-05-24*

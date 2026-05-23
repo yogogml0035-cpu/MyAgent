@@ -1,317 +1,143 @@
-# Codebase Structure
+# 后端代码结构
 
-**Analysis Date:** 2026-05-22
+**分析日期：** 2026-05-24
 
-## Directory Layout
+## 目录布局
 
 ```text
 backend/
-|-- app/                    # FastAPI backend package
-|   |-- api/                # REST and SSE routers
-|   |-- agent/              # DeepAgents/LangGraph construction and middleware wiring
-|   |-- contracts/          # Event, resource, and artifact dataclass contracts
-|   |-- execution/          # Task-scoped resource execution tools
-|   |-- models/             # Model registry, provider factory, DeepSeek thinking adapter
-|   |-- runner/             # In-process task runner orchestration
-|   |-- security/           # Secret scanning and redaction helpers
-|   |-- session/            # Event-log projection helpers
-|   |-- skills/             # Backend code for discovering project skill files
-|   |-- streaming/          # LangGraph stream adapter, event conversion, SSE formatters
-|   |-- subagents/          # Built-in DeepAgents subagent definitions
-|   |-- tools/              # Platform tool registry and SearXNG tool
-|   |-- main.py             # FastAPI composition root and ASGI app
-|   |-- config.py           # Settings, env loading, model registry, worker guard
-|   |-- storage.py          # PostgreSQL task/event store and local file workspace manager
-|   |-- schemas.py          # Pydantic API DTOs
-|   |-- memory.py           # Long-term memory service, Qdrant, DashScope embeddings
-|   |-- agent_store.py      # LangGraph BaseStore adapter backed by storage
-|   |-- conversation_context.py # Same-session context builder
-|   |-- permissions.py      # Workspace/command permission policy
-|   |-- reasoning_trace.py  # Reasoning trace payload helpers
-|   `-- task_titles.py      # Automatic task title generation
-|-- skills/                 # User-selectable project skills exposed to agents
-|   |-- code_review/
-|   `-- web_research/
-|-- tests/                  # pytest suite, grouped by backend layer
-|   |-- unit/
-|   |-- integration/
-|   |-- e2e/
-|   |-- conftest.py
-|   `-- fakes.py
-|-- storage/                # Local runtime task workspaces; not source code
-|-- tmp/                    # Local scratch/runtime temp files
-|-- .planning/codebase/     # Backend-scoped GSD codebase maps
-|-- .env.example            # Safe environment variable example
-|-- .env                    # Local secrets/config; do not read or quote values
-|-- pyproject.toml          # Python package/dependency/tooling config
-|-- uv.lock                 # Locked uv dependency graph
-`-- README.md               # Backend install/run/test/environment docs
+|-- app/                         # FastAPI 后端包
+|   |-- api/                     # REST 与 SSE 路由
+|   |-- agent/                   # DeepAgents/LangGraph 构建和 middleware 边界
+|   |-- contracts/               # event/resource/artifact dataclass 合同
+|   |-- execution/               # task-scoped 资源执行工具
+|   |-- models/                  # 模型 registry/provider/DeepSeek thinking adapter
+|   |-- runner/                  # 进程内任务运行编排
+|   |-- security/                # secret 扫描与脱敏
+|   |-- session/                 # event log 到 task/session state 的投影
+|   |-- skills/                  # 项目技能文件发现
+|   |-- streaming/               # LangGraph stream adapter、event converter、SSE helpers
+|   |-- subagents/               # 内置 DeepAgents subagent 定义
+|   |-- tools/                   # 平台工具 registry 和 SearXNG 工具
+|   |-- main.py                  # FastAPI composition root
+|   |-- config.py                # Settings、env loading、model registry、worker guard
+|   |-- storage.py               # Postgres task/event store 和本地文件 workspace
+|   |-- schemas.py               # Pydantic API DTO
+|   |-- memory.py                # 长期记忆、Qdrant、DashScope embeddings
+|   |-- agent_store.py           # LangGraph BaseStore 的 storage adapter
+|   |-- conversation_context.py  # 同会话上下文构建
+|   |-- permissions.py           # workspace/command permission policy
+|   |-- reasoning_trace.py       # reasoning trace payload helper
+|   `-- task_titles.py           # 自动任务标题生成
+|-- skills/                      # 用户可选项目技能
+|-- tests/                       # pytest 测试套件
+|-- storage/                     # 本地运行时 task workspace；不是源码
+|-- tmp/                         # 本地临时数据
+|-- .planning/codebase/          # 后端事实文档
+|-- .env.example                 # 安全配置示例
+|-- .env                         # 本地私密配置；不要读取或引用值
+|-- pyproject.toml               # Python 依赖和工具配置
+|-- uv.lock                      # uv lockfile
+`-- README.md                    # 后端安装/运行/测试文档
 ```
 
-## Directory Purposes
+## 目录职责
 
-**`backend/app/`:**
-- Purpose: Main backend Python package.
-- Contains: FastAPI app, routers, services, persistence, model providers, tool integrations, stream adapters, and runtime helpers.
-- Key files: `backend/app/main.py`, `backend/app/config.py`, `backend/app/storage.py`, `backend/app/runner/core.py`, `backend/app/schemas.py`.
+- `backend/app/`：后端主包，包含 app、路由、服务、持久化、模型 provider、工具集成和运行时 helper。
+- `backend/app/api/`：浏览器可见 REST/SSE endpoint，按 tasks/files/artifacts/streaming/models/skills 分面组织。
+- `backend/app/agent/`：构建 DeepAgents/LangGraph agent，管理 workspace、skills、store、model、tool wiring。
+- `backend/app/runner/`：`TaskRunner`、runner protocol、background task、终态事件和 run finalization。
+- `backend/app/streaming/`：把 LangGraph v2 stream chunk 规范化为平台事件并格式化 SSE 终止消息。
+- `backend/app/execution/`：上传资源的 inspect/read/list/table 工具和执行边界。
+- `backend/app/tools/`：DeepAgents 内置工具外的平台工具注册，主要是 resource tools 与 SearXNG。
+- `backend/app/models/`：安全 app-level 模型 ID、provider factory、DeepSeek thinking adapter。
+- `backend/app/contracts/`：event/resource/artifact dataclass 合同和 payload builder。
+- `backend/app/session/`：根据 event log 投影 task/session state。
+- `backend/app/security/`：敏感信息扫描、脱敏和测试 helper。
+- `backend/app/skills/`：解析 `SKILL.md` frontmatter，生成浏览器安全技能列表。
+- `backend/app/subagents/`：研究、编码、文件分析等内置 subagent 定义。
+- `backend/skills/`：项目技能源文件，运行时只读挂载给 agent。
+- `backend/tests/`：unit/integration/e2e pytest 测试。
+- `backend/storage/`：默认本地 task 文件根；运行时数据，不当源码修改。
+- `backend/.planning/codebase/`：本文件所在的后端事实层。
 
-**`backend/app/api/`:**
-- Purpose: Define browser-facing REST and SSE routes.
-- Contains: Router modules by surface area: tasks, files, artifacts, streaming, models, skills, dependencies.
-- Key files: `backend/app/api/tasks.py`, `backend/app/api/files.py`, `backend/app/api/artifacts.py`, `backend/app/api/streaming.py`, `backend/app/api/models.py`, `backend/app/api/skills.py`.
+## 关键文件
 
-**`backend/app/agent/`:**
-- Purpose: Build DeepAgents/LangGraph compiled agents with platform defaults.
-- Contains: `factory.py` for backend/skills/store/model/tool wiring and `middleware.py` for future middleware composition.
-- Key files: `backend/app/agent/factory.py`, `backend/app/agent/middleware.py`.
+### 入口与配置
 
-**`backend/app/runner/`:**
-- Purpose: Own in-process run orchestration.
-- Contains: `TaskRunner`, runner protocols, background task management, run finalization, and terminal event payload helpers.
-- Key files: `backend/app/runner/core.py`.
+- `backend/app/main.py`：app factory、ASGI `app`、middleware、router 注册、lifespan startup。
+- `backend/app/config.py`：`Settings`、环境变量读取、模型 registry、单 worker guard。
+- `backend/app/memory_admin.py`：Qdrant reset/rebuild CLI。
+- `backend/pyproject.toml`：依赖、pytest、Ruff、mypy、uv source pin。
+- `backend/.env.example`：安全变量名来源。
 
-**`backend/app/streaming/`:**
-- Purpose: Normalize LangGraph stream chunks into platform events and format SSE terminal messages.
-- Contains: v2 stream adapter, event converter, and SSE formatter helpers.
-- Key files: `backend/app/streaming/v2_adapter.py`, `backend/app/streaming/event_converter.py`, `backend/app/streaming/sse.py`.
+### API 路由
 
-**`backend/app/execution/`:**
-- Purpose: Provide resource execution abstractions and LangChain tools for uploaded task files.
-- Contains: provision/execute dataclasses, local resource adapter, resource tool factories, document/table readers.
-- Key files: `backend/app/execution/resources.py`.
+- `backend/app/api/tasks.py`：任务 CRUD、message send、run start/cancel、事件读取。
+- `backend/app/api/files.py`：上传 endpoint。
+- `backend/app/api/artifacts.py`：artifact 下载 endpoint。
+- `backend/app/api/streaming.py`：基于持久化事件的 SSE endpoint。
+- `backend/app/api/models.py`：模型列表。
+- `backend/app/api/skills.py`：项目技能列表。
 
-**`backend/app/tools/`:**
-- Purpose: Register platform tools beyond DeepAgents built-ins.
-- Contains: aggregate tool registry, SearXNG search tool, filesystem bridge utilities.
-- Key files: `backend/app/tools/registry.py`, `backend/app/tools/searxng_search.py`, `backend/app/tools/filesystem_bridge.py`.
+### 核心逻辑
 
-**`backend/app/models/`:**
-- Purpose: Keep safe app model IDs separate from concrete provider model construction.
-- Contains: DeepSeek-only registry checks, provider factory, and thinking-output adapter.
-- Key files: `backend/app/models/registry.py`, `backend/app/models/provider.py`, `backend/app/models/deepseek_thinking.py`.
+- `backend/app/runner/core.py`：agent run 生命周期和 background run 管理。
+- `backend/app/agent/factory.py`：DeepAgent 构建与 workspace/skills backend 路由。
+- `backend/app/storage.py`：数据库表、task 状态、events、uploads、artifacts、memory rows、agent store rows。
+- `backend/app/memory.py`：记忆 recall/extract/index，Qdrant 和 DashScope-compatible embedding。
+- `backend/app/conversation_context.py`：同会话上下文和 tool-cache context。
+- `backend/app/execution/resources.py`：上传资源工具实现。
+- `backend/app/tools/searxng_search.py`：SearXNG 工具与结果缓存。
 
-**`backend/app/contracts/`:**
-- Purpose: Shared dataclass contracts for storage events, resources, artifacts, and payload serialization.
-- Contains: `SessionEvent`, `NewSessionEvent`, `SessionSnapshot`, `ResourceRef`, `ArtifactRef`, payload builders.
-- Key files: `backend/app/contracts/__init__.py`.
+### 合同与 DTO
 
-**`backend/app/session/`:**
-- Purpose: Project event logs into task/session state snapshots.
-- Contains: `TaskStateProjector`, projected state dataclasses, terminal event status mapping.
-- Key files: `backend/app/session/projector.py`.
+- `backend/app/schemas.py`：Pydantic 请求/响应模型。
+- `backend/app/contracts/__init__.py`：资源、产物、事件 dataclass 和稳定 ID helper。
+- `backend/app/session/projector.py`：event log 投影合同。
 
-**`backend/app/security/`:**
-- Purpose: Detect and redact sensitive text before it is written into context or memory.
-- Contains: secret regexes, redaction, session output scanners, assertion helper.
-- Key files: `backend/app/security/scanner.py`.
+### 测试
 
-**`backend/app/skills/`:**
-- Purpose: Backend code for discovering project skill files.
-- Contains: `SKILL.md` frontmatter parser and browser-safe project skill projection.
-- Key files: `backend/app/skills/loader.py`, `backend/app/skills/project.py`, `backend/app/skills/registry.py`.
+- `backend/tests/fakes.py`：与 storage public surface 对齐的内存 fake。
+- `backend/tests/unit/api/`：API route 行为测试。
+- `backend/tests/unit/runner/`：runner、上下文、并发、记忆测试。
+- `backend/tests/unit/storage/`：storage、agent store、artifact/upload 不变量测试。
+- `backend/tests/unit/streaming/`：stream adapter 和 event converter 测试。
+- `backend/tests/unit/tools/`：resource/search 工具测试。
+- `backend/tests/integration/`：Postgres、memory、agent build 集成测试。
+- `backend/tests/e2e/`：API/SSE E2E 测试。
 
-**`backend/app/subagents/`:**
-- Purpose: Define built-in DeepAgents subagents.
-- Contains: Researcher, Coder, and File Analyst definitions plus lookup helpers.
-- Key files: `backend/app/subagents/definitions.py`, `backend/app/subagents/registry.py`.
+## 命名约定
 
-**`backend/skills/`:**
-- Purpose: Project-scoped instruction skills available to users and mounted read-only for agents.
-- Contains: One subdirectory per skill, each with a `SKILL.md` frontmatter file.
-- Key files: `backend/skills/code_review/SKILL.md`, `backend/skills/web_research/SKILL.md`.
+- Python 模块使用 `snake_case`：`conversation_context.py`, `task_titles.py`。
+- pytest 文件使用 `test_*.py`，按 `unit/<layer>/`, `integration/`, `e2e/` 分组。
+- 项目技能目录和 frontmatter name 保持一致，技能文件必须叫 `SKILL.md`。
+- 类、Pydantic model、dataclass 使用 `PascalCase`：`Settings`, `TaskRunner`, `PostgresTaskStorage`, `EventRecord`。
+- 函数、方法、fixture 使用 `snake_case`：`create_app`, `load_settings`, `start_background`。
+- 模块常量使用 `UPPER_SNAKE_CASE`：`MODEL_REGISTRY`, `UPLOAD_FORMATS`, `RUN_ARTIFACT_NAMES`。
 
-**`backend/tests/`:**
-- Purpose: Backend pytest suite.
-- Contains: unit tests by layer, integration tests for Postgres/memory/agent build, e2e streaming test, fake storage.
-- Key files: `backend/tests/fakes.py`, `backend/tests/conftest.py`, `backend/tests/unit/api/test_tasks.py`, `backend/tests/unit/runner/test_core.py`, `backend/tests/integration/test_postgres_memory_storage.py`, `backend/tests/e2e/test_streaming_e2e.py`.
+## 新代码落位
 
-**`backend/storage/`:**
-- Purpose: Local runtime task workspace root when `MYAGENT_TASK_ROOT` is not set.
-- Contains: Session/task directories with uploads and artifacts at runtime.
-- Key files: Not source code. Treat as runtime data.
+- 新 REST endpoint：放在 `backend/app/api/` 或最接近的现有 router；必要时更新 `backend/app/schemas.py` 和 `backend/app/main.py`。
+- 新 task lifecycle 行为：HTTP 校验在 `tasks.py`，执行行为在 `runner/core.py`，持久化在 `storage.py`。
+- 新持久化数据：先更新 `storage.py` public method 和表结构，再同步 `schemas.py`、`tests/fakes.py` 和测试。
+- 新 agent tool：放在 `backend/app/tools/<name>.py` 或 `backend/app/execution/<domain>.py`，并在 `get_platform_tools(...)` 注册。
+- 新上传资源能力：扩展 `LocalResourceExecutionAdapter` 与 `create_resource_tools(...)`。
+- 新模型/provider：更新 `backend/app/config.py` 的 `MODEL_REGISTRY`、`backend/app/models/registry.py` 和 `backend/app/models/provider.py`。
+- 新项目技能：新增 `backend/skills/<skill>/SKILL.md`，包含 `name` 和 `description` frontmatter。
+- 新长期记忆功能：以 `backend/app/memory.py` 为主，先补 Postgres canonical storage，再考虑 Qdrant 行为。
+- 新 stream event：先在 `v2_adapter.py` 规范化，再在 `event_converter.py` 映射并补 streaming tests。
+- 新安全/权限规则：secret scanner 在 `security/scanner.py`，workspace/command 权限在 `permissions.py`，HTTP auth/body limit 在 `main.py`。
 
-**`backend/.planning/codebase/`:**
-- Purpose: Backend-scoped codebase maps for GSD planning/execution agents.
-- Contains: `ARCHITECTURE.md` and `STRUCTURE.md` for this focus.
-- Key files: `backend/.planning/codebase/ARCHITECTURE.md`, `backend/.planning/codebase/STRUCTURE.md`.
+## 特殊目录
 
-## Key File Locations
-
-**Entry Points:**
-- `backend/app/main.py`: FastAPI app factory, ASGI `app`, middleware, router registration, lifespan startup.
-- `backend/app/memory_admin.py`: CLI for Qdrant reset/rebuild operations.
-
-**Configuration:**
-- `backend/pyproject.toml`: Project metadata, dependencies, pytest config, Ruff config, mypy config, uv source pin.
-- `backend/uv.lock`: Lockfile for uv-managed dependencies.
-- `backend/.env.example`: Safe list of required/optional environment variables.
-- `backend/app/config.py`: Runtime `Settings`, env loading, model registry, worker-count guard.
-
-**API Routes:**
-- `backend/app/api/tasks.py`: Task CRUD, message sends, run start/cancel, event history.
-- `backend/app/api/files.py`: Upload endpoint.
-- `backend/app/api/artifacts.py`: Artifact download endpoints.
-- `backend/app/api/streaming.py`: SSE endpoint over persisted event records.
-- `backend/app/api/models.py`: Model list endpoint.
-- `backend/app/api/skills.py`: Project skill list endpoint.
-
-**Core Logic:**
-- `backend/app/runner/core.py`: Agent execution lifecycle and background run management.
-- `backend/app/agent/factory.py`: DeepAgent construction and workspace/skills backend routing.
-- `backend/app/storage.py`: Database schema creation, task state transitions, events, uploads, artifacts, memory rows, agent store rows.
-- `backend/app/memory.py`: Memory recall, extraction, Qdrant index operations, DashScope embedding client.
-- `backend/app/conversation_context.py`: Same-session context and tool-cache context builder.
-- `backend/app/execution/resources.py`: Uploaded resource tool implementation.
-- `backend/app/tools/registry.py`: Per-run platform tool list.
-- `backend/app/tools/searxng_search.py`: SearXNG tool and result cache integration.
-
-**Contracts and DTOs:**
-- `backend/app/schemas.py`: Pydantic request/response models.
-- `backend/app/contracts/__init__.py`: Dataclass contracts and stable resource/artifact IDs.
-- `backend/app/session/projector.py`: Event-log projection contracts.
-
-**Testing:**
-- `backend/tests/fakes.py`: In-memory storage fake matching the storage public surface.
-- `backend/tests/unit/api/`: API route behavior tests.
-- `backend/tests/unit/runner/`: runner, context, concurrency, and memory orchestration tests.
-- `backend/tests/unit/storage/`: storage and agent store tests.
-- `backend/tests/unit/streaming/`: stream adapter and converter tests.
-- `backend/tests/unit/tools/`: tool registry/resource/search tests.
-- `backend/tests/integration/`: Postgres memory storage and agent build integration tests.
-- `backend/tests/e2e/`: Streaming end-to-end test.
-
-## Naming Conventions
-
-**Files:**
-- Use snake_case Python module names: `backend/app/conversation_context.py`, `backend/app/task_titles.py`, `backend/app/tools/searxng_search.py`.
-- Use package `__init__.py` files for import boundaries: `backend/app/runner/__init__.py`, `backend/app/streaming/__init__.py`, `backend/app/session/__init__.py`.
-- Use `test_*.py` for pytest modules, grouped under `backend/tests/unit/<layer>/`, `backend/tests/integration/`, or `backend/tests/e2e/`.
-- Use `SKILL.md` exactly for project skill definitions under `backend/skills/<skill-name>/SKILL.md`.
-
-**Directories:**
-- Use domain/layer nouns under `backend/app/`: `api`, `runner`, `storage` as module file, `models`, `streaming`, `execution`, `skills`, `security`, `session`, `tools`.
-- Use kebab-case for project skill directories: `backend/skills/code_review/` and `backend/skills/web_research/` are existing underscore names; keep new skill names aligned with their frontmatter `name`.
-- Keep runtime data under `backend/storage/` or configured `MYAGENT_TASK_ROOT`, not inside `backend/app/`.
-
-**Classes and Types:**
-- Use PascalCase for dataclasses, Pydantic models, and service classes: `Settings`, `TaskRunner`, `PostgresTaskStorage`, `AgentMemoryService`, `EventRecord`.
-- Use `Protocol` classes for injectable service/storage contracts: `RunnerStorage`, `RunnerMemoryService`, `ConversationStorage`, `LongTermMemoryStorage`.
-- Use type aliases for constrained string unions in schema/contract modules: `TaskStatus`, `TaskMode`, `InputScope`, `EventLevel`.
-
-**Functions and Variables:**
-- Use snake_case for functions and methods: `create_app`, `load_settings`, `start_background`, `read_events`, `create_resource_tools`.
-- Use private helper prefixes for route-local or module-local helpers: `_storage`, `_runner`, `_validate_runnable_model`, `_append_event_with_cursor`.
-- Use uppercase module constants for registry/static configuration: `MODEL_REGISTRY`, `UPLOAD_FORMATS`, `RUN_ARTIFACT_NAMES`, `RESOURCE_TOOL_SYSTEM_PROMPT`.
-
-## Where to Add New Code
-
-**New REST Endpoint:**
-- Primary code: add a router module under `backend/app/api/` or extend the closest existing router.
-- Registration: include the router in `backend/app/main.py` near the existing `app.include_router(...)` calls.
-- Schemas: add request/response DTOs to `backend/app/schemas.py` when the endpoint is browser-facing.
-- Tests: add route tests under `backend/tests/unit/api/`.
-
-**New Task Lifecycle Behavior:**
-- Primary code: use `backend/app/api/tasks.py` for HTTP lifecycle validation and `backend/app/runner/core.py` for execution behavior.
-- Persistence: add state transitions/events through `backend/app/storage.py` public methods.
-- Tests: add runner tests under `backend/tests/unit/runner/` and API tests under `backend/tests/unit/api/`.
-
-**New Persistent Task Data:**
-- Primary code: update table creation and read/write methods in `backend/app/storage.py`.
-- DTOs: update `backend/app/schemas.py` when data appears in API responses.
-- Test fake: mirror the public storage behavior in `backend/tests/fakes.py`.
-- Tests: add focused coverage under `backend/tests/unit/storage/`; use `backend/tests/integration/` when PostgreSQL semantics matter.
-
-**New Agent Tool:**
-- Primary code: implement the tool in `backend/app/tools/<name>.py` or `backend/app/execution/<domain>.py`.
-- Registration: add it to `get_platform_tools(...)` in `backend/app/tools/registry.py`.
-- Context/prompt: add a system prompt helper in the tool module when the agent needs usage instructions.
-- Tests: add unit tests under `backend/tests/unit/tools/`.
-
-**New Uploaded Resource Capability:**
-- Primary code: extend `LocalResourceExecutionAdapter.execute(...)` and helpers in `backend/app/execution/resources.py`.
-- Registration: expose a LangChain tool from `create_resource_tools(...)`.
-- Storage hooks: use upload/resource helpers from `backend/app/storage.py` and resource contracts in `backend/app/contracts/__init__.py`.
-- Tests: add cases under `backend/tests/unit/tools/test_resource_execution.py`.
-
-**New Model Provider or Model ID:**
-- Registry: add safe app-level metadata in `MODEL_REGISTRY` in `backend/app/config.py`.
-- Availability: update checks in `backend/app/models/registry.py` if provider requirements differ.
-- Construction: update `backend/app/models/provider.py` for concrete LangChain model creation.
-- API shape: keep `backend/app/schemas.py` `ModelOption` browser-safe; do not expose provider secrets.
-- Tests: add/extend `backend/tests/unit/models/`.
-
-**New Project Skill:**
-- Implementation: add `backend/skills/<skill-directory>/SKILL.md`.
-- Frontmatter: include `name` and `description`; the loader only parses simple key/value YAML frontmatter.
-- API exposure: no route change is needed when the skill lives under `backend/skills/`.
-- Tests: update `backend/tests/unit/skills/test_builtin_skill_content.py` when built-in project skill content expectations change.
-
-**New Long-Term Memory Feature:**
-- Primary code: `backend/app/memory.py`.
-- Canonical storage: add Postgres storage behavior to `backend/app/storage.py` before changing index-only behavior.
-- Admin path: extend `backend/app/memory_admin.py` for operator commands.
-- Tests: use `backend/tests/unit/runner/test_memory.py` for service behavior and `backend/tests/integration/test_postgres_memory_storage.py` for storage/index integration.
-
-**New Streaming Event Type:**
-- Adapter: emit normalized event dictionaries from `backend/app/streaming/v2_adapter.py`.
-- Conversion: map the event in `backend/app/streaming/event_converter.py`.
-- SSE: keep `backend/app/api/streaming.py` streaming full `EventRecord` JSON records.
-- Tests: add cases under `backend/tests/unit/streaming/`.
-
-**New Security or Permission Rule:**
-- Secret scanning/redaction: update `backend/app/security/scanner.py`.
-- Workspace/command permissions: update `backend/app/permissions.py`.
-- Request access/auth/body limits: update middleware in `backend/app/main.py`.
-- Tests: add cases under `backend/tests/unit/security/` and route tests under `backend/tests/unit/api/` when HTTP behavior changes.
-
-**New Configuration:**
-- Settings field: add to `Settings` and `load_settings()` in `backend/app/config.py`.
-- Example env: update `backend/.env.example`; never read or quote `backend/.env`.
-- Documentation: update `backend/README.md` if operators need to set it.
-- Tests: add config-dependent unit tests near the affected module.
-
-**New CLI/Operator Utility:**
-- Implementation: add a module under `backend/app/` with `main(argv: list[str] | None = None) -> int`, following `backend/app/memory_admin.py`.
-- Tests: add unit tests under `backend/tests/unit/` matching the target domain.
-
-## Special Directories
-
-**`backend/.venv/`:**
-- Purpose: Local virtual environment.
-- Generated: Yes
-- Committed: No
-
-**`backend/.mypy_cache/`, `backend/.pytest_cache/`, `backend/.ruff_cache/`:**
-- Purpose: Tool caches for mypy, pytest, and Ruff.
-- Generated: Yes
-- Committed: No
-
-**`backend/storage/`:**
-- Purpose: Local runtime task workspaces when `MYAGENT_TASK_ROOT` uses its default.
-- Generated: Yes
-- Committed: No for runtime session contents.
-
-**`backend/tmp/`:**
-- Purpose: Local temporary scratch data.
-- Generated: Yes
-- Committed: No for runtime contents.
-
-**`backend/.planning/codebase/`:**
-- Purpose: Backend-scoped architecture/structure maps consumed by GSD planning and execution flows.
-- Generated: Yes
-- Committed: Project-dependent; these are the requested mapping artifacts.
-
-**`backend/skills/`:**
-- Purpose: Project skill source files mounted read-only for agents and listed through `/api/skills`.
-- Generated: No
-- Committed: Yes
-
-**`backend/tests/`:**
-- Purpose: Source-controlled pytest suite.
-- Generated: No
-- Committed: Yes
+- `backend/.venv/`, `.mypy_cache/`, `.pytest_cache/`, `.ruff_cache/`：本地生成，不能提交。
+- `backend/storage/`：默认运行时 task workspace，session 内容不当源码处理。
+- `backend/tmp/`：本地临时数据。
+- `backend/.planning/codebase/`：生成的后端事实文档，按任务需要提交。
+- `backend/skills/`：项目技能源码，需提交。
+- `backend/tests/`：源码级测试，需提交。
 
 ---
 
-*Structure analysis: 2026-05-22*
+*结构分析：2026-05-24*

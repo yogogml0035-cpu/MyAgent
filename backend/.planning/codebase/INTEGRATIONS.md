@@ -1,155 +1,104 @@
-# External Integrations
+# 后端集成
 
-**Analysis Date:** 2026-05-22
+**分析日期：** 2026-05-24
 
-## APIs & External Services
+## 外部 API 与服务
 
-**LLM Provider:**
-- DeepSeek - chat model provider for task runs, title generation, and long-term memory extraction.
-  - SDK/Client: `langchain-deepseek` via `ChatDeepSeek` in `backend/app/models/provider.py`; thinking mode subclasses it in `backend/app/models/deepseek_thinking.py`.
-  - Auth: `DEEPSEEK_API_KEY`.
-  - Base URL: `DEEPSEEK_BASE_URL`, defaulting to `https://api.deepseek.com` in `backend/app/config.py`.
-  - Safe model IDs exposed to browsers: `deepseek-v4-flash` and `deepseek-v4-flash-thinking` from `MODEL_REGISTRY` in `backend/app/config.py`.
-  - API surface: `/api/models` in `backend/app/api/models.py` returns browser-safe model metadata and availability without exposing provider secrets.
+### DeepSeek 模型
 
-**Embedding Provider:**
-- DashScope-compatible embeddings - embeds text for long-term memory recall and indexing.
-  - SDK/Client: direct `httpx.post` to `{MYAGENT_EMBEDDING_BASE_URL}/embeddings` in `backend/app/memory.py`.
-  - Auth: `DASHSCOPE_API_KEY` sent as a bearer token by `DashScopeEmbeddingClient`.
-  - Base URL: `MYAGENT_EMBEDDING_BASE_URL`, defaulting to `https://dashscope.aliyuncs.com/compatible-mode/v1`.
-  - Model: `MYAGENT_EMBEDDING_MODEL`, defaulting to `text-embedding-v3`.
-  - Vector dimensions: `MYAGENT_EMBEDDING_DIMENSIONS`, defaulting to 1024.
+- 用途：任务运行、标题生成、长期记忆提取。
+- SDK：`langchain-deepseek` 的 `ChatDeepSeek`，thinking 模式由 `backend/app/models/deepseek_thinking.py` 包装。
+- 配置：`DEEPSEEK_API_KEY`, `DEEPSEEK_BASE_URL`。
+- 浏览器安全模型 ID：`deepseek-v4-flash`, `deepseek-v4-flash-thinking`。
+- API 表面：`/api/models` 返回模型元数据和 availability，不暴露 provider secret。
 
-**Search:**
-- SearXNG - local web search engine exposed as the `searxng_search` LangChain tool.
-  - SDK/Client: direct `httpx.get` to the `/search` endpoint in `backend/app/tools/searxng_search.py`.
-  - Auth: none detected.
-  - URL: `MYAGENT_SEARXNG_URL`, defaulting to `http://127.0.0.1:8181/`.
-  - Tool registration: `backend/app/tools/registry.py` adds the tool when `Settings.searxng_url` is configured.
-  - Cache: successful results can be cached in PostgreSQL tool cache rows through `storage.cache_tool_result` and `settings.fresh_tool_cache_seconds`.
+### DashScope-compatible embeddings
 
-**Agent Runtime:**
-- DeepAgents and LangGraph - local agent graph creation, virtual filesystem backends, state backend, store backend, project skills, and subagents.
-  - SDK/Client: `deepagents.create_deep_agent`, DeepAgents backend classes, and LangGraph store interfaces in `backend/app/agent/factory.py` and `backend/app/agent_store.py`.
-  - Auth: not applicable.
-  - Mounted routes: `/scratch/` state backend, `/memories/` store backend when a store is supplied, `/skills/` or `/skills/source-{n}/` read-only skill routes.
+- 用途：长期记忆 recall/index。
+- 调用方式：`backend/app/memory.py` 用 `httpx.post` 调 `{MYAGENT_EMBEDDING_BASE_URL}/embeddings`。
+- 配置：`DASHSCOPE_API_KEY`, `MYAGENT_EMBEDDING_BASE_URL`, `MYAGENT_EMBEDDING_MODEL`, `MYAGENT_EMBEDDING_DIMENSIONS`。
 
-## Data Storage
+### SearXNG
 
-**Databases:**
-- PostgreSQL - primary durable task, run, message, event, store, cache, and memory metadata storage.
-  - Connection: `MYAGENT_DATABASE_URL` with `DATABASE_URL` fallback in `backend/app/config.py`.
-  - Client: `psycopg[binary]` in `backend/app/storage.py`.
-  - Tables created by `PostgresTaskStorage.initialize()` in `backend/app/storage.py`: `tasks`, `runs`, `messages`, `events`, `agent_store_items`, `task_context_summaries`, `tool_result_cache`, and `long_term_memories`.
-  - Indexes created in `backend/app/storage.py`: `idx_events_task_seq`, `idx_events_task_id`, `idx_runs_task`, `idx_messages_task`, `idx_agent_store_namespace`, `idx_tool_result_cache_task_tool`, and `idx_long_term_memories_user`.
-  - Tests: PostgreSQL integration coverage in `backend/tests/integration/test_postgres_memory_storage.py` uses `MYAGENT_TEST_DATABASE_URL` or `MYAGENT_DATABASE_URL` when configured.
+- 用途：`searxng_search` LangChain 工具。
+- 调用方式：`backend/app/tools/searxng_search.py` 用 `httpx.get` 调 `/search`。
+- 默认 URL：`http://127.0.0.1:8181/`。
+- 注册条件：`Settings.searxng_url` 存在时由 `backend/app/tools/registry.py` 注册。
+- 缓存：成功结果可以写入 Postgres tool cache，TTL 由 `MYAGENT_FRESH_TOOL_CACHE_SECONDS` 控制。
 
-- Qdrant - vector index for long-term memory recall.
-  - Connection: `MYAGENT_QDRANT_URL`.
-  - Client: direct `httpx.get`, `httpx.put`, `httpx.post`, and `httpx.delete` calls in `backend/app/memory.py`.
-  - Collection: `MYAGENT_QDRANT_COLLECTION`, defaulting to `myagent_memories`.
-  - Vector schema: cosine distance with size from `MYAGENT_EMBEDDING_DIMENSIONS`.
-  - Admin CLI: `backend/app/memory_admin.py` supports `reset-qdrant` and `rebuild-qdrant`.
+### DeepAgents / LangGraph
 
-**File Storage:**
-- Local filesystem task storage - uploaded files and generated artifacts are stored under `Settings.task_root`.
-  - Root: `MYAGENT_TASK_ROOT`, defaulting to `backend/storage/sessions` in `backend/app/config.py`.
-  - Upload directory: each task uses an `uploads` child directory from `TASK_FILE_WORKSPACE_DIRS` in `backend/app/storage.py`.
-  - Artifact directory: run artifacts are stored under task-local `artifacts/runs/{run_id}` paths in `backend/app/storage.py`.
-  - API: uploads are handled by `backend/app/api/files.py`; downloads are served by `backend/app/api/artifacts.py`.
-  - Supported upload formats: Markdown, JSON, TXT, DOCX, XLSX, and XLSM as enforced in `backend/app/storage.py`.
-  - Resource tools: uploaded resources are listed, inspected, and read by `backend/app/execution/resources.py`.
+- 用途：本地 agent graph、虚拟 filesystem backend、state backend、store backend、project skills 和 subagents。
+- 入口：`backend/app/agent/factory.py`, `backend/app/agent_store.py`。
+- 虚拟挂载：`/scratch/`、`/memories/`、`/skills/` 或 `/skills/source-{n}/`。
 
-**Caching:**
-- PostgreSQL tool-result cache - `backend/app/storage.py` stores SearXNG and future tool results in `tool_result_cache`.
-  - TTL: `MYAGENT_FRESH_TOOL_CACHE_SECONDS`, defaulting to 600 seconds.
-  - Caller: `backend/app/tools/searxng_search.py` reads fresh cache entries unless the query asks for a refresh.
-- In-process settings cache - `backend/app/api/deps.py` wraps `load_settings()` with `functools.lru_cache`.
+## 数据存储
 
-## Authentication & Identity
+### PostgreSQL
 
-**Auth Provider:**
-- Custom token or local-client gate.
-  - Implementation: `backend/app/main.py` middleware protects `/api/` routes.
-  - Default behavior: when `MYAGENT_ACCESS_TOKEN` is unset, task APIs allow loopback clients and reject non-local clients.
-  - Token behavior: when `MYAGENT_ACCESS_TOKEN` or `AGENT_CHAT_ACCESS_TOKEN` is set, callers must provide the value through `Authorization: Bearer <token>`, `X-MyAgent-Token`, `X-Agent-Chat-Token`, or the `token` query parameter.
-  - Comparison: `hmac.compare_digest` in `backend/app/main.py`.
-  - Identity for memory: `MYAGENT_DEFAULT_USER_ID`, defaulting to `local-user`, scopes long-term memory recall and indexing in `backend/app/memory.py`.
+- 权威范围：tasks、runs、messages、events、agent_store_items、task_context_summaries、tool_result_cache、long_term_memories。
+- 配置：`MYAGENT_DATABASE_URL`，fallback 为 `DATABASE_URL`。
+- 客户端：`psycopg[binary]`。
+- 表创建：`PostgresTaskStorage.initialize()`。
+- 常见索引：events task seq、runs task、messages task、agent store namespace、tool cache task/tool、long-term memories user。
+- 集成测试：`backend/tests/integration/test_postgres_memory_storage.py`，由 `MYAGENT_TEST_DATABASE_URL` 或 `MYAGENT_DATABASE_URL` 控制。
 
-**CORS:**
-- FastAPI CORSMiddleware in `backend/app/main.py`.
-  - Origins: `MYAGENT_CORS_ORIGINS` with `AGENT_CHAT_CORS_ORIGINS` fallback; defaults are `http://localhost:3001` and `http://127.0.0.1:3001`.
-  - Allowed methods: `GET`, `POST`, `PUT`, `PATCH`, `DELETE`, and `OPTIONS`.
-  - Allowed headers: `Content-Type`, `Authorization`, `X-MyAgent-Token`, and `X-Agent-Chat-Token`.
+### Qdrant
 
-## Monitoring & Observability
+- 用途：长期记忆向量索引。
+- 配置：`MYAGENT_QDRANT_URL`, `MYAGENT_QDRANT_COLLECTION`, embedding dimensions。
+- 调用方式：`backend/app/memory.py` 直接 HTTP 调 collection、upsert、search、reset。
+- 管理入口：`backend/app/memory_admin.py reset-qdrant|rebuild-qdrant`。
+- Postgres 是 canonical store，Qdrant 可重建。
 
-**Error Tracking:**
-- None detected. No Sentry, OpenTelemetry collector, hosted error tracking SDK, or external monitoring service is configured in `backend/pyproject.toml` or `backend/app/`.
+### 本地文件系统
 
-**Logs:**
-- Python `logging` is used in `backend/app/main.py`, `backend/app/runner/core.py`, `backend/app/memory.py`, `backend/app/agent/factory.py`, `backend/app/skills/loader.py`, and `backend/app/task_titles.py`.
-- Task-level observability is stored as structured PostgreSQL events in `events` through `backend/app/storage.py`.
-- Streaming observability is delivered to clients as Server-Sent Events from `backend/app/api/streaming.py`.
-- Secret hygiene uses scanner and redaction helpers in `backend/app/security/scanner.py` for memory and session outputs.
+- 默认根：`MYAGENT_TASK_ROOT` 或 `backend/storage/sessions`。
+- 上传：task 下的 `uploads/`。
+- 产物：task 下的 `artifacts/runs/{run_id}/` 和 legacy latest mirror。
+- 支持上传格式：Markdown、JSON、TXT、DOCX、XLSX、XLSM。
+- 资源工具：`backend/app/execution/resources.py` 提供 list/inspect/read。
 
-## CI/CD & Deployment
+### 缓存
 
-**Hosting:**
-- Local same-machine deployment is documented in `backend/README.md`.
-- Run command: `uv run uvicorn app.main:app --host 127.0.0.1 --port 8001`.
-- No Dockerfile, container orchestration file, Procfile, cloud hosting configuration, or process manager configuration detected in `backend/`.
+- Postgres tool-result cache：主要服务 SearXNG 和未来工具缓存。
+- in-process settings cache：`backend/app/api/deps.py` 用 `functools.lru_cache` 包装 `load_settings()`。
 
-**CI Pipeline:**
-- None detected in the backend project. No backend-local GitHub Actions, GitLab CI, Azure Pipelines, or equivalent CI configuration is present under `backend/`.
-- Validation commands are local: `uv lock --check`, `uv sync --no-dev`, and `uv run pytest` from `backend/README.md`.
+## 认证与身份
 
-## Environment Configuration
+- 后端 `/api/` 使用自定义 token 或 loopback gate。
+- 未设置 `MYAGENT_ACCESS_TOKEN` 时，只允许 loopback 或 testclient host。
+- 设置 token 后，支持 `Authorization: Bearer ...`、`X-MyAgent-Token`、`X-Agent-Chat-Token` 和 query `token`。
+- 比较使用 `hmac.compare_digest`。
+- 长期记忆用户 scope 来自 `MYAGENT_DEFAULT_USER_ID`，默认 `local-user`。
+- CORS 由 `MYAGENT_CORS_ORIGINS` 或 `AGENT_CHAT_CORS_ORIGINS` 控制，默认允许本地前端 `3001`。
 
-**Required env vars:**
-- `DEEPSEEK_API_KEY` - required before registered models are runnable in `backend/app/models/provider.py`.
-- `DEEPSEEK_BASE_URL` - optional override for the DeepSeek-compatible endpoint; defaults to `https://api.deepseek.com`.
-- `MYAGENT_DATABASE_URL` - required for normal app startup when no test storage is injected in `backend/app/main.py`.
-- `MYAGENT_QDRANT_URL` - required by `AgentMemoryService` in `backend/app/memory.py`.
-- `DASHSCOPE_API_KEY` - required by `AgentMemoryService` and `DashScopeEmbeddingClient` in `backend/app/memory.py`.
-- `MYAGENT_EMBEDDING_BASE_URL` - optional embedding endpoint override.
-- `MYAGENT_EMBEDDING_MODEL` - optional embedding model override.
-- `MYAGENT_EMBEDDING_DIMENSIONS` - optional embedding dimension override; must match Qdrant collection vector size.
-- `MYAGENT_QDRANT_COLLECTION` - optional Qdrant collection name.
-- `MYAGENT_DEFAULT_USER_ID` - optional memory identity scope.
-- `MYAGENT_SEARXNG_URL` - optional local SearXNG endpoint.
-- `MYAGENT_CORS_ORIGINS` - required when browser origin differs from the defaults.
-- `MYAGENT_ACCESS_TOKEN` - required for non-loopback access to `/api/` routes.
-- `MYAGENT_TASK_ROOT` - optional filesystem storage root override.
-- `MYAGENT_SKILLS_DIRS` - optional comma-separated skill source override for agent-mounted skill files.
-- `MYAGENT_MAX_UPLOAD_FILES`, `MYAGENT_MAX_UPLOAD_FILE_BYTES`, `MYAGENT_MAX_UPLOAD_REQUEST_BYTES`, and `MYAGENT_MAX_JSON_REQUEST_BYTES` - optional request safety limits.
-- `MYAGENT_AGENT_TIMEOUT_SECONDS`, `MYAGENT_MAX_CONCURRENT_SUBAGENTS`, `MYAGENT_RECENT_MESSAGE_LIMIT`, `MYAGENT_FRESH_TOOL_CACHE_SECONDS`, and `MYAGENT_MEMORY_MIN_SCORE` - optional runtime behavior limits.
+## 监控与可观测性
 
-**Secrets location:**
-- `backend/.env` file present - contains local environment configuration and must not be read or quoted.
-- `backend/.env.example` is the safe source for variable names and non-secret placeholders.
-- Provider secrets stay backend-only; `backend/README.md` states safe model IDs are exposed to the frontend while provider secrets remain in backend `.env`.
+- 未检测到 Sentry、OpenTelemetry 或托管错误追踪 SDK。
+- Python 标准 `logging` 用于 main、runner、memory、agent factory、skills loader、task title 等模块。
+- task-level observability 以结构化 Postgres events 保存，并通过 SSE 投影给前端。
+- secret hygiene 由 `backend/app/security/scanner.py` 支撑。
 
-## Webhooks & Callbacks
+## CI/CD 与部署
 
-**Incoming:**
-- None detected. No webhook-specific endpoints are implemented in `backend/app/api/`.
-- Public API endpoints are task lifecycle, uploads, artifacts, streaming, model registry, skills, and health:
-  - `/health` in `backend/app/main.py`
-  - `/api/tasks` and task subroutes in `backend/app/api/tasks.py`
-  - `/api/tasks/{task_id}/files` in `backend/app/api/files.py`
-  - `/api/tasks/{task_id}/artifacts/{artifact_name}` and `/api/tasks/{task_id}/runs/{run_id}/artifacts/{artifact_name}` in `backend/app/api/artifacts.py`
-  - `/api/tasks/{task_id}/stream` in `backend/app/api/streaming.py`
-  - `/api/models` in `backend/app/api/models.py`
-  - `/api/skills` in `backend/app/api/skills.py`
+- 当前仓库未确认后端本地 CI workflow、Dockerfile、容器编排、Procfile 或云托管配置。
+- 验证主要依赖本地命令：`uv lock --check`、`uv sync --no-dev`、`uv run pytest`、`uv run ruff check .`、`uv run mypy app tests`。
+- 运行目标是本地同机服务 `127.0.0.1:8001`。
 
-**Outgoing:**
-- DeepSeek chat completion calls are made through LangChain DeepSeek clients in `backend/app/models/provider.py`.
-- DashScope-compatible embedding calls are made by `backend/app/memory.py`.
-- Qdrant collection, upsert, search, reset, and rebuild calls are made by `backend/app/memory.py` and `backend/app/memory_admin.py`.
-- SearXNG search calls are made by `backend/app/tools/searxng_search.py`.
-- No outbound webhook callback delivery mechanism is detected.
+## 环境变量边界
+
+- `backend/.env` 可能存在，但不能读取或引用真实值。
+- `backend/.env.example` 是安全变量名来源。
+- provider key、数据库 URL、Qdrant URL、embedding key 和客户资料只允许在后端运行环境或 ignored 本地 env 中出现。
+- 前端可见配置只能通过浏览器安全的接口暴露，不得把 secret 放进 `/api/models`、`/api/skills` 或 `NEXT_PUBLIC_*`。
+
+## Webhook 和回调
+
+- 未检测到 incoming webhook endpoint。
+- outgoing 调用只包括 DeepSeek、DashScope-compatible embeddings、Qdrant 和 SearXNG。
+- 未检测到 outbound webhook delivery 机制。
 
 ---
 
-*Integration audit: 2026-05-22*
+*集成审计：2026-05-24*
