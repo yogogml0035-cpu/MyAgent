@@ -174,6 +174,7 @@ export function createTaskEventSource(
   taskId: string,
   onEvent: (event: MessageEvent) => void,
   onError?: (error: Event) => void,
+  afterId?: string,
 ): EventSource {
   const url = new URL(
     `${TASK_API_BASE_URL}/api/tasks/${encodeURIComponent(taskId)}/stream`,
@@ -182,6 +183,9 @@ export function createTaskEventSource(
 
   if (TASK_API_ACCESS_TOKEN) {
     url.searchParams.set("token", TASK_API_ACCESS_TOKEN);
+  }
+  if (afterId) {
+    url.searchParams.set("after_id", afterId);
   }
 
   const es = new EventSource(url.toString());

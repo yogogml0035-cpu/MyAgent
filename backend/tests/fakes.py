@@ -89,6 +89,8 @@ class InMemoryTaskStorage:
         if task_id not in self.states:
             raise FileNotFoundError(task_id)
         state = copy.deepcopy(self.states[task_id])
+        events = state.events
+        state.latest_event_id = events[-1].id if events else None
         if not include_events:
             state.events = []
         state.upload_count = len(self.list_uploads(task_id))

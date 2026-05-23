@@ -223,10 +223,13 @@ class TestGetTask:
 
     def test_get_task_can_omit_events_for_lightweight_refresh(self, create_idle_task, app_client):
         created = create_idle_task()
+        storage = app_client.app.state.storage
+        appended = storage.append_event(created["task_id"], "status_update", "lightweight refresh")
         response = app_client.get(f"/api/tasks/{created['task_id']}?include_events=false")
 
         assert response.status_code == 200
         assert response.json()["events"] == []
+        assert response.json()["latest_event_id"] == appended.id
 
 
 class TestTaskHistoryActions:
@@ -332,6 +335,25 @@ class TestGetEvents:
         assert response.status_code == 200
         events = response.json()
         assert [event["seq"] for event in events] == [1, 2]
+
+    def test_stream_accepts_after_id_cursor_for_running_task(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+
+        first = storage.append_event(task_id, "status_update", "warming up")
+        storage.start_run(
+            task_id,
+            message="hello",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+
+        response = app_client.get(
+            f"/api/tasks/{task_id}/stream?after_id={first.id}",
+        )
+
+        assert response.status_code == 200
 
     def test_get_events_can_filter_specific_run(self, create_idle_task, app_client):
         created = create_idle_task()

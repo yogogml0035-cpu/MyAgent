@@ -182,6 +182,7 @@ export function useTaskWorkspace() {
   const [uploadCount, setUploadCount] = useState(0);
   const [backendError, setBackendError] = useState("");
   const [needsInput, setNeedsInput] = useState<Record<string, unknown> | null>(null);
+  const latestEventIdRef = useRef<string | undefined>(undefined);
   const [input, setInput] = useState("");
   const [modelOptions, setModelOptions] = useState<ModelOption[]>(DEFAULT_MODEL_OPTIONS);
   const [model, setModel] = useState(DEFAULT_MODEL_ID);
@@ -254,6 +255,7 @@ export function useTaskWorkspace() {
     setStatus(state.status);
     setMessages((current) => (mergeLogs && state.messages.length === 0 ? current : state.messages));
     setLogs((current) => (mergeLogs ? mergeExecutionLogs(current, state.logs) : state.logs));
+    latestEventIdRef.current = state.latestEventId ?? state.logs.at(-1)?.id;
     setArtifacts(state.artifacts);
     setRuns(state.runs);
     setUploadCount(state.uploadCount);
@@ -345,12 +347,13 @@ export function useTaskWorkspace() {
   );
 
   const refreshTaskEvents = useCallback(
-    async (id = taskId) => {
+    async (id = taskId, afterId = latestEventIdRef.current ?? logsRef.current.at(-1)?.id) => {
       if (!id) {
         return;
       }
-      const incoming = await fetchTaskEvents(id, logsRef.current.at(-1)?.id);
+      const incoming = await fetchTaskEvents(id, afterId);
       if (incoming.length > 0) {
+        latestEventIdRef.current = incoming.at(-1)?.id ?? latestEventIdRef.current;
         setLogs((current) => mergeExecutionLogs(current, incoming));
       }
     },
@@ -394,6 +397,7 @@ export function useTaskWorkspace() {
                 Array.isArray(payload) ? payload : [payload],
               );
               if (incoming.length > 0) {
+                latestEventIdRef.current = incoming.at(-1)?.id ?? latestEventIdRef.current;
                 setLogs((current) => mergeExecutionLogs(current, incoming));
               }
             }
@@ -423,6 +427,7 @@ export function useTaskWorkspace() {
             }, backoffMs);
           }
         },
+        latestEventIdRef.current,
       );
     }
 
@@ -559,6 +564,7 @@ export function useTaskWorkspace() {
     setStatus("idle");
     setMessages([]);
     setLogs([]);
+    latestEventIdRef.current = undefined;
     setArtifacts([]);
     setRuns([]);
     setUploadCount(0);
@@ -590,6 +596,7 @@ export function useTaskWorkspace() {
       setStatus(targetSummary?.status ?? "idle");
       setMessages([]);
       setLogs([]);
+      latestEventIdRef.current = undefined;
       setArtifacts([]);
       setRuns([]);
       setUploadCount(0);
@@ -601,7 +608,12 @@ export function useTaskWorkspace() {
       setIsSwitchingConversation(true);
 
       try {
-        await refreshTask(id);
+        await refreshTaskSummary(id);
+        const shouldHydrateFullHistory = targetSummary?.status !== "running";
+        void refreshTaskEvents(id, shouldHydrateFullHistory ? undefined : latestEventIdRef.current).catch((caught) => {
+          setErrorLevel("error");
+          setError(formatTaskApiFailure(caught));
+        });
       } catch (caught) {
         setErrorLevel("error");
         setError(formatTaskApiFailure(caught));
@@ -614,7 +626,8 @@ export function useTaskWorkspace() {
       isStoppingTask,
       isSubmittingTask,
       isSwitchingConversation,
-      refreshTask,
+      refreshTaskEvents,
+      refreshTaskSummary,
       taskSummaries,
       taskId,
     ],

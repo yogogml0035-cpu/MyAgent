@@ -238,6 +238,39 @@ void describe("use-task-workspace exports", () => {
     );
   });
 
+  void it("should switch conversations via lightweight task state before fetching full event history", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const selectStart = hookSource.indexOf("const handleSelectConversation = useCallback");
+    const selectEnd = hookSource.indexOf("const handleRenameConversation = useCallback");
+    const selectSource = hookSource.slice(selectStart, selectEnd);
+
+    assert.strictEqual(selectSource.includes("await refreshTaskSummary(id);"), true);
+    assert.strictEqual(selectSource.includes("const shouldHydrateFullHistory = targetSummary?.status !== \"running\";"), true);
+    assert.strictEqual(selectSource.includes("void refreshTaskEvents(id, shouldHydrateFullHistory ? undefined : latestEventIdRef.current).catch"), true);
+    assert.strictEqual(selectSource.includes("await refreshTask(id);"), false);
+  });
+
+  void it("should reopen SSE streams from the latest known event cursor", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const apiSource = readFileSync(
+      new URL("../../lib/task-api.ts", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(hookSource.includes("const latestEventIdRef = useRef<string | undefined>(undefined);"), true);
+    assert.strictEqual(hookSource.includes("latestEventIdRef.current = state.latestEventId ?? state.logs.at(-1)?.id;"), true);
+    assert.strictEqual(hookSource.includes("latestEventIdRef.current = incoming.at(-1)?.id ?? latestEventIdRef.current;"), true);
+    assert.strictEqual(hookSource.includes("latestEventIdRef.current,"), true);
+    assert.strictEqual(apiSource.includes("afterId?: string"), true);
+    assert.strictEqual(apiSource.includes("url.searchParams.set(\"after_id\", afterId);"), true);
+  });
+
   void it("should scope composer placeholder and stop affordance to the selected conversation", () => {
     const hookSource = readFileSync(
       new URL("../../hooks/use-task-workspace.ts", import.meta.url),

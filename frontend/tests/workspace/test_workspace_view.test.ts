@@ -2963,3 +2963,22 @@ test("buildConversationStreamItems keeps streaming messages with meaningful cont
   const streamItems = items.filter((i): i is Extract<typeof i, { kind: "message" }> => i.kind === "message" && Boolean(i.message.streaming));
   assert.equal(streamItems.length, 0);
 });
+
+test("buildRunActivityGroups keeps running and needs-input runs visible without hydrating full logs", () => {
+  const groups = buildRunActivityGroups(
+    [
+      { id: "run-running", status: "running", artifactNames: [] },
+      { id: "run-needs-input", status: "needs_input", artifactNames: [] },
+    ],
+    [],
+    [],
+  );
+
+  assert.deepEqual(
+    groups.map((group) => ({ runId: group.runId, status: group.status, logCount: group.logs.length })),
+    [
+      { runId: "run-running", status: "running", logCount: 0 },
+      { runId: "run-needs-input", status: "needs_input", logCount: 0 },
+    ],
+  );
+});

@@ -577,11 +577,11 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(8).locator(".liveLogDiagnosticRows")).toHaveCount(0);
     await expect(rows.nth(8).locator("summary .liveLogCopyButton")).toBeVisible();
     await expect(rows.nth(8).locator("pre")).toContainText('"type": "assistant_answer_delta"');
-    await expect(rows.nth(8).locator("pre")).toContainText('"content"');
+    await expect(rows.nth(8).locator("pre")).toContainText('"content_hidden": true');
     await expect(rows.nth(8).locator("pre")).not.toContainText('"accumulated_content"');
     await expect(rows.nth(8).locator("pre")).not.toContainText('"chunks"');
-    await expect(rows.nth(8).locator("pre")).not.toContainText('"chunk_count"');
-    await expect(rows.nth(8).locator("pre")).toContainText("这段原始流式内容会显示在展开日志里。");
+    await expect(rows.nth(8).locator("pre")).toContainText('"chunk_count": 1');
+    await expect(rows.nth(8).locator("pre")).not.toContainText("这段原始流式内容会显示在展开日志里。");
     await expect(rows.nth(8)).not.toContainText("事件类型");
     await expect(rows.nth(8)).not.toContainText("显示方式");
     const generationCopyButton = rows.nth(8).locator("summary .liveLogCopyButton");
@@ -662,7 +662,8 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(5)).toHaveAttribute("open", "");
     await expect(rows.nth(5).locator("summary .liveLogCopyButton")).toBeVisible();
     await expect(rows.nth(5).locator("pre")).toContainText('"type": "assistant_thinking_delta"');
-    await expect(rows.nth(5).locator("pre")).toContainText("I should verify with another source.");
+    await expect(rows.nth(5).locator("pre")).toContainText('"content_hidden": true');
+    await expect(rows.nth(5).locator("pre")).toContainText('"chunk_count": 1');
     await expect(rows.nth(5).locator("pre")).not.toContainText('"chunks"');
 
     await rows.nth(0).locator("summary").click();
@@ -673,9 +674,9 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(0).locator("pre")).toContainText('"type": "assistant_thinking_delta"');
     await expect(rows.nth(0).locator("pre")).not.toContainText('"type": "values_snapshot"');
     await expect(rows.nth(0).locator("pre")).not.toContainText('"chunks"');
-    await expect(rows.nth(0).locator("pre")).not.toContainText('"chunk_count"');
+    await expect(rows.nth(0).locator("pre")).toContainText('"chunk_count": 1');
     await expect(rows.nth(0).locator("pre")).not.toContainText('"accumulated_content"');
-    await expect(rows.nth(0).locator("pre")).toContainText("I should search for recent news.");
+    await expect(rows.nth(0).locator("pre")).toContainText('"content_hidden": true');
     await expect(rows.nth(0).locator("pre")).not.toContainText("I should verify with another source.");
     await expect(rows.nth(0)).not.toContainText("思考内容");
     const thinkingCopyButton = rows.nth(0).locator("summary .liveLogCopyButton");
@@ -703,7 +704,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(10).locator("pre")).toContainText('"type": "task_completed"');
     await expect(rows.nth(10).locator("pre")).toContainText('"display_text": "任务已完成"');
     await expect(rows.nth(10).locator("pre")).toContainText('"type": "final_answer"');
-    await expect(rows.nth(10).locator("pre")).toContainText('"display_text": "回答已完成"');
+    await expect(rows.nth(10).locator("pre")).toContainText('"content_hidden": true');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "07-terminal-rows-expanded.png"),

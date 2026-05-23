@@ -1745,7 +1745,13 @@ export function buildRunActivityGroups(
     });
   }
 
-  return groups.filter((group) => group.logs.length > 0 || group.artifacts.length > 0);
+  return groups.filter(
+    (group) =>
+      group.logs.length > 0 ||
+      group.artifacts.length > 0 ||
+      group.status === "running" ||
+      group.status === "needs_input",
+  );
 }
 
 function groupTimeValue(group: RunActivityGroup) {

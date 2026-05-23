@@ -1564,9 +1564,20 @@ class PostgresTaskStorage:
         cur.execute("SELECT * FROM messages WHERE task_id = %s ORDER BY id ASC", (task_id,))
         messages = [self._message_from_row(message_row) for message_row in cur.fetchall()]
         events: list[EventRecord] = []
+        latest_event_id: str | None = None
         if include_events:
             cur.execute("SELECT * FROM events WHERE task_id = %s ORDER BY seq ASC", (task_id,))
             events = [self._event_record_from_row(event_row) for event_row in cur.fetchall()]
+            if events:
+                latest_event_id = events[-1].id
+        else:
+            cur.execute(
+                "SELECT id FROM events WHERE task_id = %s ORDER BY seq DESC LIMIT 1",
+                (task_id,),
+            )
+            latest_event_row = cur.fetchone()
+            if latest_event_row is not None:
+                latest_event_id = str(latest_event_row["id"])
         state = TaskState(
             task_id=task_id,
             title=cast("str | None", row.get("title")),
@@ -1578,6 +1589,7 @@ class PostgresTaskStorage:
             events=events,
             runs=runs,
             active_run_id=cast("str | None", row["active_run_id"]),
+            latest_event_id=latest_event_id,
             run_count=len(runs),
             upload_count=len(self.list_uploads(task_id)),
             error=cast("str | None", row["error"]),

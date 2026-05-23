@@ -260,6 +260,7 @@ export type TaskState = {
   uploadCount: number;
   error?: string;
   needsInput?: Record<string, unknown> | null;
+  latestEventId?: string;
 };
 
 const KNOWN_STATUSES = new Set([
@@ -1195,6 +1196,9 @@ export function normalizeTaskState(value: unknown, fallbackTaskId: string): Task
       ? translateKnownDisplayText(readString(record.error))
       : undefined,
     needsInput,
+    latestEventId: readOptionalString(
+      record.latest_event_id ?? record.latestEventId,
+    ),
   };
 }
 

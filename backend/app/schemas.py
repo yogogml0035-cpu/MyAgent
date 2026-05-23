@@ -90,6 +90,7 @@ class TaskState(BaseModel):
     artifacts: list[ArtifactRecord] = Field(default_factory=list)
     runs: list[TaskRunRecord] = Field(default_factory=list)
     active_run_id: str | None = None
+    latest_event_id: str | None = None
     run_count: int = 0
     upload_count: int = 0
     error: str | None = None

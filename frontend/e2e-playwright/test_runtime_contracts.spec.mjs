@@ -256,7 +256,7 @@ test("runtime task contracts expose artifacts and upload errors in the browser",
   await page.screenshot({ fullPage: true, path: path.join(evidenceDir, "03-artifact-card.png") });
 
   const popupPromise = page.waitForEvent("popup");
-  await page.getByRole("button", { name: "打开", exact: true }).click();
+  await page.getByRole("button", { name: `打开 ${artifactName}` }).click();
   const popup = await popupPromise;
   await popup.waitForLoadState("domcontentloaded");
   await expect(popup.getByText("此 HTML 产物已在禁用脚本的沙箱 iframe 中预览。")).toBeVisible();
@@ -267,7 +267,7 @@ test("runtime task contracts expose artifacts and upload errors in the browser",
   await popup.close();
 
   const downloadPromise = page.waitForEvent("download");
-  await page.getByRole("button", { name: "下载" }).click();
+  await page.getByRole("button", { name: `下载 ${artifactName}` }).click();
   const download = await downloadPromise;
   expect(download.suggestedFilename()).toBe(artifactName);
   await download.saveAs(path.join(evidenceDir, "downloaded-report.html"));
