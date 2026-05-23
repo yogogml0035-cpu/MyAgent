@@ -133,7 +133,9 @@
 - `final_answer` 不作为独立 collapsed row 展示。
 - tool progress 拆成阶段行：`selecting_tool`、`using_tool`、`tool_result`。
 - 同一 stage、同一 `tool_call_id` 的 tool-call chunk 才合并，避免参数增量刷出重复行。
+- 主对话默认只展示关键阶段、当前动作、警告、错误和终态；完整 `assistant_thinking_delta`、`assistant_answer_delta`、`values_snapshot` 与 `final_answer` 正文不能作为默认长段落回流到主页面。
 - 行级展开和复制使用 compact display JSON；run-level raw JSONL copy 才是完整诊断导出。
+- 完整 run 日志必须通过用户点击后生成的 run-scoped JSONL 下载获得，不能在 render 阶段预构造完整诊断字符串，也不能默认渲染完整 `<pre>`。
 - `ExecutionLog.rawRecord` 必须保持 non-enumerable，避免 raw provider chunk、tool payload、内部 node name 泄露进默认渲染或 `JSON.stringify(state.logs)`。
 - `frontend/app/task-state.ts` 标准化时保留完整 `payload.content`；截断只能发生在 collapsed preview projection。
 - 每个 run card 有默认折叠的 `"完整诊断 JSON"` 面板，展示当前 run 的 pretty JSON array。
@@ -160,6 +162,9 @@
 - `artifacts/` 应在写 run manifest 或真实 artifact 时懒创建，启动 run 本身不应创建空 artifact dir。
 - 不要新增 `logs/`、`subagents/` 或 root-level manifest 等顶层 task 文件夹，除非先设计稳定文件合同。
 - 删除非 running task 必须同时删除 Postgres task row 和 matching local task workspace。
+- task workspace 内真实生成的 `.docx`、`.pptx`、`.xlsx`、`.xlsm`、`.pdf`、`.html`、`.md` 文件需要先通过 run-scoped artifact 登记或安全复制到 `artifacts/runs/{run_id}/`，再暴露给前端下载。
+- 用户明确要求的交付文件，或 final answer 明确声称“已生成/已保存”的文件，必须存在且已登记为当前 run artifact；否则 task/run 不能标记为成功完成。
+- 缺失交付文件时应给出可见的 `文件未生成或未登记为产物` 修正提示，并保持 artifact API 不暴露不可下载的本地路径或伪链接。
 - Artifact routes：
   - latest/legacy：`GET /api/tasks/{id}/artifacts/{name}`
   - run-scoped：`GET /api/tasks/{id}/runs/{run_id}/artifacts/{name}`

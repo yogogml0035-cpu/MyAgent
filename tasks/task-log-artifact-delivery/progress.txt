@@ -7,6 +7,7 @@ Source: prd.json
 ## Codebase Patterns
 
 - 前端任务工作区遵循 component -> hook -> API/state/view adapter 的分层：组件渲染 props，`use-task-workspace.ts` 管理动作，`workspace-view.ts` 构造展示模型，`task-api.ts` 负责 HTTP/SSE/blob。
+- 新增稳定平台边界或浏览器验收入口时，需要同时更新 `asset/deepagents_platform_knowledge_pack.md` 和 `frontend/e2e-playwright/README.md`：前者记录长期规则，后者记录具体 spec、环境变量和证据目录。
 - 进度日志是 append-only event log 的用户投影。主页面应展示轻量进度，完整 JSONL 诊断适合作为 run-scoped 下载，而不是默认 `<pre>` 渲染。
 - `workspace-view.ts` 的日志诊断需要区分 `rawJson` 和 `displayJson`：前者保留完整事件，后者只保留主页面需要的轻量摘要，避免流式正文和快照重新进入默认渲染。
 - `TaskConversation.tsx` 当前在 render 中构造 `buildRunDiagnosticsJson(group.logs)` 并渲染完整诊断 `<pre>`，这是大量事件卡顿的主要改造点。
@@ -150,4 +151,17 @@ Source: prd.json
   - 对 thinking/answer 流采用“display 轻量、raw 延迟回填”的双轨策略更稳：运行中 active 行不携带成百上千 chunk，终态或分段结束后仍能把当前段真实 `rawRecord` 留给 run-scoped JSONL 和 diagnostics
   - 专用浏览器 E2E 依赖后端真实 `8001`；如果端口未常驻，先确认 `curl http://127.0.0.1:8001/health` 可达，再执行 `test_task_log_artifact_delivery.spec.mjs`，否则会在 `api/tasks` seed 阶段直接 `ECONNREFUSED`
 - 验证命令通过：`cd frontend && npm run typecheck`、`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts tests/workspace/test_task_workspace.test.ts`、`cd frontend && npm run lint`、`cd frontend && npm test`、`cd frontend && npm run build`、`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=/mnt/d/AgentProject/MyAgent/frontend/e2e-playwright/e2e-20260524062801/task-log-artifact-delivery MYAGENT_E2E_ACCESS_TOKEN=... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`、`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=/mnt/d/AgentProject/MyAgent/frontend/e2e-playwright/e2e-20260524062801/runtime-contracts MYAGENT_E2E_ACCESS_TOKEN=... npx playwright test e2e-playwright/test_runtime_contracts.spec.mjs --reporter=line`
+---
+## 2026-05-24 06:50 - US-007
+- 同步 `asset/deepagents_platform_knowledge_pack.md`，记录主对话默认精简日志、完整日志走 run-scoped 下载，以及交付文件缺失时不能成功完成的长期平台边界
+- 更新 `frontend/e2e-playwright/README.md`，补充 `test_task_log_artifact_delivery.spec.mjs` 的运行命令、依赖环境变量与 `e2e-YYYYMMDDHHMMSS/task-log-artifact-delivery/` 证据目录约定
+- 更改的文件
+- `asset/deepagents_platform_knowledge_pack.md`
+- `frontend/e2e-playwright/README.md`
+- `tasks/task-log-artifact-delivery/prd.json`
+- `tasks/task-log-artifact-delivery/progress.txt`
+- **未来迭代的学习：**
+  - 稳定的任务交付/日志边界应写进知识包，而不是只留在任务进度或 PR 描述里
+  - 每新增一个真实浏览器 E2E spec，都应在 `frontend/e2e-playwright/README.md` 中给出可直接执行的命令和独立 evidence 子目录，避免后续回归只知道 spec 名称却不知道运行前提
+  - 本轮验收只需 `git diff --check` 和前端 `typecheck`，因为 story 范围是长期文档与测试入口文档同步，没有行为代码改动
 ---
