@@ -70,19 +70,19 @@ frontend/e2e-playwright/
 
 ## 测试类型
 
-### Unit
+### 单元测试
 
 - 覆盖纯转换、数据标准化、格式化、request building、安全 guard、source boundary 和 DOM-independent helper。
 - 主要文件：`test_task_state.test.ts`, `test_workspace_view.test.ts`, `test_task_conversation_scroll.test.ts`, `test_model_ui.test.ts`, `test_file_upload.test.ts`, `test_skill_selection.test.ts`。
 
-### Integration / Browser Runtime
+### 集成测试 / 浏览器运行时
 
 - 浏览器/runtime 集成在 Playwright specs。
 - `test_runtime_contracts.spec.mjs` 覆盖 live task creation、model metadata、artifact open/download、upload limit、access token 和浏览器可见合同。
 - `test_skill_selector_full_loop.spec.mjs` 覆盖真实 `/api/skills`、task 创建、message submission、selected skill payload、历史 reload。
-- 一些 specs 通过 public API 和 Postgres-backed setup seed backend state。
+- 一些 spec 通过公开 API 和 Postgres-backed 初始化流程播种后端状态。
 
-### E2E
+### 端到端测试
 
 - 前端行为变更必须跑 Playwright E2E。
 - runtime-contract/full-loop specs 默认使用实际服务：frontend `3001`，backend `8001`。

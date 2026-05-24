@@ -53,7 +53,7 @@
 - `NEXT_WATCH_POLL_INTERVAL_MS`：Next watch polling interval，默认 `300`。
 - `.env.local` 可能存在但被忽略，不能读取或文档化真实值。
 
-## package scripts
+## package scripts 脚本
 
 ```bash
 cd frontend

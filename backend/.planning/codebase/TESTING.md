@@ -81,20 +81,20 @@ backend/tests/
 
 ## 测试类型
 
-### Unit
+### 单元测试
 
 - 覆盖 service、router、storage helper、event conversion、security scanner、tools、model registry。
 - pure logic 直接调用函数/类。
 - route logic 用 TestClient + InMemoryTaskStorage。
 - runner 用 fake event stream 和 monkeypatch agent/model。
 
-### Integration
+### 集成测试
 
 - 覆盖需要基础设施语义的 wiring。
 - 用 `pytest.mark.skipif` 按 env var 跳过未配置服务。
 - 能 fake 的昂贵外部部分应 fake，例如 embedding。
 
-### E2E
+### 端到端测试
 
 - 当前后端 E2E 使用 FastAPI TestClient 验证 API/SSE 端到端行为，不启动独立 Uvicorn。
 - 重点覆盖流事件 shape、终态 drain-before-done 和 completion ordering。

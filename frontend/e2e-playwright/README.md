@@ -1,13 +1,13 @@
-# Browser E2E Evidence
+# 浏览器 E2E 证据
 
-This directory contains reusable Playwright acceptance entrypoints plus local, timestamped evidence folders.
+本目录保存可复用的 Playwright 验收入口，以及本地按时间戳归档的证据目录。
 
-- Commit reusable specs such as `test_runtime_contracts.spec.mjs`.
-- Store run-specific screenshots and downloaded artifacts under `e2e-YYYYMMDDHHMMSS/`.
-- Do not commit timestamped evidence folders; they are local acceptance proof referenced in delivery notes.
-- Keep screenshots free of customer documents, provider keys, access tokens, and private local paths.
+- 可复用 spec 需要提交，例如 `test_runtime_contracts.spec.mjs`。
+- 单次运行的截图和下载产物放在 `e2e-YYYYMMDDHHMMSS/` 下。
+- 不要提交带时间戳的证据目录；它们只是交付说明中引用的本地验收凭证。
+- 截图中不要出现客户文档、provider key、访问 token 或私密本地路径。
 
-Run the runtime-contract acceptance test from `frontend/` after starting the backend and frontend:
+启动后端和前端后，从 `frontend/` 运行 runtime-contract 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -22,10 +22,10 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npm run e2e:runtime-contracts
 ```
 
-The runtime-contract spec seeds one completed run through the real Postgres-backed storage contract plus the task artifact directory. Keep the Postgres env values local to the E2E command and do not commit credentials.
-Set `MYAGENT_E2E_EXPECT_UPLOAD_LIMIT_BYTES` when the backend is started with a small `MYAGENT_MAX_UPLOAD_REQUEST_BYTES` value to verify that oversized multipart uploads are rejected in the browser before storage writes.
+runtime-contract spec 会通过真实 Postgres 存储契约和任务产物目录播种一个已完成 run。Postgres 环境变量只应保留在本地 E2E 命令中，不要提交凭据。
+当后端以较小的 `MYAGENT_MAX_UPLOAD_REQUEST_BYTES` 启动时，设置 `MYAGENT_E2E_EXPECT_UPLOAD_LIMIT_BYTES`，用于验证超限 multipart 上传会在浏览器侧被拒绝，且不会写入存储。
 
-Run the progress-log disclosure acceptance test from `frontend/` when changing the chat progress timeline, row diagnostics, timestamps, or disclosure affordance:
+修改聊天进度时间线、行诊断、时间戳或展开交互时，从 `frontend/` 运行 progress-log disclosure 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -38,9 +38,9 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --reporter=line
 ```
 
-The progress-log spec seeds a temporary running task through the same Postgres-backed task/runs/messages/events contract, verifies collapsed row layout in the browser, expands status/tool/generation rows, checks the trace-level collapse-all control, captures desktop and narrow-screen screenshots, marks the temporary task complete, and deletes it through the public API.
+progress-log spec 会通过同一套 Postgres-backed task/runs/messages/events 契约播种一个临时运行中任务，在浏览器中验证折叠行布局，展开 status/tool/generation 行，检查 trace 级一键折叠控件，捕获桌面和窄屏截图，把临时任务标记完成，并通过公开 API 删除。
 
-Run the task-log artifact delivery acceptance test from `frontend/` when changing long-run log projection, run-scoped full-log download, final reply artifact cards, or delivery-file completion guards:
+修改长运行日志投影、run 级完整日志下载、最终回复产物卡片或交付文件完成保护时，从 `frontend/` 运行 task-log artifact delivery 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -54,9 +54,9 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line
 ```
 
-The task-log artifact delivery spec uses the real frontend on `3001` and backend on `8001`; it seeds one 2000+ event running task with oversized tool-call partial deltas, one completed `.docx` artifact run, and one delivery-required task that stays in `needs_input` when no artifact exists. The browser flow confirms the main workspace does not render 2000+ expanded live rows, oversized partial payload tails are not rendered into the page, the page stays interactive while logs are visible, the final reply area shows a run-scoped download card, the `.docx` download starts with the artifact filename, and the missing-delivery run shows `文件未生成或未登记为产物` or equivalent guidance. Save screenshots and downloaded samples under `e2e-YYYYMMDDHHMMSS/task-log-artifact-delivery/` and do not commit that evidence directory.
+task-log artifact delivery spec 使用 `3001` 的真实前端和 `8001` 的真实后端；它会播种一个包含 2000+ 事件且带超大 tool-call partial delta 的运行中任务、一个已完成的 `.docx` 产物 run，以及一个要求交付文件但在没有产物时保持 `needs_input` 的任务。浏览器流程会确认主工作区不会渲染 2000+ 个展开的实时行，超大 partial payload 尾部不会渲染到页面中，日志可见时页面仍保持可交互，最终回复区域展示 run 级下载卡片，`.docx` 下载以产物文件名开始，缺失交付文件的 run 显示 `文件未生成或未登记为产物` 或等价提示。截图和下载样本保存到 `e2e-YYYYMMDDHHMMSS/task-log-artifact-delivery/`，不要提交该证据目录。
 
-Run the multi-session thinking audit acceptance test from `frontend/` when changing cross-session busy scope, same-session send protection, run-scoped diagnostics, thinking/tool event rendering, or the run-level JSONL download boundary:
+修改跨会话 busy 范围、同会话发送保护、run 级诊断、thinking/tool 事件渲染或 run 级 JSONL 下载边界时，从 `frontend/` 运行 multi-session thinking audit 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -69,10 +69,10 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_multi_session_thinking_audit.spec.mjs --reporter=line
 ```
 
-This spec requires the real frontend on `3001` and backend on `8001`; it does not use a mock page in place of either service. The browser flow creates or reuses two visible tasks through the public API, seeds A/B run state plus thinking/tool events through the Postgres-backed task/runs/messages/events contract, verifies that session A stays send-protected while session B can still start, expands run diagnostics to confirm full `reasoning_content`, and captures evidence under `e2e-YYYYMMDDHHMMSS/multi-session-thinking-audit/`. When this audit spec changes the progress timeline or disclosure surface, run the progress-log disclosure spec in the same regression pass to confirm collapsed rows and per-row expand/copy behavior still hold.
-The frontend config keeps `next dev` output in `.next/dev`, so this E2E can share a live `3001` dev server with `npm run build` in the same workspace without corrupting the browser runtime.
+该 spec 依赖 `3001` 的真实前端和 `8001` 的真实后端；不会用 mock 页面替代任一服务。浏览器流程会通过公开 API 创建或复用两个可见任务，通过 Postgres-backed task/runs/messages/events 契约播种 A/B run 状态以及 thinking/tool 事件，验证会话 A 保持发送保护的同时会话 B 仍可启动，展开 run 诊断以确认完整 `reasoning_content`，并把证据保存到 `e2e-YYYYMMDDHHMMSS/multi-session-thinking-audit/`。当该审计 spec 修改了进度时间线或展开展示面时，同一轮回归中还要运行 progress-log disclosure spec，确认折叠行和逐行展开/复制行为仍然成立。
+前端配置会让 `next dev` 输出到 `.next-dev`，所以该 E2E 可以和 `npm run build` 在同一工作区共享已运行的 `3001` dev server，而不会破坏浏览器运行时。
 
-Run the SearXNG search progress acceptance test when changing the configured web-search tool or tool-call/result payloads:
+修改已配置的 web-search 工具或 tool-call/result payload 时，运行 SearXNG search progress 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -85,9 +85,9 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_searxng_search_progress.spec.mjs --reporter=line
 ```
 
-The SearXNG spec creates a temporary task through the public API, seeds `searxng_search` tool-call and tool-result events through the Postgres-backed event contract, verifies the browser progress log hides raw tool names in collapsed rows while preserving `searxng_search` diagnostics in expanded JSON, captures screenshots, and deletes the task.
+SearXNG spec 会通过公开 API 创建临时任务，通过 Postgres-backed 事件契约播种 `searxng_search` tool-call 和 tool-result 事件，验证浏览器进度日志在折叠行中隐藏原始工具名，同时在展开 JSON 中保留 `searxng_search` 诊断，捕获截图，并删除任务。
 
-Run the session-context and long-term-memory acceptance test from `frontend/` when changing conversation history injection, memory recall, per-user memory isolation, or the visible "已载入会话上下文 / 已载入长期记忆" log rows:
+修改对话历史注入、记忆召回、按用户隔离的长期记忆，或可见的“已载入会话上下文 / 已载入长期记忆”日志行时，从 `frontend/` 运行 session-context and long-term-memory 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -100,9 +100,9 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_session_context_memory.spec.mjs --reporter=line
 ```
 
-The session-context spec sends one user turn through the real browser UI, seeds a canonical long-term preference memory row in Postgres, rebuilds the Qdrant index from that canonical store, sends a follow-up turn that should recall the previous message and preference, expands the context/memory diagnostics, and captures screenshots for the empty workspace, first prompt, first completion, follow-up draft, expanded memory logs, and recalled answer.
+session-context spec 会通过真实浏览器 UI 发送一轮用户消息，在 Postgres 中播种一条规范化的长期偏好记忆，从该权威存储重建 Qdrant 索引，再发送一轮应召回上一条消息和偏好的追问，展开 context/memory 诊断，并为初始空工作区、首轮提示、首轮完成、追问草稿、展开的记忆日志和召回答案捕获截图。
 
-Run the history-menu affordance acceptance test from `frontend/` when changing the history sidebar menu trigger, rename/delete menu, focus state, or compact history layout:
+修改历史侧栏菜单触发器、重命名/删除菜单、焦点状态或紧凑历史布局时，从 `frontend/` 运行 history-menu affordance 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -115,9 +115,9 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_history_menu_affordance.spec.mjs --reporter=line
 ```
 
-The history-menu spec creates a temporary task through the public API, seeds one visible user-message history row through the same Postgres-backed task contract, verifies the three-dot menu trigger in hover and open states, captures screenshots, and deletes the task after the assertion.
+history-menu spec 会通过公开 API 创建临时任务，通过同一套 Postgres-backed task 契约播种一条可见的用户消息历史行，验证三点菜单触发器的 hover 和打开状态，捕获截图，并在断言后删除任务。
 
-Run the history-scroll-clear acceptance test from `frontend/` when changing the history list scroll behavior, sidebar height constraints, or clear-all action:
+修改历史列表滚动行为、侧栏高度约束或清空全部操作时，从 `frontend/` 运行 history-scroll-clear 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -130,9 +130,9 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_history_scroll_clear.spec.mjs --reporter=line
 ```
 
-The history-scroll-clear spec creates temporary tasks through the public API, seeds visible history rows through Postgres, verifies the sidebar history area scrolls independently while the bottom clear-all button remains available, captures screenshots, and deletes only the temporary tasks.
+history-scroll-clear spec 会通过公开 API 创建临时任务，通过 Postgres 播种可见历史行，验证侧栏历史区域可独立滚动且底部“清空全部”按钮仍可用，捕获截图，并且只删除临时任务。
 
-Run the auto-title acceptance test from `frontend/` when changing first-message task creation, automatic history naming, or title normalization:
+修改首条消息创建任务、自动历史命名或标题归一化时，从 `frontend/` 运行 auto-title 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -142,9 +142,9 @@ MYAGENT_E2E_ACCESS_TOKEN=... \
 npx playwright test e2e-playwright/test_auto_title_generation.spec.mjs --reporter=line
 ```
 
-The auto-title spec sends a first user message through the real browser UI, waits for the public message API response, asserts the returned history title is non-empty and at most 10 visible characters, verifies the same title appears in the left history sidebar, captures screenshots for the start, ready, visible-title, and selected-row states, then cancels/deletes the temporary task through the public API.
+auto-title spec 会通过真实浏览器 UI 发送第一条用户消息，等待公开 message API 响应，断言返回的历史标题非空且最多 10 个可见字符，验证左侧历史侧栏展示同一标题，为 start、ready、visible-title 和 selected-row 状态捕获截图，然后通过公开 API 取消/删除临时任务。
 
-Run the resource-upload harness acceptance test from `frontend/` when changing upload formats, uploaded-resource contracts, or resource tool progress:
+修改上传格式、uploaded-resource 契约或资源工具进度时，从 `frontend/` 运行 resource-upload harness 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -158,9 +158,9 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_resource_upload_harness.spec.mjs --reporter=line
 ```
 
-The resource-upload spec uses the real browser file picker path for `.docx`, `.xlsx`, `.json`, and `.txt`, uploads those files through the public API, seeds a completed run with resource-tool progress events, and captures screenshots for selection, uploaded state, tool progress, and completion.
+resource-upload spec 会使用真实浏览器文件选择路径选择 `.docx`、`.xlsx`、`.json` 和 `.txt`，通过公开 API 上传这些文件，播种一个带 resource-tool 进度事件的已完成 run，并捕获选择、已上传状态、工具进度和完成状态截图。
 
-Run the upload-preview design acceptance test from `frontend/` when changing the selected-file preview card, upload affordances, or responsive composer layout:
+修改已选文件预览卡片、上传交互或响应式 composer 布局时，从 `frontend/` 运行 upload-preview design 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -168,9 +168,9 @@ MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/upload-preview-desi
 npx playwright test e2e-playwright/test_upload_preview_design.spec.mjs --reporter=line
 ```
 
-The upload-preview spec uses the real browser file picker path for supported files, verifies separate selected-file cards, filename-only display, replace control, hover-revealed per-file removal, core design-token colors, and captures desktop plus narrow-screen screenshots of the changed preview card.
+upload-preview spec 会通过真实浏览器文件选择路径选择受支持文件，验证独立的已选文件卡片、仅文件名展示、替换控件、hover 后显示的逐文件移除控件、核心 design-token 颜色，并捕获变更后预览卡片的桌面和窄屏截图。
 
-Run the skill selector acceptance test from `frontend/` when changing the composer skill slash picker, chip shelf, keyboard selection, deletion behavior, or responsive skill selector styling:
+修改 composer 技能 slash picker、chip shelf、键盘选择、删除行为或响应式技能选择样式时，从 `frontend/` 运行 skill selector 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -178,9 +178,9 @@ MYAGENT_E2E_EVIDENCE_DIR=./e2e-playwright/e2e-YYYYMMDDHHMMSS/skill-selector \
 npx playwright test e2e-playwright/test_skill_selector.spec.mjs --reporter=line
 ```
 
-The skill selector spec opens the real frontend page, provides a bounded project skill response for `code-review` and `web-research`, verifies slash filtering, keyboard and pointer selection, removable chip behavior, no accidental message send, and captures screenshots for the open picker, selected chip, and removed-chip states.
+skill selector spec 会打开真实前端页面，为 `code-review` 和 `web-research` 提供受控的项目技能响应，验证 slash 过滤、键盘和鼠标选择、可移除 chip 行为、不会意外发送消息，并为打开 picker、已选 chip 和已移除 chip 状态捕获截图。
 
-Run the full skill selector send-loop acceptance test when changing project skill payloads, message submission, task history reload, or the visible user-message contract:
+修改项目技能 payload、消息提交、任务历史重载或可见用户消息契约时，运行完整的 skill selector send-loop 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -190,4 +190,4 @@ MYAGENT_E2E_ACCESS_TOKEN=... \
 npx playwright test e2e-playwright/test_skill_selector_full_loop.spec.mjs --reporter=line
 ```
 
-The full-loop spec does not mock `/api/skills`, `/api/tasks`, or message submission. It opens the real frontend, verifies the backend exposes `code-review` and `web-research`, selects `web-research`, sends a user message with the structured `skills` payload, checks the persisted user-visible `[$web-research]` reference, reloads task history, and captures desktop plus mobile screenshots.
+full-loop spec 不会 mock `/api/skills`、`/api/tasks` 或消息提交。它会打开真实前端，验证后端暴露 `code-review` 和 `web-research`，选择 `web-research`，发送带结构化 `skills` payload 的用户消息，检查持久化且用户可见的 `[$web-research]` 引用，重新加载任务历史，并捕获桌面和移动端截图。

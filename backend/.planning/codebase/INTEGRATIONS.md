@@ -12,13 +12,13 @@
 - 浏览器安全模型 ID：`deepseek-v4-flash`, `deepseek-v4-flash-thinking`。
 - API 表面：`/api/models` 返回模型元数据和 availability，不暴露 provider secret。
 
-### DashScope-compatible embeddings
+### DashScope 兼容嵌入
 
 - 用途：长期记忆 recall/index。
 - 调用方式：`backend/app/memory.py` 用 `httpx.post` 调 `{MYAGENT_EMBEDDING_BASE_URL}/embeddings`。
 - 配置：`DASHSCOPE_API_KEY`, `MYAGENT_EMBEDDING_BASE_URL`, `MYAGENT_EMBEDDING_MODEL`, `MYAGENT_EMBEDDING_DIMENSIONS`。
 
-### SearXNG
+### SearXNG 搜索
 
 - 用途：`searxng_search` LangChain 工具。
 - 调用方式：`backend/app/tools/searxng_search.py` 用 `httpx.get` 调 `/search`。
@@ -26,7 +26,7 @@
 - 注册条件：`Settings.searxng_url` 存在时由 `backend/app/tools/registry.py` 注册。
 - 缓存：成功结果可以写入 Postgres tool cache，TTL 由 `MYAGENT_FRESH_TOOL_CACHE_SECONDS` 控制。
 
-### DeepAgents / LangGraph
+### DeepAgents / LangGraph 运行时
 
 - 用途：本地 agent graph、虚拟 filesystem backend、state backend、store backend、project skills 和 subagents。
 - 入口：`backend/app/agent/factory.py`, `backend/app/agent_store.py`。
@@ -34,7 +34,7 @@
 
 ## 数据存储
 
-### PostgreSQL
+### PostgreSQL 存储
 
 - 权威范围：tasks、runs、messages、events、agent_store_items、task_context_summaries、tool_result_cache、long_term_memories。
 - 配置：`MYAGENT_DATABASE_URL`，fallback 为 `DATABASE_URL`。
@@ -43,7 +43,7 @@
 - 常见索引：events task seq、runs task、messages task、agent store namespace、tool cache task/tool、long-term memories user。
 - 集成测试：`backend/tests/integration/test_postgres_memory_storage.py`，由 `MYAGENT_TEST_DATABASE_URL` 或 `MYAGENT_DATABASE_URL` 控制。
 
-### Qdrant
+### Qdrant 向量库
 
 - 用途：长期记忆向量索引。
 - 配置：`MYAGENT_QDRANT_URL`, `MYAGENT_QDRANT_COLLECTION`, embedding dimensions。
