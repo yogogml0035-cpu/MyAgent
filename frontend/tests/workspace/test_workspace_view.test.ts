@@ -1094,6 +1094,93 @@ test("buildLiveLogItems compresses 2000+ raw events into a small visible project
   assert.equal(display.payload.thinking_stream.chunk_count, 2100);
 });
 
+test("buildLiveLogItems keeps closed stream raw diagnostics compact", () => {
+  const logs: Parameters<typeof buildLiveLogItems>[0] = Array.from({ length: 2100 }, (_, index) => ({
+    id: `think-closed-${index}`,
+    seq: index,
+    type: "assistant_thinking_delta" as const,
+    title: `thinking-${index}`,
+    createdAt: `2026-05-14T05:15:${String(index % 60).padStart(2, "0")}.000Z`,
+    thinkingStream: {
+      schemaVersion: 1 as const,
+      streamIndex: index,
+      content: `reasoning-chunk-${index}`,
+    },
+    rawRecord: {
+      id: `think-closed-${index}`,
+      type: "assistant_thinking_delta",
+      message: `thinking-${index}`,
+      payload: { content: `reasoning-chunk-${index}` },
+    },
+  }));
+
+  const items = buildLiveLogItems(logs, "failed");
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.kind, "status");
+  assert.equal(items[0]?.details.rawJson.includes("reasoning-chunk-2099"), false);
+  assert.equal(items[0]?.details.rawJson.length < 2000, true);
+  const raw = JSON.parse(items[0]?.details.rawJson ?? "{}");
+  assert.equal(raw.records[1].payload.content_hidden, true);
+  assert.equal(raw.records[1].payload.chunk_count, 2100);
+});
+
+test("buildLiveLogItems compacts oversized tool-call argument deltas", () => {
+  const longArgs = `{"description":"${"x".repeat(5000)}TAIL_MARKER`;
+  const logs: Parameters<typeof buildLiveLogItems>[0] = Array.from({ length: 1350 }, (_, index) => ({
+    id: `tool-delta-${index}`,
+    seq: index,
+    type: "tool_call" as const,
+    title: "Calling tool: task",
+    createdAt: `2026-05-14T05:16:${String(index % 60).padStart(2, "0")}.000Z`,
+    live: {
+      schemaVersion: 1 as const,
+      kind: "tool_call" as const,
+      stage: "selecting_tool" as const,
+      toolName: "task",
+      toolLabel: "调用工具",
+      toolCallId: "call-large",
+      diagnosticLabel: "tool_call_delta",
+      parameterItems: [{ key: "args", value: longArgs.slice(0, 160), truncated: true }],
+    },
+    rawRecord: {
+      id: `tool-delta-${index}`,
+      type: "tool_call",
+      message: "Calling tool: task",
+      payload: {
+        id: "call-large",
+        name: "task",
+        args: longArgs,
+        raw_args: longArgs,
+        partial: true,
+      },
+    },
+  }));
+
+  const items = buildLiveLogItems(logs, "running");
+  const toolItem = items.find((item) => item.kind === "tool");
+
+  assert.ok(toolItem);
+  assert.equal(toolItem?.kind, "tool");
+  if (!toolItem || toolItem.kind !== "tool") {
+    throw new Error("expected compacted tool item");
+  }
+  assert.equal(items.filter((item) => item.kind === "tool").length, 1);
+  assert.equal(toolItem.details.rawJson.includes("TAIL_MARKER"), false);
+  assert.equal(toolItem.details.rawJson.length < 4000, true);
+  const display = JSON.parse(toolItem.details.displayJson);
+  assert.equal(display.type, "tool_call");
+  assert.equal(display.delta_count, 1350);
+  assert.equal(display.args_truncated, true);
+  assert.equal(display.args_original_chars > 5000, true);
+  assert.equal(JSON.stringify(display).includes("TAIL_MARKER"), false);
+
+  const copied = JSON.parse(buildLogClipboardText([logs[0]]));
+  assert.equal(copied.payload.args_truncated, true);
+  assert.equal(copied.payload.args_original_chars > 5000, true);
+  assert.equal(JSON.stringify(copied).includes("TAIL_MARKER"), false);
+});
+
 test("buildLiveLogItems aggregates assistant stream chunks into a generation row", () => {
   const items = buildLiveLogItems(
     [
@@ -1679,9 +1766,11 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("openLogDetailCount >= totalLogDetailCount"), false);
   assert.equal(conversationSource.includes('className="copyButton traceCollapseButton"'), false);
   assert.equal(conversationSource.includes("traceLogToggleButton"), true);
+  assert.equal(conversationSource.includes('className="traceDownloadButton"'), false);
   assert.equal(conversationSource.includes("全部展开"), true);
   assert.equal(conversationSource.includes("全部折叠"), true);
-  assert.equal(conversationSource.includes('"traceCopyButton"'), true);
+  assert.equal(conversationSource.includes('"traceCopyButton"'), false);
+  assert.equal(conversationSource.includes("onCopyLogs(group.logs"), false);
   assert.equal(conversationSource.includes("event.preventDefault();"), true);
   assert.equal(conversationSource.includes("event.stopPropagation();"), true);
   assert.equal(
@@ -1931,7 +2020,7 @@ test("buildRunActivityGroups keeps reasoning traces chronologically with operati
   ]);
 });
 
-test("buildRunActivityGroups keeps per-run diagnostics and JSONL copy isolated", () => {
+test("buildRunActivityGroups keeps per-run diagnostics and JSONL export isolated", () => {
   const groups = buildRunActivityGroups(
     [
       {
@@ -2136,14 +2225,14 @@ test("buildRunActivityGroups keeps per-run diagnostics and JSONL copy isolated",
   assert.equal(runAThinking.details.displayJson.includes("RUN_B_REASONING_CANARY"), false);
   assert.equal(runAThinking.details.rawJson.includes("RUN_A_REASONING_CANARY"), true);
 
-  const runAClipboard = buildLogClipboardText(groups[0].logs);
-  assert.equal(runAClipboard.includes("RUN_A_RESULT_CANARY"), true);
-  assert.equal(runAClipboard.includes("RUN_A_FINAL_CANARY"), true);
-  assert.equal(runAClipboard.includes("RUN_B_REASONING_CANARY"), false);
-  assert.equal(runAClipboard.includes("RUN_B_RESULT_CANARY"), false);
-  assert.equal(runAClipboard.includes("RUN_B_FINAL_CANARY"), false);
-  assert.equal(runAClipboard.includes("uploads/run-a"), true);
-  assert.equal(runAClipboard.includes("uploads/run-b.md"), false);
+  const runAExport = buildLogClipboardText(groups[0].logs);
+  assert.equal(runAExport.includes("RUN_A_RESULT_CANARY"), true);
+  assert.equal(runAExport.includes("RUN_A_FINAL_CANARY"), true);
+  assert.equal(runAExport.includes("RUN_B_REASONING_CANARY"), false);
+  assert.equal(runAExport.includes("RUN_B_RESULT_CANARY"), false);
+  assert.equal(runAExport.includes("RUN_B_FINAL_CANARY"), false);
+  assert.equal(runAExport.includes("uploads/run-a"), true);
+  assert.equal(runAExport.includes("uploads/run-b.md"), false);
 
   const runADiagnostics = buildRunDiagnosticsJson(groups[0].logs);
   assert.equal(runADiagnostics.includes("RUN_A_REASONING_CANARY"), true);
@@ -2154,14 +2243,14 @@ test("buildRunActivityGroups keeps per-run diagnostics and JSONL copy isolated",
   assert.equal(runADiagnostics.includes("RUN_B_RESULT_CANARY"), false);
   assert.equal(runADiagnostics.includes("RUN_B_FINAL_CANARY"), false);
 
-  const runBClipboard = buildLogClipboardText(groups[1].logs);
-  assert.equal(runBClipboard.includes("RUN_B_RESULT_CANARY"), true);
-  assert.equal(runBClipboard.includes("RUN_B_FINAL_CANARY"), true);
-  assert.equal(runBClipboard.includes("RUN_A_REASONING_CANARY"), false);
-  assert.equal(runBClipboard.includes("RUN_A_RESULT_CANARY"), false);
-  assert.equal(runBClipboard.includes("RUN_A_FINAL_CANARY"), false);
-  assert.equal(runBClipboard.includes("uploads/run-b.md"), true);
-  assert.equal(runBClipboard.includes("uploads/run-a"), false);
+  const runBExport = buildLogClipboardText(groups[1].logs);
+  assert.equal(runBExport.includes("RUN_B_RESULT_CANARY"), true);
+  assert.equal(runBExport.includes("RUN_B_FINAL_CANARY"), true);
+  assert.equal(runBExport.includes("RUN_A_REASONING_CANARY"), false);
+  assert.equal(runBExport.includes("RUN_A_RESULT_CANARY"), false);
+  assert.equal(runBExport.includes("RUN_A_FINAL_CANARY"), false);
+  assert.equal(runBExport.includes("uploads/run-b.md"), true);
+  assert.equal(runBExport.includes("uploads/run-a"), false);
 });
 
 test("partitionVisibleLogs collapses excess info reasoning but preserves warnings", () => {

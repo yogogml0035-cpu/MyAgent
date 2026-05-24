@@ -95,9 +95,38 @@ function seedLargeLogTask(taskId, title) {
   const runId = `run-large-log-${Date.now()}`;
   const startedAt = nowIso();
   const events = [];
-  const thinkingCount = 1997;
+  const toolDeltaCount = 1350;
+  const thinkingCount = 800;
+  const oversizedToolArgs = `{"description":"${"x".repeat(2048)}TOOL_ARG_TAIL_MARKER`;
+  for (let index = 0; index < toolDeltaCount; index += 1) {
+    const createdAt = nowIso(index * 10);
+    events.push({
+      type: "tool_call",
+      message: "Calling tool: task",
+      createdAt,
+      level: "info",
+      payload: {
+        id: "call-large-task",
+        name: "task",
+        args: oversizedToolArgs,
+        raw_args: oversizedToolArgs,
+        partial: true,
+        is_subgraph: false,
+        live: {
+          schema_version: 1,
+          kind: "tool_call",
+          stage: "selecting_tool",
+          tool_name: "task",
+          tool_label: "调用工具",
+          tool_call_id: "call-large-task",
+          diagnostic_label: "tool_call_delta",
+          parameter_items: [{ key: "args", value: oversizedToolArgs.slice(0, 160), truncated: true }],
+        },
+      },
+    });
+  }
   for (let index = 0; index < thinkingCount; index += 1) {
-    const createdAt = nowIso(index * 15);
+    const createdAt = nowIso((toolDeltaCount + index) * 15);
     events.push({
       type: "assistant_thinking_delta",
       message: "thinking",
@@ -402,6 +431,7 @@ test("large logs stay responsive with lightweight projection", async ({
     expect(rowCount).toBeGreaterThan(0);
     expect(rowCount).toBeLessThan(120);
     expect(rowCount).toBeLessThan(largeLogSeed.eventCount);
+    await expect(largeLogPanel).not.toContainText("TOOL_ARG_TAIL_MARKER");
     await page.screenshot({
       fullPage: true,
       path: path.join(scenarioDir, "02-large-log-collapsed.png"),
@@ -428,6 +458,7 @@ test("large logs stay responsive with lightweight projection", async ({
           largeLogEventCount: largeLogSeed.eventCount,
           largeLogRunId: largeLogSeed.runId,
           largeLogVisibleRowCount: rowCount,
+          largeToolDeltaCount: 1350,
           logRegionClickedAfterScroll: true,
           stopButtonClickable: true,
         },

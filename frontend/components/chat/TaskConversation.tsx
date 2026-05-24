@@ -81,7 +81,6 @@ type TaskConversationProps = {
   copiedCopyKey: string;
   hasConversation: boolean;
   noticeMessages: ChatMessage[];
-  onCopyLogs: (logs: ExecutionLog[], copyKey?: string) => Promise<void>;
   onCopyText: (text: string, failureMessage?: string, copyKey?: string) => Promise<void>;
   onDownloadLogs: (logs: ExecutionLog[], runId: string, groupTitle: string) => Promise<void>;
   onDownloadArtifact: (artifact: Artifact) => Promise<void>;
@@ -94,7 +93,6 @@ export function TaskConversation({
   copiedCopyKey,
   hasConversation,
   noticeMessages,
-  onCopyLogs,
   onCopyText,
   onDownloadLogs,
   onDownloadArtifact,
@@ -294,7 +292,6 @@ export function TaskConversation({
                         onClick={() => void onDownloadArtifact(artifact)}
                         type="button"
                       >
-                        <span className="downloadButtonIcon" aria-hidden="true" />
                         下载
                       </button>
                     </div>
@@ -342,7 +339,6 @@ export function TaskConversation({
                 onClick={() => void onDownloadArtifact(artifact)}
                 type="button"
               >
-                <span className="downloadButtonIcon" aria-hidden="true" />
                 下载文件
               </button>
             </div>
@@ -362,8 +358,6 @@ export function TaskConversation({
     const groupActive = isTaskActive(group.status);
     const groupLogStatusText = formatRunLogStatus(group.status);
     const liveItems = buildLiveLogItems(group.logs, group.status);
-    const logCopyKey = `logs:${group.runId}`;
-    const isLogCopied = copiedCopyKey === logCopyKey;
     const openLogDetailCount = openLogDetailCounts[group.runId] ?? 0;
     const totalLogDetailCount = liveItems.length;
     const hasOpenLogDetails = openLogDetailCount > 0;
@@ -371,13 +365,6 @@ export function TaskConversation({
     const toggleLogDetailsTitle = hasOpenLogDetails
       ? `折叠${group.title}全部日志`
       : `展开${group.title}全部日志`;
-    const logCopyButtonClassName = [
-      "copyButton",
-      "traceCopyButton",
-      isLogCopied ? "copyButton-copied" : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
     const logToggleButtonClassName = [
       "traceLogToggleButton",
       hasOpenLogDetails ? "traceLogToggleButton-open" : "",
@@ -422,16 +409,6 @@ export function TaskConversation({
                 type="button"
               >
                 <span>{toggleLogDetailsLabel}</span>
-              </button>
-              <button
-                aria-label={isLogCopied ? `已复制${group.title}原始诊断日志` : `复制${group.title}原始诊断日志`}
-                className={logCopyButtonClassName}
-                disabled={group.logs.length === 0}
-                onClick={() => void onCopyLogs(group.logs, logCopyKey)}
-                title={isLogCopied ? "已复制原始诊断日志" : `复制${group.title}原始诊断日志（JSONL）`}
-                type="button"
-              >
-                <span aria-hidden="true" />
               </button>
             </div>
           </header>

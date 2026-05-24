@@ -10,6 +10,7 @@ import re
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
+from urllib.parse import unquote
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -136,6 +137,8 @@ class TaskRunner:
         self.context_builder = context_builder
         self.agent_store = agent_store
         self._active_runs: dict[str, asyncio.Task[None]] = {}
+        self._active_run_ids: dict[str, str] = {}
+        self._cancel_requested_run_ids: set[str] = set()
         self._memory_tasks: set[asyncio.Task[None]] = set()
 
     async def start(
@@ -157,7 +160,12 @@ class TaskRunner:
 
         task_workspace = self.settings.workspace_root / task_id
         task_workspace.mkdir(parents=True, exist_ok=True)
-        tools = get_platform_tools(self.settings, task_id=task_id, storage=self.storage)
+        tools = get_platform_tools(
+            self.settings,
+            task_id=task_id,
+            run_id=run_id,
+            storage=self.storage,
+        )
 
         agent = build_agent(
             self.settings,
@@ -265,6 +273,8 @@ class TaskRunner:
             final_state: dict[str, Any] = {}
 
             def _append_event(record: EventRecord) -> None:
+                if run_id in self._cancel_requested_run_ids:
+                    raise asyncio.CancelledError
                 scoped_record = _bind_event_to_run(record, run_id)
                 collected.append(scoped_record)
                 storage.append_event(
@@ -405,8 +415,11 @@ class TaskRunner:
                 raise
             finally:
                 self._active_runs.pop(task_id, None)
+                self._active_run_ids.pop(task_id, None)
+                self._cancel_requested_run_ids.discard(run_id)
 
         self._active_runs[task_id] = asyncio.create_task(_run())
+        self._active_run_ids[task_id] = run_id
 
     async def _recall_memory_context(self, message: str) -> str | None:
         memory_service = self.memory_service
@@ -484,10 +497,24 @@ class TaskRunner:
         task = self._active_runs.get(task_id)
         if task is None:
             return
-        task.cancel()
+        self.request_cancel(task_id)
         with contextlib.suppress(asyncio.CancelledError):
             await task
         self._active_runs.pop(task_id, None)
+        self._active_run_ids.pop(task_id, None)
+
+    def request_cancel(self, task_id: str) -> str | None:
+        """Request cancellation and return the active run id without waiting."""
+        task = self._active_runs.get(task_id)
+        if task is None or task.done():
+            return None
+        run_id = self._active_run_ids.get(task_id)
+        if run_id:
+            self._cancel_requested_run_ids.add(run_id)
+        task.cancel()
+        self._active_runs.pop(task_id, None)
+        self._active_run_ids.pop(task_id, None)
+        return run_id
 
     def is_running(self, task_id: str) -> bool:
         """Check if a task has an active run."""
@@ -648,13 +675,22 @@ def _claimed_output_filenames(final_answer: str | None) -> set[str]:
         return set()
     claimed: set[str] = set()
     for match in CLAIMED_FILE_PATTERN.finditer(final_answer):
-        raw_path = match.group("path").strip().rstrip(".,;:)]}>")
-        name = Path(raw_path.replace("\\", "/")).name
-        suffix = Path(name).suffix.lower()
-        if not name or suffix not in DELIVERABLE_SUFFIX_TO_KIND:
+        name = _canonical_claimed_filename(match.group("path"))
+        if name is None:
             continue
         claimed.add(name)
     return claimed
+
+
+def _canonical_claimed_filename(raw_path: str) -> str | None:
+    token = raw_path.strip().rstrip(".,;:，。；：、")
+    token = re.sub(r"^[*_`\[\(（【]+", "", token)
+    token = re.sub(r"[*_`\]\)）】]+$", "", token)
+    name = unquote(Path(token.replace("\\", "/")).name)
+    suffix = Path(name).suffix.lower()
+    if not name or suffix not in DELIVERABLE_SUFFIX_TO_KIND:
+        return None
+    return name
 
 
 def _kind_to_suffixes(kind: str) -> set[str]:

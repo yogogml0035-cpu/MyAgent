@@ -282,6 +282,57 @@ class TestStreamAgentSubgraphFiltering:
         ]
 
     @pytest.mark.asyncio
+    async def test_repeated_partial_tool_call_chunks_are_bucketed(self):
+        chunks: list[Any] = [
+            {
+                "type": "messages",
+                "ns": [],
+                "data": (
+                    AIMessageChunk(
+                        content="",
+                        tool_call_chunks=[
+                            {
+                                "name": "task",
+                                "args": '{"description":"',
+                                "id": "call-large",
+                                "index": 0,
+                            }
+                        ],
+                    ),
+                    {},
+                ),
+            }
+        ]
+        chunks.extend(
+            {
+                "type": "messages",
+                "ns": [],
+                "data": (
+                    AIMessageChunk(
+                        content="",
+                        tool_call_chunks=[
+                            {
+                                "name": None,
+                                "args": "x" * 100,
+                                "id": None,
+                                "index": 0,
+                            }
+                        ],
+                    ),
+                    {},
+                ),
+            }
+            for _ in range(30)
+        )
+
+        events = await _collect_stream_events(chunks)
+        partials = [event for event in events if event["data"]["partial"] is True]
+
+        assert len(partials) < 8
+        assert partials[0]["data"]["raw_args"].startswith('{"description":"')
+        assert len(partials[-1]["data"]["raw_args"]) >= 2048
+
+    @pytest.mark.asyncio
     async def test_empty_tool_call_args_chunk_waits_for_final_call_before_result(self):
         events = await _collect_stream_events(
             [

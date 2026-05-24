@@ -1830,36 +1830,6 @@ p {
   color: var(--primary-active);
 }
 
-.downloadButtonIcon {
-  position: relative;
-  width: 14px;
-  height: 14px;
-  flex: 0 0 auto;
-}
-
-.downloadButtonIcon::before {
-  position: absolute;
-  content: "";
-  left: 6px;
-  top: 1px;
-  width: 2px;
-  height: 8px;
-  border-radius: 999px;
-  background: currentColor;
-}
-
-.downloadButtonIcon::after {
-  position: absolute;
-  content: "";
-  left: 3px;
-  top: 5px;
-  width: 8px;
-  height: 8px;
-  border-right: 2px solid currentColor;
-  border-bottom: 2px solid currentColor;
-  transform: rotate(45deg);
-}
-
 .downloadCardBody {
   display: flex;
   align-items: center;

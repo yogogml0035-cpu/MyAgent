@@ -31,6 +31,7 @@ _LEVEL_MAP: dict[str, Literal["info", "success", "warning", "error"]] = {
 
 _MAX_PARAMETER_ITEMS = 8
 _MAX_PARAMETER_TEXT = 160
+_MAX_PARTIAL_TOOL_ARG_PAYLOAD_TEXT = 1000
 _THINKING_DISPLAY_TEXT = "AI正在思考..."
 
 
@@ -75,7 +76,7 @@ def convert_stream_event(
         }
         for key in ("tool_call_id", "tool_call_ids", "tool_calls"):
             if key in data:
-                payload[key] = data[key]
+                payload[key] = _compact_thinking_tool_call_metadata(key, data[key])
     elif record_type == "assistant_answer_delta":
         payload = {
             "schema_version": 1,
@@ -88,6 +89,8 @@ def convert_stream_event(
             "snapshot_keys": list(data.keys()) if isinstance(data, dict) else [],
             "is_subgraph": data.get("is_subgraph", False),
         }
+    elif record_type == "tool_call":
+        payload = {**_compact_tool_call_payload(data), "live": _build_live_metadata(record_type, data)}
     else:
         payload = {**data, "live": _build_live_metadata(record_type, data)}
 
@@ -192,6 +195,7 @@ def _tool_label(tool_name: str) -> str:
         "inspect_resource",
         "read_resource_text",
         "read_resource_table",
+        "create_word_document",
     }:
         return "处理资源文件"
     if "tavily" in normalized or "search" in normalized:
@@ -261,6 +265,39 @@ def _parameter_value(value: Any) -> dict[str, Any] | None:
     truncated = len(text) > _MAX_PARAMETER_TEXT
     display_value = text[:_MAX_PARAMETER_TEXT] if truncated else text
     return {"value": display_value, "truncated": truncated}
+
+
+def _compact_thinking_tool_call_metadata(key: str, value: Any) -> Any:
+    if key != "tool_calls" or not isinstance(value, list):
+        return value
+    return [
+        _compact_tool_call_payload(item) if isinstance(item, dict) else item
+        for item in value
+    ]
+
+
+def _compact_tool_call_payload(data: dict[str, Any]) -> dict[str, Any]:
+    if data.get("partial") is not True:
+        return data
+
+    payload = dict(data)
+    for key in ("args", "raw_args"):
+        if key not in payload:
+            continue
+        compacted, original_length = _compact_partial_tool_arg_value(payload[key])
+        if original_length is None:
+            continue
+        payload[key] = compacted
+        payload[f"{key}_truncated"] = True
+        payload[f"{key}_original_chars"] = original_length
+    return payload
+
+
+def _compact_partial_tool_arg_value(value: Any) -> tuple[Any, int | None]:
+    text = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, default=str)
+    if len(text) <= _MAX_PARTIAL_TOOL_ARG_PAYLOAD_TEXT:
+        return value, None
+    return text[:_MAX_PARTIAL_TOOL_ARG_PAYLOAD_TEXT].rstrip() + "...", len(text)
 
 
 def _status_update_stage(node: str) -> tuple[str, str]:

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -19,17 +20,21 @@ from app.storage import (
     UPLOAD_FORMATS,
     build_upload_resource_ref,
     file_sha256,
+    normalize_artifact_name,
     source_format_for_upload,
 )
 
 RESOURCE_TOOL_SYSTEM_PROMPT = """上传文件属于任务资源，不是聊天上下文。
-当用户询问上传文件时，优先使用资源工具。先检查或列出资源，再只读取所需的文本页或表格范围。不要假设上传文件内容已经直接出现在当前对话中。"""
+当用户询问上传文件时，优先使用资源工具。先检查或列出资源，再只读取所需的文本页或表格范围。不要假设上传文件内容已经直接出现在当前对话中。
+读取 Word/docx 内容时，使用 inspect_resource、read_resource_text 或 read_resource_table。
+生成 Word/docx 交付文件时，必须使用 create_word_document 生成并登记产物；把 Markdown/纯文本正文作为参数交给工具，由工具转换为 Word 原生标题、列表和表格。不要调用 bash、shell、python、execute，也不要把简单文档生成委派给 task 子任务。当前运行环境不提供命令执行后端。"""
 
 DEFAULT_TEXT_LIMIT = 40
 MAX_TEXT_LIMIT = 200
 DEFAULT_TABLE_LIMIT = 25
 MAX_TABLE_LIMIT = 100
 MAX_TABLE_COLUMNS = 80
+MAX_WORD_MARKDOWN_CHARS = 120_000
 
 
 @dataclass(frozen=True)
@@ -109,13 +114,24 @@ class ProvisionedResourceUnit:
     task_workspace: Path
     upload_dir: Path
     resources: tuple[ResourceRecord, ...]
+    run_id: str | None = None
+    storage: Any | None = None
 
 
 class LocalResourceExecutionAdapter:
     """In-process Provision/Execute adapter for uploaded task resources."""
 
-    def __init__(self, *, task_id: str, workspace_root: Path):
+    def __init__(
+        self,
+        *,
+        task_id: str,
+        workspace_root: Path,
+        run_id: str | None = None,
+        storage: Any | None = None,
+    ):
         self.request = ProvisionRequest(task_id=task_id, workspace_root=workspace_root)
+        self.run_id = run_id
+        self.storage = storage
 
     def provision(self) -> ProvisionedResourceUnit:
         task_workspace = _resolve_task_workspace(self.request.workspace_root, self.request.task_id)
@@ -127,6 +143,8 @@ class LocalResourceExecutionAdapter:
             task_workspace=task_workspace,
             upload_dir=upload_dir,
             resources=resources,
+            run_id=self.run_id,
+            storage=self.storage,
         )
 
     def execute(self, request: ExecutionRequest) -> ExecutionResult:
@@ -144,6 +162,8 @@ class LocalResourceExecutionAdapter:
                 return _read_resource_text(unit, request.input)
             if request.tool_name == "read_resource_table":
                 return _read_resource_table(unit, request.input)
+            if request.tool_name == "create_word_document":
+                return _create_word_document(unit, request.input)
             return ExecutionResult.failure(
                 "unknown_tool",
                 f"未知资源工具：{request.tool_name}",
@@ -152,8 +172,19 @@ class LocalResourceExecutionAdapter:
             return ExecutionResult.failure("execution_error", str(exc), retryable=True)
 
 
-def create_resource_tools(*, task_id: str, workspace_root: Path) -> list[BaseTool]:
-    adapter = LocalResourceExecutionAdapter(task_id=task_id, workspace_root=workspace_root)
+def create_resource_tools(
+    *,
+    task_id: str,
+    workspace_root: Path,
+    run_id: str | None = None,
+    storage: Any | None = None,
+) -> list[BaseTool]:
+    adapter = LocalResourceExecutionAdapter(
+        task_id=task_id,
+        workspace_root=workspace_root,
+        run_id=run_id,
+        storage=storage,
+    )
 
     @tool
     def list_uploaded_resources() -> str:
@@ -201,7 +232,27 @@ def create_resource_tools(*, task_id: str, workspace_root: Path) -> list[BaseToo
             )
         ).to_json()
 
-    return [list_uploaded_resources, inspect_resource, read_resource_text, read_resource_table]
+    tools: list[BaseTool] = [
+        list_uploaded_resources,
+        inspect_resource,
+        read_resource_text,
+        read_resource_table,
+    ]
+
+    if run_id and storage is not None:
+        @tool
+        def create_word_document(filename: str, markdown: str) -> str:
+            """从 Markdown/纯文本内容生成当前 run 的可下载 Word .docx 产物，表格会转换为 Word 原生表格。"""
+            return adapter.execute(
+                ExecutionRequest(
+                    "create_word_document",
+                    {"filename": filename, "markdown": markdown},
+                )
+            ).to_json()
+
+        tools.append(create_word_document)
+
+    return tools
 
 
 def build_resource_manifest(task_id: str, workspace_root: Path) -> dict[str, Any]:
@@ -372,6 +423,64 @@ def _read_resource_table(unit: ProvisionedResourceUnit, input_data: dict[str, An
     )
 
 
+def _create_word_document(
+    unit: ProvisionedResourceUnit,
+    input_data: dict[str, Any],
+) -> ExecutionResult:
+    if unit.run_id is None or unit.storage is None:
+        return ExecutionResult.failure(
+            "artifact_context_unavailable",
+            "当前运行缺少产物登记上下文，无法生成可下载 Word 文件",
+        )
+
+    raw_markdown = input_data.get("markdown")
+    markdown = raw_markdown if isinstance(raw_markdown, str) else str(raw_markdown or "")
+    markdown = markdown.strip()
+    if not markdown:
+        return ExecutionResult.failure(
+            "empty_document",
+            "create_word_document 需要提供 markdown 正文",
+        )
+    if len(markdown) > MAX_WORD_MARKDOWN_CHARS:
+        return ExecutionResult.failure(
+            "document_too_large",
+            f"Word 正文过长，请控制在 {MAX_WORD_MARKDOWN_CHARS} 字以内",
+        )
+
+    artifact_name = _word_artifact_name(input_data.get("filename"))
+    artifact_dir = unit.storage.run_artifact_dir(unit.task_id, unit.run_id)
+    artifact_dir.mkdir(parents=True, exist_ok=True)
+    artifact_path = (artifact_dir / artifact_name).resolve()
+    if artifact_dir.resolve() not in artifact_path.parents:
+        return ExecutionResult.failure("invalid_artifact_path", "Word 产物路径无效")
+
+    _write_docx_from_markdown(artifact_path, markdown)
+    unit.storage.record_run_artifact(unit.task_id, unit.run_id, artifact_name)
+    relative_path = artifact_path.relative_to(unit.task_workspace)
+    return ExecutionResult.success(
+        {
+            "schema_version": 1,
+            "artifact_name": artifact_name,
+            "artifact_type": "word",
+            "run_id": unit.run_id,
+            "relative_path": relative_path.as_posix(),
+            "download_url": (
+                f"/api/tasks/{unit.task_id}/runs/{unit.run_id}/artifacts/{artifact_name}"
+            ),
+            "size_bytes": artifact_path.stat().st_size,
+        }
+    )
+
+
+def _word_artifact_name(raw_filename: Any) -> str:
+    candidate = str(raw_filename or "generated-document.docx").strip()
+    if not candidate:
+        candidate = "generated-document.docx"
+    if Path(candidate).suffix.lower() != ".docx":
+        candidate = f"{Path(candidate).stem or candidate}.docx"
+    return normalize_artifact_name(Path(candidate).name)
+
+
 def _read_text_file(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
@@ -412,6 +521,145 @@ def _paginate_blocks(
         "total_pages": max(1, math.ceil(len(blocks) / limit)) if limit else 1,
         "items": blocks[start:end],
     }
+
+
+def _write_docx_from_markdown(path: Path, markdown: str) -> None:
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt
+
+    document = Document()
+    styles = document.styles
+    styles["Normal"].font.name = "Microsoft YaHei"
+    styles["Normal"].font.size = Pt(10.5)
+
+    lines = markdown.splitlines()
+    title_written = False
+    wrote_content = False
+    index = 0
+    while index < len(lines):
+        raw_line = lines[index]
+        line = raw_line.strip()
+        if not line:
+            index += 1
+            continue
+        if _is_markdown_fence(line):
+            index += 1
+            continue
+        if _is_markdown_horizontal_rule(line):
+            index += 1
+            continue
+        table_rows, consumed = _consume_markdown_table(lines, index)
+        if table_rows is not None:
+            _add_docx_table(document, table_rows)
+            wrote_content = True
+            index += consumed
+            continue
+        heading = re.match(r"^(#{1,6})\s+(.+)$", line)
+        if heading:
+            level = min(len(heading.group(1)), 4)
+            text = _plain_markdown_text(heading.group(2))
+            paragraph = document.add_heading(text, level=level)
+            if not title_written and level == 1:
+                paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+                title_written = True
+            wrote_content = True
+            index += 1
+            continue
+        bullet = re.match(r"^[-*]\s+(.+)$", line)
+        if bullet:
+            document.add_paragraph(_plain_markdown_text(bullet.group(1)), style="List Bullet")
+            wrote_content = True
+            index += 1
+            continue
+        numbered = re.match(r"^\d+[.)、]\s+(.+)$", line)
+        if numbered:
+            document.add_paragraph(_plain_markdown_text(numbered.group(1)), style="List Number")
+            wrote_content = True
+            index += 1
+            continue
+        document.add_paragraph(_plain_markdown_text(line))
+        wrote_content = True
+        index += 1
+
+    if not wrote_content:
+        document.add_paragraph(markdown)
+    document.save(str(path))
+
+
+def _consume_markdown_table(lines: list[str], start: int) -> tuple[list[list[str]] | None, int]:
+    if start + 1 >= len(lines):
+        return None, 0
+    header = _split_markdown_table_row(lines[start])
+    separator = _split_markdown_table_row(lines[start + 1])
+    if not header or not _is_markdown_table_separator(separator):
+        return None, 0
+
+    rows = [header]
+    index = start + 2
+    while index < len(lines):
+        row = _split_markdown_table_row(lines[index])
+        if not row:
+            break
+        rows.append(row)
+        index += 1
+    return _normalize_table_rows(rows), index - start
+
+
+def _split_markdown_table_row(line: str) -> list[str] | None:
+    stripped = line.strip()
+    if "|" not in stripped:
+        return None
+    if stripped.startswith("|"):
+        stripped = stripped[1:]
+    if stripped.endswith("|"):
+        stripped = stripped[:-1]
+    cells = [cell.strip() for cell in stripped.split("|")]
+    return cells if len(cells) >= 2 else None
+
+
+def _is_markdown_table_separator(cells: list[str] | None) -> bool:
+    if not cells:
+        return False
+    return all(re.fullmatch(r":?-{3,}:?", cell.strip()) for cell in cells)
+
+
+def _normalize_table_rows(rows: list[list[str]]) -> list[list[str]]:
+    column_count = max((len(row) for row in rows), default=0)
+    return [row + [""] * (column_count - len(row)) for row in rows]
+
+
+def _add_docx_table(document: Any, rows: list[list[str]]) -> None:
+    if not rows or not rows[0]:
+        return
+    table = document.add_table(rows=len(rows), cols=len(rows[0]))
+    table.style = "Table Grid"
+    for row_index, row in enumerate(rows):
+        for column_index, cell_text in enumerate(row):
+            cell = table.cell(row_index, column_index)
+            paragraph = cell.paragraphs[0]
+            paragraph.text = ""
+            run = paragraph.add_run(_plain_markdown_text(cell_text))
+            if row_index == 0:
+                run.bold = True
+
+
+def _is_markdown_horizontal_rule(line: str) -> bool:
+    return bool(re.fullmatch(r"[-*_]{3,}", line))
+
+
+def _is_markdown_fence(line: str) -> bool:
+    return line.startswith("```") or line.startswith("~~~")
+
+
+def _plain_markdown_text(text: str) -> str:
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", text)
+    text = re.sub(r"`([^`]+)`", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = re.sub(r"\*([^*]+)\*", r"\1", text)
+    text = re.sub(r"__([^_]+)__", r"\1", text)
+    text = re.sub(r"_([^_]+)_", r"\1", text)
+    return text.strip()
 
 
 def _inspect_docx(path: Path) -> dict[str, Any]:

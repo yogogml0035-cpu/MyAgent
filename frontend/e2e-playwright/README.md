@@ -54,9 +54,9 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line
 ```
 
-The task-log artifact delivery spec uses the real frontend on `3001` and backend on `8001`; it seeds one 2000+ event running task, one completed `.docx` artifact run, and one delivery-required task that stays in `needs_input` when no artifact exists. The browser flow confirms the main workspace does not render 2000+ expanded live rows, the page stays interactive while logs are visible, the final reply area shows a run-scoped download card, the `.docx` download starts with the artifact filename, and the missing-delivery run shows `文件未生成或未登记为产物` or equivalent guidance. Save screenshots and downloaded samples under `e2e-YYYYMMDDHHMMSS/task-log-artifact-delivery/` and do not commit that evidence directory.
+The task-log artifact delivery spec uses the real frontend on `3001` and backend on `8001`; it seeds one 2000+ event running task with oversized tool-call partial deltas, one completed `.docx` artifact run, and one delivery-required task that stays in `needs_input` when no artifact exists. The browser flow confirms the main workspace does not render 2000+ expanded live rows, oversized partial payload tails are not rendered into the page, the page stays interactive while logs are visible, the final reply area shows a run-scoped download card, the `.docx` download starts with the artifact filename, and the missing-delivery run shows `文件未生成或未登记为产物` or equivalent guidance. Save screenshots and downloaded samples under `e2e-YYYYMMDDHHMMSS/task-log-artifact-delivery/` and do not commit that evidence directory.
 
-Run the multi-session thinking audit acceptance test from `frontend/` when changing cross-session busy scope, same-session send protection, run-scoped diagnostics, thinking/tool event rendering, or the JSONL copy boundary:
+Run the multi-session thinking audit acceptance test from `frontend/` when changing cross-session busy scope, same-session send protection, run-scoped diagnostics, thinking/tool event rendering, or the run-level JSONL download boundary:
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \

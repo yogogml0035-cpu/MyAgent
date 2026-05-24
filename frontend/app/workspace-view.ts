@@ -65,6 +65,7 @@ export type LiveToolLogItem = {
   resultText: string;
   resultStatus?: NonNullable<ExecutionLog["live"]>["resultStatus"];
   details: LiveLogDiagnostics;
+  mergedEventCount?: number;
 };
 
 export type LiveStatusLogItem = {
@@ -388,6 +389,7 @@ export function buildLiveLogItems(
 
   function upsertToolCallItem(log: ExecutionLog, live: NonNullable<ExecutionLog["live"]>) {
     const existing = findToolCallStageItem(toolCallItemsByStageKey, live);
+    const isDelta = isToolCallDeltaLog(log, live);
     if (existing) {
       existing.createdAt = existing.createdAt || log.createdAt;
       existing.level = log.level || existing.level;
@@ -395,7 +397,12 @@ export function buildLiveLogItems(
       existing.title = formatLiveToolCallTitle(live);
       existing.toolName = live.toolName || existing.toolName;
       existing.parameterText = formatLiveToolParameterSummary(live.parameterItems) || existing.parameterText;
-      existing.details = mergeLiveLogDiagnostics(existing.details, buildLogDiagnostics(log));
+      if (isDelta) {
+        existing.mergedEventCount = (existing.mergedEventCount ?? 1) + 1;
+        existing.details = buildToolCallDeltaDiagnostics(log, existing.mergedEventCount);
+      } else {
+        existing.details = mergeLiveLogDiagnostics(existing.details, buildLogDiagnostics(log));
+      }
       refreshToolEventDisplayJson(existing);
       return;
     }
@@ -411,7 +418,8 @@ export function buildLiveLogItems(
       toolName: live.toolName,
       parameterText: formatLiveToolParameterSummary(live.parameterItems),
       resultText: formatLiveToolPendingText(live.toolName),
-      details: buildLogDiagnostics(log),
+      details: isDelta ? buildToolCallDeltaDiagnostics(log, 1) : buildLogDiagnostics(log),
+      mergedEventCount: isDelta ? 1 : undefined,
     };
     refreshToolEventDisplayJson(toolItem);
     items.push(toolItem);
@@ -616,7 +624,7 @@ function formatRawLogRecordJson(log: ExecutionLog) {
 function buildRunDiagnosticRecord(log: ExecutionLog) {
   const fallback = fallbackRawLogRecord(log);
   if (log.memoryContext || !isPlainRecord(log.rawRecord)) {
-    return fallback;
+    return compactDiagnosticRecord(fallback);
   }
 
   const mergedRecord: Record<string, unknown> = {
@@ -632,7 +640,7 @@ function buildRunDiagnosticRecord(log: ExecutionLog) {
     });
   }
 
-  return stripUndefinedValues(mergedRecord);
+  return stripUndefinedValues(compactDiagnosticRecord(mergedRecord));
 }
 
 function fallbackRawLogRecord(log: ExecutionLog) {
@@ -676,6 +684,105 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
 
 function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
   return buildLiveLogDiagnosticsFromRecord(rawLogRecordForDiagnostics(log));
+}
+
+const TOOL_CALL_PARTIAL_ARG_PREVIEW_CHARS = 800;
+const CLOSED_STREAM_RAW_RECORD_LIMIT = 20;
+
+function compactDiagnosticRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const payload = isPlainRecord(record.payload) ? record.payload : undefined;
+  if (!payload) {
+    return record;
+  }
+
+  const compactPayload = compactDiagnosticPayload(payload);
+  return compactPayload === payload ? record : { ...record, payload: compactPayload };
+}
+
+function compactDiagnosticPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  let changed = false;
+  const next: Record<string, unknown> = { ...payload };
+
+  if (isPartialToolCallPayload(payload)) {
+    for (const key of ["args", "raw_args", "rawArgs"]) {
+      if (!Object.prototype.hasOwnProperty.call(payload, key)) {
+        continue;
+      }
+      const compacted = compactToolCallArgumentValue(payload[key]);
+      if (compacted.truncated) {
+        next[key] = compacted.value;
+        next[`${key}_truncated`] = true;
+        next[`${key}_original_chars`] = compacted.originalChars;
+        changed = true;
+      }
+    }
+  }
+
+  const toolCalls = payload.tool_calls;
+  if (Array.isArray(toolCalls)) {
+    const compactedToolCalls = toolCalls.map((entry) =>
+      isPlainRecord(entry) ? compactDiagnosticPayload(entry) : entry,
+    );
+    if (compactedToolCalls.some((entry, index) => entry !== toolCalls[index])) {
+      next.tool_calls = compactedToolCalls;
+      changed = true;
+    }
+  }
+
+  return changed ? next : payload;
+}
+
+function isPartialToolCallPayload(payload: Record<string, unknown>) {
+  if (payload.partial === true || payload.is_partial === true || payload.isPartial === true) {
+    return true;
+  }
+  const live = isPlainRecord(payload.live) ? payload.live : undefined;
+  return live?.diagnostic_label === "tool_call_delta" || live?.diagnosticLabel === "tool_call_delta";
+}
+
+function compactToolCallArgumentValue(value: unknown) {
+  const text = typeof value === "string" ? value : formatDiagnosticJson(value);
+  if (text.length <= TOOL_CALL_PARTIAL_ARG_PREVIEW_CHARS) {
+    return { value, truncated: false, originalChars: text.length };
+  }
+  return {
+    value: `${text.slice(0, TOOL_CALL_PARTIAL_ARG_PREVIEW_CHARS).trimEnd()}...`,
+    truncated: true,
+    originalChars: text.length,
+  };
+}
+
+function isToolCallDeltaLog(
+  log: ExecutionLog,
+  live: NonNullable<ExecutionLog["live"]>,
+) {
+  if (log.type !== "tool_call" || live.kind !== "tool_call") {
+    return false;
+  }
+  if (live.diagnosticLabel === "tool_call_delta" || live.stage === "selecting_tool") {
+    return true;
+  }
+  const payload = isPlainRecord(log.rawRecord?.payload) ? log.rawRecord.payload : undefined;
+  return Boolean(payload && isPartialToolCallPayload(payload));
+}
+
+function buildToolCallDeltaDiagnostics(
+  log: ExecutionLog,
+  deltaCount: number,
+): LiveLogDiagnostics {
+  const record = buildRunDiagnosticRecord(log);
+  const payload = isPlainRecord(record.payload) ? record.payload : {};
+  const summaryRecord = stripUndefinedValues({
+    ...record,
+    payload: {
+      ...payload,
+      tool_call_delta_count: deltaCount,
+      earlier_tool_call_deltas_hidden: deltaCount > 1,
+    },
+  });
+  return buildLiveLogDiagnosticsFromRecords([summaryRecord], summaryRecord, {
+    replaceDisplayOnMerge: true,
+  });
 }
 
 function buildAnswerStreamDiagnostics({
@@ -839,9 +946,33 @@ function withLiveLogRawRecords(
 }
 
 function buildClosedStreamRawRecords(logs: ExecutionLog[]) {
-  return logs.flatMap((log) =>
+  const rawRecords = logs.flatMap((log) =>
     isPlainRecord(log.rawRecord) ? [buildRunDiagnosticRecord(log)] : [],
   );
+  if (rawRecords.length <= CLOSED_STREAM_RAW_RECORD_LIMIT) {
+    return rawRecords;
+  }
+
+  const firstLog = logs[0];
+  const lastLog = logs.at(-1);
+  const streamType = lastLog?.type ?? firstLog?.type ?? "stream_delta";
+  return [
+    stripUndefinedValues({
+      type: streamType,
+      message:
+        streamType === "assistant_answer_delta"
+          ? "AI生成流式片段已压缩"
+          : "AI思考流式片段已压缩",
+      created_at: lastLog?.createdAt ?? firstLog?.createdAt,
+      run_id: lastLog?.runId ?? firstLog?.runId,
+      payload: {
+        schema_version: 1,
+        chunk_count: rawRecords.length,
+        content_hidden: true,
+        omitted_raw_record_count: Math.max(0, rawRecords.length - 1),
+      },
+    }),
+  ];
 }
 
 function buildCompactHiddenLogDisplayRecords(logs: ExecutionLog[]) {
@@ -904,6 +1035,9 @@ function buildToolCallDisplayRecord(item: LiveToolLogItem) {
       (toolName ? formatLiveToolLabel({ toolName } as NonNullable<ExecutionLog["live"]>) : undefined),
     tool_call_id: finalToolCall?.toolCallId,
     args: finalToolCall?.args,
+    args_truncated: finalToolCall?.argsTruncated,
+    args_original_chars: finalToolCall?.argsOriginalChars,
+    delta_count: item.mergedEventCount && item.mergedEventCount > 1 ? item.mergedEventCount : undefined,
   });
 }
 
@@ -968,6 +1102,20 @@ function readToolCallDiagnostic(record: unknown) {
     ),
     partial: readDiagnosticBoolean(payload.partial, payload.is_partial, payload.isPartial),
     args: normalizeToolArguments(argsValue),
+    argsTruncated: readDiagnosticBoolean(
+      payload.args_truncated,
+      payload.argsTruncated,
+      payload.raw_args_truncated,
+      payload.rawArgs_truncated,
+      payload.rawArgsTruncated,
+    ),
+    argsOriginalChars: readDiagnosticNumber(
+      payload.args_original_chars,
+      payload.argsOriginalChars,
+      payload.raw_args_original_chars,
+      payload.rawArgs_original_chars,
+      payload.rawArgsOriginalChars,
+    ),
   };
 }
 
@@ -1039,6 +1187,15 @@ function readDiagnosticString(...values: unknown[]) {
 function readDiagnosticBoolean(...values: unknown[]) {
   for (const value of values) {
     if (typeof value === "boolean") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readDiagnosticNumber(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
       return value;
     }
   }

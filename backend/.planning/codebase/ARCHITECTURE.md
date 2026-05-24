@@ -97,6 +97,7 @@ FastAPI app (`backend/app/main.py`)
 6. `stream_agent(...)` 读取 LangGraph v2 stream modes 并输出规范化事件。
 7. `convert_stream_event(...)` 转成 `EventRecord`，storage 按 task seq 落库。
 8. Runner 提取最终答案，更新 task 终态，追加 `final_answer` 和终端事件，并异步调度记忆写入。
+9. 取消请求走快速返回路径：任务 API 调用 runner 的 no-wait cancel request 后立即把当前 run 标记为 `cancelled` 并追加 run-scoped `task_cancelled` event，后台 asyncio task 再异步收敛。
 
 ### SSE 路径
 
@@ -112,6 +113,7 @@ FastAPI app (`backend/app/main.py`)
 3. Storage 校验文件名、扩展名、重复、大小、JSON 内容和请求限制，写入 `<task>/uploads/`。
 4. Storage 追加 `file_uploaded` 事件和稳定 `resource_ref`。
 5. 下一轮 run 中，Runner 注入资源 manifest，agent 通过资源工具按需读取。
+6. Word/docx 交付生成走 `create_word_document`，该工具接收 Markdown/纯文本并转换为 Word 原生标题、列表和表格，然后直接生成并登记当前 run artifact；当前 backend 不提供 shell/python/execute 命令执行能力，不应通过 `bash`、`execute` 或 `task` 子代理生成简单 Word 文件。
 
 ### 产物下载路径
 
@@ -163,12 +165,14 @@ FastAPI app (`backend/app/main.py`)
 - 不要把原始 LangGraph chunks 直接推给浏览器；必须规范化、落库，再由 SSE 投影。
 - 不要把 worker 数调大来“扩容”当前 runner；需要先设计外部队列、租约、心跳和跨进程事件发布。
 - 不要假设上传文件内容已在 chat context 中；agent 必须通过资源工具读取。
+- 不要让模型调用 `bash`、`execute` 或子代理来生成 Word/docx 交付文件；使用 `create_word_document`，并依赖工具内 Markdown 到 Word 转换和 storage 登记 run-scoped artifact。
 
 ## 错误处理
 
 - API route 把缺失/无效状态映射为 `HTTPException`，常见状态码为 400、401/403、404、409、413。
 - 请求体校验错误被转换为前端可读的稳定消息。
 - runner 超时、取消和异常都要写入终端事件和 task 状态。
+- tool-call partial 参数流必须限流并截断持久化 payload；最终完整 tool call 仍可保留完整参数，避免字符级 partial 把 Postgres/SSE/前端日志拖垮。
 - 记忆 recall、资源 manifest 或事件 payload 生成失败时，如果不影响主 run，应记录并降级继续。
 - 工具函数对预期失败返回结构化错误或用户可读错误字符串，不应让 agent run 崩溃。
 

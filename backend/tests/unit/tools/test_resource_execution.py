@@ -12,6 +12,7 @@ from app.execution.resources import (
     create_resource_tools,
     format_resource_manifest_message,
 )
+from tests.fakes import InMemoryTaskStorage
 
 
 def _task_upload_dir(tmp_path, task_id: str):
@@ -205,6 +206,64 @@ class TestLocalResourceExecutionAdapter:
         assert result["ok"] is True
         assert result["data"]["format"] == "json"
         assert result["data"]["structure"]["top_level_keys"] == ["name"]
+
+    def test_create_word_document_writes_run_artifact(self, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path)
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
+        run_result = storage.start_run(
+            state.task_id,
+            message="生成 Word 总结",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+        tools = {
+            tool.name: tool
+            for tool in create_resource_tools(
+                task_id=state.task_id,
+                workspace_root=tmp_path,
+                run_id=run_id,
+                storage=storage,
+            )
+        }
+
+        result = json.loads(
+            tools["create_word_document"].invoke(
+                {
+                    "filename": "技术参数总结.docx",
+                    "markdown": (
+                        "```markdown\n"
+                        "# 技术参数总结\n\n"
+                        "| 项目 | 内容 |\n"
+                        "| --- | --- |\n"
+                        "| 屏幕规格 | ≥30英寸 |\n"
+                        "| 预算 | 140万元 |\n\n"
+                        "- 符合 DICOM 3.14 标准\n"
+                        "```"
+                    ),
+                }
+            )
+        )
+
+        assert result["ok"] is True
+        assert result["data"]["artifact_name"] == "技术参数总结.docx"
+        artifact_path = storage.resolve_run_artifact(
+            state.task_id,
+            run_id,
+            "技术参数总结.docx",
+        )
+        assert artifact_path.exists()
+        document = Document(str(artifact_path))
+        text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        assert "技术参数总结" in text
+        assert len(document.tables) == 1
+        assert document.tables[0].cell(0, 0).text == "项目"
+        assert document.tables[0].cell(1, 0).text == "屏幕规格"
+        assert document.tables[0].cell(1, 1).text == "≥30英寸"
+        assert all("| --- |" not in paragraph.text for paragraph in document.paragraphs)
+        assert all("```" not in paragraph.text for paragraph in document.paragraphs)
+        assert "符合 DICOM 3.14 标准" in text
 
     def test_resource_manifest_message_omits_empty_manifest(self, tmp_path):
         assert format_resource_manifest_message(build_resource_manifest("task-1", tmp_path)) == ""

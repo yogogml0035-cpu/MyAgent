@@ -44,6 +44,7 @@
 
 - 历史、消息、日志、diagnostics 目前未虚拟化，长任务或大量历史会有 DOM 和字符串生成成本。
 - `buildRunActivityGroups()`、`buildConversationStreamItems()`、`buildLiveLogItems()` 会随 state 变化重复排序/分组。
+- 已对 SSE event 做浏览器帧级批量合并，并对 tool-call partial delta / closed stream raw diagnostics 做 compact projection；后续改动不能恢复“每条 event 一次全量渲染”或“把几千条 partial raw payload 合并进单个 `<pre>`”的行为。
 - clear-all 逐个删除 task，缺少 bulk-delete API。
 - 大文件上传没有客户端 size feedback 或 progress。
 

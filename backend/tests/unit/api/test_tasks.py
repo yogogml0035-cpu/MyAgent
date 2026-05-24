@@ -543,6 +543,42 @@ class TestSendMessage:
         assert [run["id"] for run in state["runs"]] == [run_id]
         assert [message["content"] for message in state["messages"]] == ["first message"]
 
+    def test_cancel_task_marks_cancelled_without_waiting_for_runner_completion(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+        run_result = storage.start_run(
+            task_id,
+            message="slow message",
+            model="deepseek-v4-flash-thinking",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+
+        runner = app_client.app.state.runner
+        original_is_running = runner.is_running
+        original_request_cancel = runner.request_cancel
+        runner.is_running = lambda candidate_task_id: candidate_task_id == task_id
+        runner.request_cancel = lambda candidate_task_id: run_id if candidate_task_id == task_id else None
+        try:
+            response = app_client.post(f"/api/tasks/{task_id}/cancel")
+        finally:
+            runner.is_running = original_is_running
+            runner.request_cancel = original_request_cancel
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "cancelled"
+        assert data["active_run_id"] is None
+        assert data["runs"][0]["status"] == "cancelled"
+        cancel_events = [event for event in data["events"] if event["type"] == "task_cancelled"]
+        assert len(cancel_events) == 1
+        assert cancel_events[0]["run_id"] == run_id
+        assert cancel_events[0]["payload"]["live"]["result_status"] == "cancelled"
+
     def test_send_message_with_skills_formats_storage_title_and_runner(
         self, create_idle_task, app_client
     ):

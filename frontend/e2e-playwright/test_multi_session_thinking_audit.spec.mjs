@@ -465,6 +465,7 @@ test("real services keep multi-session thinking audit isolated per run", async (
     });
 
     await expect(logPanelB.locator("details.runDiagnosticsPanel")).toHaveCount(0);
+    await expect(logPanelB.locator(".traceHeader .traceCopyButton")).toHaveCount(0);
     const downloadLogsButtonB = logPanelB.getByRole("button", { name: /下载.*完整日志/ });
     await expect(downloadLogsButtonB).toBeVisible();
     const downloadEventB = page.waitForEvent("download");
@@ -483,23 +484,13 @@ test("real services keep multi-session thinking audit isolated per run", async (
       path: path.join(evidenceDir, "03-conversation-b-diagnostics-expanded.png"),
     });
 
-    await logPanelB.locator(".traceHeader .traceCopyButton").click();
-    const copiedBJsonl = await page.evaluate(() => navigator.clipboard.readText());
-    const copiedBLines = copiedBJsonl.trim().split("\n").map((line) => JSON.parse(line));
-    expect(copiedBJsonl).toContain(seededRunB.runId);
-    expect(copiedBJsonl).toContain(reasoningB);
-    expect(copiedBJsonl).not.toContain(seededRunA.runId);
-    expect(copiedBJsonl).not.toContain(reasoningA);
-    expect(copiedBLines.some((line) => line.type === "assistant_thinking_delta")).toBe(true);
-    expect(copiedBLines.some((line) => line.type === "tool_call")).toBe(true);
-    expect(copiedBLines.some((line) => line.type === "tool_result")).toBe(true);
-
     await page.getByRole("button", { name: titleA, exact: true }).click();
     await expect(page.locator(".historyItemShell-active", { hasText: titleA })).toBeVisible();
     await expect(composer).toHaveAttribute("placeholder", "当前会话正在生成回复，请稍候...");
     const logPanelA = page.getByRole("region", { name: /第 1 轮进度日志/ }).first();
     await expect(logPanelA).toBeVisible();
     await expect(logPanelA.locator("details.runDiagnosticsPanel")).toHaveCount(0);
+    await expect(logPanelA.locator(".traceHeader .traceCopyButton")).toHaveCount(0);
     const downloadLogsButtonA = logPanelA.getByRole("button", { name: /下载.*完整日志/ });
     await expect(downloadLogsButtonA).toBeVisible();
     const downloadEventA = page.waitForEvent("download");
@@ -517,17 +508,6 @@ test("real services keep multi-session thinking audit isolated per run", async (
       fullPage: true,
       path: path.join(evidenceDir, "04-conversation-a-diagnostics-expanded.png"),
     });
-
-    await logPanelA.locator(".traceHeader .traceCopyButton").click();
-    const copiedAJsonl = await page.evaluate(() => navigator.clipboard.readText());
-    const copiedALines = copiedAJsonl.trim().split("\n").map((line) => JSON.parse(line));
-    expect(copiedAJsonl).toContain(seededRunA.runId);
-    expect(copiedAJsonl).toContain(reasoningA);
-    expect(copiedAJsonl).not.toContain(seededRunB.runId);
-    expect(copiedAJsonl).not.toContain(reasoningB);
-    expect(copiedALines.some((line) => line.type === "assistant_thinking_delta")).toBe(true);
-    expect(copiedALines.some((line) => line.type === "tool_call")).toBe(true);
-    expect(copiedALines.some((line) => line.type === "tool_result")).toBe(true);
 
     expect(browserErrors).toEqual([]);
     expect(pageErrors).toEqual([]);

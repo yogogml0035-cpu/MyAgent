@@ -450,9 +450,10 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(toolSummaryLine.locator("code")).toHaveCount(0);
     expect(await toolSummaryLine.evaluate((element) => getComputedStyle(element).whiteSpace)).toBe("nowrap");
     const logToggleButton = logPanel.locator(".traceHeader .traceLogToggleButton");
-    const rawLogCopyButton = logPanel.locator(".traceHeader .traceCopyButton");
     const downloadLogsButton = logPanel.getByRole("button", { name: /下载.*完整日志/ });
+    await expect(logPanel.locator(".traceHeader .traceCopyButton")).toHaveCount(0);
     await expect(downloadLogsButton).toBeVisible();
+    await expect(downloadLogsButton).toHaveAttribute("aria-label", "下载第 1 轮完整日志");
     await expect(logPanel.locator("details.runDiagnosticsPanel")).toHaveCount(0);
     await expect(logPanel.getByText("完整诊断 JSON")).toHaveCount(0);
     const downloadEvent = page.waitForEvent("download");
@@ -520,15 +521,8 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
         borderColor: button.borderColor,
       };
     });
-    const rawLogCopyButtonStylesInitial = await rawLogCopyButton.evaluate((element) => {
-      const button = getComputedStyle(element);
-      return {
-        backgroundColor: button.backgroundColor,
-        borderColor: button.borderColor,
-      };
-    });
-    expect(expandedToggleStyles.backgroundColor).toBe(rawLogCopyButtonStylesInitial.backgroundColor);
-    expect(expandedToggleStyles.borderColor).toBe(rawLogCopyButtonStylesInitial.borderColor);
+    expect(expandedToggleStyles.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(expandedToggleStyles.borderColor).not.toBe("rgba(0, 0, 0, 0)");
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "02-all-log-rows-expanded-by-toggle.png"),
@@ -542,12 +536,6 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
       .toBe(0);
     await expect(logToggleButton).toHaveText("全部展开");
     await expect(logToggleButton).toHaveAttribute("aria-expanded", "false");
-
-    await rawLogCopyButton.click();
-    const copiedRawJsonl = await page.evaluate(() => navigator.clipboard.readText());
-    const copiedRawLines = copiedRawJsonl.trim().split("\n").map((line) => JSON.parse(line));
-    expect(copiedRawLines.some((line) => line.type === "tool_call" && line.payload?.partial === true)).toBe(true);
-    expect(copiedRawLines.some((line) => line.type === "tool_result" && line.payload?.content === "2 results")).toBe(true);
 
     const collapsedGenerationCopyButton = rows.nth(8).locator("summary .liveLogCopyButton");
     await collapsedGenerationCopyButton.click();
@@ -713,7 +701,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(logToggleButton).toHaveText("全部折叠");
     await expect(logToggleButton).toHaveAttribute("aria-expanded", "true");
     await expect(logToggleButton).toHaveAttribute("aria-label", "折叠第 1 轮全部日志");
-    await expect(rawLogCopyButton).not.toHaveClass(/copyButton-copied/);
+    await expect(downloadLogsButton).toHaveAttribute("aria-label", "下载第 1 轮完整日志");
     const toggleButtonStyles = await logToggleButton.evaluate((element) => {
       const button = getComputedStyle(element);
       const before = getComputedStyle(element, "::before");
@@ -727,15 +715,6 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
         beforeDisplay: before.display,
       };
     });
-    const rawLogCopyButtonStyles = await rawLogCopyButton.evaluate((element) => {
-      const button = getComputedStyle(element);
-      return {
-        backgroundColor: button.backgroundColor,
-        borderColor: button.borderColor,
-      };
-    });
-    expect(toggleButtonStyles.backgroundColor).toBe(rawLogCopyButtonStyles.backgroundColor);
-    expect(toggleButtonStyles.borderColor).toBe(rawLogCopyButtonStyles.borderColor);
     expect(toggleButtonStyles.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
     expect(toggleButtonStyles.borderRadius).not.toBe("0px");
     expect(toggleButtonStyles.textDecorationLine).toBe("none");
@@ -772,8 +751,8 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
         borderColor: button.borderColor,
       };
     });
-    expect(expandedToggleStylesLater.backgroundColor).toBe(rawLogCopyButtonStyles.backgroundColor);
-    expect(expandedToggleStylesLater.borderColor).toBe(rawLogCopyButtonStyles.borderColor);
+    expect(expandedToggleStylesLater.backgroundColor).toBe(toggleButtonStyles.backgroundColor);
+    expect(expandedToggleStylesLater.borderColor).toBe(toggleButtonStyles.borderColor);
     await logToggleButton.screenshot({
       path: path.join(evidenceDir, "07-log-toggle-expanded-detail.png"),
     });

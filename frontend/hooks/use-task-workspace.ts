@@ -198,6 +198,8 @@ export function useTaskWorkspace() {
   const [copiedCopyKey, setCopiedCopyKey] = useState("");
   const copyFeedbackTimerRef = useRef<number | null>(null);
   const logsRef = useRef<ExecutionLog[]>([]);
+  const pendingLogBufferRef = useRef<ExecutionLog[]>([]);
+  const pendingLogFlushFrameRef = useRef<number | null>(null);
   logsRef.current = logs;
 
   const canSend = input.trim().length > 0 || selectedFiles.length > 0;
@@ -250,7 +252,46 @@ export function useTaskWorkspace() {
     [messages, runActivityGroups],
   );
 
+  const flushPendingLogs = useCallback(() => {
+    const pending = pendingLogBufferRef.current;
+    if (pending.length === 0) {
+      pendingLogFlushFrameRef.current = null;
+      return;
+    }
+    pendingLogBufferRef.current = [];
+    pendingLogFlushFrameRef.current = null;
+    setLogs((current) => mergeExecutionLogs(current, pending));
+  }, []);
+
+  const clearPendingLogFlush = useCallback(() => {
+    pendingLogBufferRef.current = [];
+    if (pendingLogFlushFrameRef.current !== null) {
+      window.cancelAnimationFrame(pendingLogFlushFrameRef.current);
+      pendingLogFlushFrameRef.current = null;
+    }
+  }, []);
+
+  const queueExecutionLogs = useCallback(
+    (incoming: ExecutionLog[]) => {
+      if (incoming.length === 0) {
+        return;
+      }
+      latestEventIdRef.current = incoming.at(-1)?.id ?? latestEventIdRef.current;
+      pendingLogBufferRef.current.push(...incoming);
+      if (pendingLogFlushFrameRef.current !== null) {
+        return;
+      }
+      pendingLogFlushFrameRef.current = window.requestAnimationFrame(flushPendingLogs);
+    },
+    [flushPendingLogs],
+  );
+
   const applyTaskState = useCallback((state: TaskState, mergeLogs = false) => {
+    if (mergeLogs) {
+      flushPendingLogs();
+    } else {
+      clearPendingLogFlush();
+    }
     setTaskId(state.id);
     setStatus(state.status);
     setMessages((current) => (mergeLogs && state.messages.length === 0 ? current : state.messages));
@@ -261,7 +302,7 @@ export function useTaskWorkspace() {
     setUploadCount(state.uploadCount);
     setBackendError(state.error ?? "");
     setNeedsInput(state.needsInput ?? null);
-  }, []);
+  }, [clearPendingLogFlush, flushPendingLogs]);
 
   const refreshTaskSummaries = useCallback(async () => {
     setTaskSummaries(await fetchTaskSummaries());
@@ -353,11 +394,10 @@ export function useTaskWorkspace() {
       }
       const incoming = await fetchTaskEvents(id, afterId);
       if (incoming.length > 0) {
-        latestEventIdRef.current = incoming.at(-1)?.id ?? latestEventIdRef.current;
-        setLogs((current) => mergeExecutionLogs(current, incoming));
+        queueExecutionLogs(incoming);
       }
     },
-    [taskId],
+    [queueExecutionLogs, taskId],
   );
 
   useEffect(() => {
@@ -397,11 +437,11 @@ export function useTaskWorkspace() {
                 Array.isArray(payload) ? payload : [payload],
               );
               if (incoming.length > 0) {
-                latestEventIdRef.current = incoming.at(-1)?.id ?? latestEventIdRef.current;
-                setLogs((current) => mergeExecutionLogs(current, incoming));
+                queueExecutionLogs(incoming);
               }
             }
             if (!payload || payload.type === "state" || payload.type === "done" || payload.type === "final_answer") {
+              flushPendingLogs();
               void refreshTaskSummary();
             }
           } catch {
@@ -440,15 +480,16 @@ export function useTaskWorkspace() {
         window.clearTimeout(retryTimeoutId);
       }
     };
-  }, [activeTask, refreshTaskEvents, refreshTaskSummary, taskId]);
+  }, [activeTask, flushPendingLogs, queueExecutionLogs, refreshTaskEvents, refreshTaskSummary, taskId]);
 
   useEffect(() => {
     return () => {
       if (copyFeedbackTimerRef.current !== null) {
         window.clearTimeout(copyFeedbackTimerRef.current);
       }
+      clearPendingLogFlush();
     };
-  }, []);
+  }, [clearPendingLogFlush]);
 
   const handleSubmit = useCallback(async () => {
     if (!canSend || activeTask || isSubmittingTask || isSwitchingConversation) {
@@ -560,6 +601,7 @@ export function useTaskWorkspace() {
   }, []);
 
   const handleNewConversation = useCallback(() => {
+    clearPendingLogFlush();
     setTaskId("");
     setStatus("idle");
     setMessages([]);
@@ -574,7 +616,7 @@ export function useTaskWorkspace() {
     setSelectedSkills([]);
     setSelectedFiles([]);
     setError("");
-  }, []);
+  }, [clearPendingLogFlush]);
 
   const handleSelectConversation = useCallback(
     async (id: string) => {
@@ -592,6 +634,7 @@ export function useTaskWorkspace() {
       const targetSummary = taskSummaries.find((summary) => summary.id === id);
 
       setError("");
+      clearPendingLogFlush();
       setTaskId(id);
       setStatus(targetSummary?.status ?? "idle");
       setMessages([]);
@@ -630,6 +673,7 @@ export function useTaskWorkspace() {
       refreshTaskSummary,
       taskSummaries,
       taskId,
+      clearPendingLogFlush,
     ],
   );
 
@@ -798,17 +842,6 @@ export function useTaskWorkspace() {
     [showCopyFeedback],
   );
 
-  const handleCopyLogs = useCallback(
-    async (copiedLogs = logs, copyKey?: string) => {
-      await handleCopyText(
-        buildLogClipboardText(copiedLogs),
-        "复制日志失败，请检查浏览器权限。",
-        copyKey,
-      );
-    },
-    [handleCopyText, logs],
-  );
-
   const handleDownloadLogs = useCallback(
     async (downloadedLogs: ExecutionLog[], runId: string, groupTitle: string) => {
       if (downloadedLogs.length === 0) {
@@ -895,7 +928,6 @@ export function useTaskWorkspace() {
     copiedCopyKey,
     conversationStreamItems,
     currentTaskActive: activeTask,
-    handleCopyLogs,
     handleCopyText,
     handleClearConversations,
     handleDownloadArtifact,
