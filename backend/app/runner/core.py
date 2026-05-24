@@ -600,6 +600,9 @@ class TaskRunner:
         missing_kinds = [
             kind for kind in sorted(expected_kinds) if _kind_to_suffixes(kind).isdisjoint(artifact_suffixes)
         ]
+        if expected_kinds and not missing_kinds:
+            return None
+
         missing_files = [
             name for name in sorted(claimed_files) if name.casefold() not in artifact_names
         ]

@@ -474,6 +474,68 @@ class TestTaskRunnerTerminalEvents:
         assert task_state.needs_input["reason"] == "deliverable_artifact_missing"
         assert task_state.runs[-1].status == "needs_input"
 
+    @pytest.mark.parametrize(
+        ("request_phrase", "artifact_name", "claimed_name"),
+        [
+            ("生成一份 Word 文档", "actual-summary.docx", "model-summary.docx"),
+            ("生成一份 PPT 幻灯片", "actual-slides.pptx", "model-slides.pptx"),
+            ("生成一份 Excel 表格", "actual-workbook.xlsx", "model-workbook.xlsx"),
+            ("生成一份 Excel 表格", "actual-macro-workbook.xlsm", "model-workbook.xlsx"),
+            ("生成一份报告", "actual-report.html", "model-report.html"),
+            ("生成一份报告", "actual-report.md", "model-report.pdf"),
+            ("生成一份报告", "actual-report.pdf", "model-report.html"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_background_run_accepts_any_artifact_matching_requested_deliverable_type(
+        self,
+        test_settings,
+        monkeypatch,
+        request_phrase: str,
+        artifact_name: str,
+        claimed_name: str,
+    ):
+        storage = InMemoryTaskStorage(test_settings.task_root)
+        runner = TaskRunner(test_settings, storage)
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
+        user_message = (
+            f"请根据以下材料{request_phrase}并交付给我：\n"
+            "项目资料包含范围边界、进度安排、风险负责人、验收方式和预算调整说明。"
+        )
+        run_result = storage.start_run(
+            state.task_id,
+            message=user_message,
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+        storage.write_run_text(state.task_id, run_id, artifact_name, "placeholder")
+
+        async def fake_start(*args, **kwargs):
+            return [], {"messages": [AIMessage(content=f"已生成 {claimed_name}，请下载查看。")]}
+
+        monkeypatch.setattr(runner, "start", fake_start)
+
+        runner.start_background(
+            state.task_id,
+            user_message,
+            model="deepseek-v4-flash",
+            run_id=run_id,
+        )
+        await _wait_for_runner(runner, state.task_id)
+
+        task_state = storage.get_task(state.task_id)
+        needs_input_events = [event for event in task_state.events if event.type == "needs_input"]
+        final_answers = [event for event in task_state.events if event.type == "final_answer"]
+
+        assert task_state.status == "complete"
+        assert task_state.needs_input is None
+        assert task_state.runs[-1].status == "complete"
+        assert artifact_name in task_state.runs[-1].artifact_names
+        assert needs_input_events == []
+        assert len(final_answers) == 1
+
     @pytest.mark.asyncio
     async def test_background_run_promotes_claimed_workspace_file_before_complete(
         self, test_settings, monkeypatch

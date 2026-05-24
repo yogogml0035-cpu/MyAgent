@@ -13,6 +13,8 @@ Source: prd.json
 - 前端 active 状态口径集中在 `frontend/app/task-state.ts:1349`，当前只把 `running` 视为 active，应补测试锁定。
 - needs-input notice 当前在 `frontend/app/workspace-view.ts:122` 作为 warning 输出，并在 `frontend/app/workspace-view.ts:1662` 显示为“配置提醒”，需要调整或过滤。
 - 文件-only submit 在 `frontend/hooks/use-task-workspace.ts` 中用 `buildFileOnlyFollowUpMessage()` 构造非空 follow-up；有历史用户意图时显式写“继续上一轮需求”，后端 `MessageRequest.message` 仍保持非空合同。
+- 文件-only 用户消息展示由 `frontend/app/task-state.ts` 提取安全文件名元数据到 `ChatMessage.files`/`fileOnly`，`TaskConversation` 可隐藏生成式 follow-up 文案但保留原始 `content` 供复制和上下文使用。
+- 交付成功判断以当前 run 的 `artifact_names` 后缀满足请求类型为准；请求类型已满足时不要再用 final answer 中的具体文件名做失败判定。
 
 ## 2026-05-24 23:14 - US-001
 - 实现了缺上传/缺正文时的普通 AI 澄清：runner 在启动 agent 前识别“总结/生成交付物但没有上传、内联正文或可复用上下文”的请求，直接写入 assistant 澄清并以 success final_answer 完成 run，不再产生 `needs_input` warning。
@@ -35,4 +37,28 @@ Source: prd.json
   - 前端文件-only 发送不能提交空 message，因为后端 `MessageRequest.message` 有 `min_length=1`；应在 hook 层生成清晰 follow-up。
   - 会话连续性由 `ConversationContextBuilder` 回放上一轮消息，上传文件内容由 runner 的资源 manifest 和资源工具提供，不应写入普通 message。
   - `uploadTaskFiles()` 成功但 `postTaskMessage()` 失败时要保留用户可见上传状态，catch 分支的 `refreshTask(requestTaskId)` 是必要兜底。
+---
+
+## 2026-05-25 00:15 - US-003
+- 实现了文件-only 用户消息渲染：前端标准化层从生成式 follow-up 或显式 message 文件元数据中提取安全文件名，用户消息气泡渲染紧凑文件 chip。
+- 隐藏文件-only 消息的生成式 follow-up 文案，但保留原始 `message.content` 用于复制按钮和后端上下文；空文本但有文件元数据时复制按钮回退复制文件名列表。
+- 补齐窄屏和长文件名样式约束：文件 chip 在用户气泡内省略长文件名，520px 以下占满可用宽度，不撑破消息卡片。
+- 更改的文件：`frontend/app/task-state.ts`、`frontend/components/chat/TaskConversation.tsx`、`frontend/app/globals.css`、`frontend/tests/state/test_task_state.test.ts`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd frontend && npm test -- tests/state/test_task_state.test.ts tests/workspace/test_workspace_view.test.ts tests/workspace/test_task_workspace.test.ts`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`git diff --check`
+- 浏览器验证：未执行完整浏览器路径；`3001` 前端可访问，但 `8001` 后端不可连接，且本轮只处理 US-003，真实浏览器 E2E 留给 US-007。
+- **未来迭代的学习：**
+  - `ChatMessage.content` 仍是后端上下文和复制的权威文本；展示层如果要压缩文件-only prompt，应通过 `fileOnly`/`files` 投影处理，不要改写原始 content。
+  - 从 `buildFileOnlyFollowUpMessage()` 文案解析文件名时不能把扩展名中的 `.` 当句末截断。
+  - 用户消息内的文件 chip 需要 `min-width: 0`、`max-width` 和 `text-overflow: ellipsis` 同时存在，窄屏下再把 chip 设为 100% 宽。
+---
+
+## 2026-05-25 00:32 - US-004
+- 实现了交付成功按可下载产物类型判定：Word/PPT/Excel/报告请求只要当前 run 存在匹配后缀的 artifact，就不再因 final answer 中声称文件名不一致而进入缺文件保护。
+- 补齐后端回归测试，覆盖 `.docx`、`.pptx`、`.xlsx`、`.xlsm`、`.html`、`.md`、`.pdf` 满足对应请求类型。
+- 更改的文件：`backend/app/runner/core.py`、`backend/tests/unit/runner/test_core.py`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest tests/unit/runner/test_core.py tests/unit/api/test_artifacts.py -q`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`git diff --check`
+- **未来迭代的学习：**
+  - `_ensure_run_deliverables()` 中 `run.artifact_names` 是本轮交付成功判断的权威来源，final answer 文件名只能作为没有请求类型时的兜底保护线索。
+  - Excel 请求同时接受 `.xlsx` 和 `.xlsm`，报告请求接受 `.html`、`.md` 和 `.pdf`。
+  - 交付保护测试要给请求提供足够内联材料或上传资源，否则会先触发缺来源澄清。
 ---
