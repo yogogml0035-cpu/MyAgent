@@ -150,3 +150,42 @@ def test_download_rejects_invalid_artifact_name(tmp_path):
     response = client.get(f"/api/tasks/{created['task_id']}/artifacts/%2e%2e")
 
     assert response.status_code == 400
+
+
+def test_promoted_binary_run_artifact_is_downloadable_and_listed_in_task_state(tmp_path):
+    client = _client(tmp_path)
+    created = client.post("/api/tasks", json={"model": "deepseek-v4-flash"}).json()
+    task_id = created["task_id"]
+
+    storage = client.app.state.storage
+    _, run_id = storage.start_run(
+        task_id,
+        message="生成 Word 交付物",
+        model="deepseek-v4-flash",
+        expected_statuses={"idle"},
+    )
+    source = storage.task_dir(task_id) / "outputs" / "brief.docx"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source_bytes = b"PK\x03\x04generated-docx"
+    source.write_bytes(source_bytes)
+    storage.promote_run_artifact_file(task_id, run_id, "outputs/brief.docx")
+    storage.update_task_if_status(task_id, {"running"}, status="complete", run_id=run_id)
+
+    download = client.get(f"/api/tasks/{task_id}/runs/{run_id}/artifacts/brief.docx")
+    task_response = client.get(f"/api/tasks/{task_id}")
+
+    assert download.status_code == 200
+    assert download.content == source_bytes
+    assert download.headers["content-type"].startswith(
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    )
+    assert task_response.status_code == 200
+    assert task_response.json()["artifacts"] == [
+        {
+            "id": f"{run_id}:brief.docx",
+            "name": "brief.docx",
+            "type": "word",
+            "url": f"/api/tasks/{task_id}/runs/{run_id}/artifacts/brief.docx",
+            "run_id": run_id,
+        }
+    ]

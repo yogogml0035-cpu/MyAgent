@@ -45,7 +45,7 @@ class SessionSnapshot:
 
 
 ResourceKind = Literal["upload", "workspace", "artifact", "external"]
-ArtifactKind = Literal["html", "markdown", "json", "text"]
+ArtifactKind = Literal["html", "markdown", "json", "text", "word", "excel", "powerpoint"]
 
 
 @dataclass(frozen=True)

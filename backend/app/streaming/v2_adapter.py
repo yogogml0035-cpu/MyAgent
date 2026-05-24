@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 # Type alias for the normalized event dicts yielded by the adapter.
 StreamEvent = dict[str, Any]
 ToolCallAccumulatorKey = tuple[str, str]
+_PARTIAL_TOOL_CALL_SIGNATURE_CHAR_BUCKET = 1024
 
 
 def extract_final_answer(state: dict[str, Any]) -> str:
@@ -323,6 +324,23 @@ def _pop_accumulated_tool_call_events(
 
 
 def _tool_call_event_signature(event_data: dict[str, Any]) -> str:
+    if event_data.get("partial") is True:
+        raw_args = event_data.get("raw_args")
+        if isinstance(raw_args, str):
+            arg_length = len(raw_args)
+        else:
+            arg_length = len(json.dumps(event_data.get("args"), ensure_ascii=False, default=str))
+        return json.dumps(
+            {
+                "id": event_data.get("id"),
+                "name": event_data.get("name"),
+                "partial": True,
+                "arg_length_bucket": arg_length // _PARTIAL_TOOL_CALL_SIGNATURE_CHAR_BUCKET,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
     return json.dumps(
         {
             "id": event_data.get("id"),

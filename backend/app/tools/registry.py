@@ -9,7 +9,13 @@ from app.execution.resources import create_resource_tools
 from app.tools.searxng_search import create_searxng_search_tool
 
 
-def get_platform_tools(settings: Settings, *, task_id: str | None = None, storage=None) -> list[BaseTool]:
+def get_platform_tools(
+    settings: Settings,
+    *,
+    task_id: str | None = None,
+    run_id: str | None = None,
+    storage=None,
+) -> list[BaseTool]:
     """Return platform-specific tools beyond the deepagents built-in suite.
 
     deepagents auto-injects ``ls``, ``read_file``, ``write_file``, ``edit_file``,
@@ -24,7 +30,14 @@ def get_platform_tools(settings: Settings, *, task_id: str | None = None, storag
     tools: list[BaseTool] = []
 
     if task_id:
-        tools.extend(create_resource_tools(task_id=task_id, workspace_root=settings.workspace_root))
+        tools.extend(
+            create_resource_tools(
+                task_id=task_id,
+                workspace_root=settings.workspace_root,
+                run_id=run_id,
+                storage=storage,
+            )
+        )
 
     if settings.searxng_url:
         tools.append(

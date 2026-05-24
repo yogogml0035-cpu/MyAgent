@@ -27,8 +27,8 @@ export function TaskWorkspace() {
           copiedCopyKey={workspace.copiedCopyKey}
           hasConversation={workspace.hasConversation}
           noticeMessages={workspace.noticeMessages}
-          onCopyLogs={workspace.handleCopyLogs}
           onCopyText={workspace.handleCopyText}
+          onDownloadLogs={workspace.handleDownloadLogs}
           onDownloadArtifact={workspace.handleDownloadArtifact}
           onOpenArtifact={workspace.handleOpenArtifact}
         />

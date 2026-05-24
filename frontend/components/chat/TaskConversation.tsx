@@ -6,7 +6,6 @@ import remarkGfm from "remark-gfm";
 import type { Artifact, ChatMessage, ExecutionLog } from "../../app/task-state";
 import { isTaskActive } from "../../app/task-state";
 import {
-  buildRunDiagnosticsJson,
   type ConversationStreamItem,
   type LiveLogItem,
   buildLiveLogItems,
@@ -82,8 +81,8 @@ type TaskConversationProps = {
   copiedCopyKey: string;
   hasConversation: boolean;
   noticeMessages: ChatMessage[];
-  onCopyLogs: (logs: ExecutionLog[], copyKey?: string) => Promise<void>;
   onCopyText: (text: string, failureMessage?: string, copyKey?: string) => Promise<void>;
+  onDownloadLogs: (logs: ExecutionLog[], runId: string, groupTitle: string) => Promise<void>;
   onDownloadArtifact: (artifact: Artifact) => Promise<void>;
   onOpenArtifact: (artifact: Artifact) => Promise<void>;
 };
@@ -94,8 +93,8 @@ export function TaskConversation({
   copiedCopyKey,
   hasConversation,
   noticeMessages,
-  onCopyLogs,
   onCopyText,
+  onDownloadLogs,
   onDownloadArtifact,
   onOpenArtifact,
 }: TaskConversationProps) {
@@ -279,6 +278,7 @@ export function TaskConversation({
                     <div className="messageArtifactActions">
                       {artifactCanOpen(artifact) ? (
                         <button
+                          aria-label={`打开 ${artifact.name}`}
                           className="downloadSecondaryButton"
                           onClick={() => void onOpenArtifact(artifact)}
                           type="button"
@@ -287,11 +287,11 @@ export function TaskConversation({
                         </button>
                       ) : null}
                       <button
+                        aria-label={`下载 ${artifact.name}`}
                         className="downloadPrimaryButton"
                         onClick={() => void onDownloadArtifact(artifact)}
                         type="button"
                       >
-                        <span className="downloadButtonIcon" aria-hidden="true" />
                         下载
                       </button>
                     </div>
@@ -325,6 +325,7 @@ export function TaskConversation({
             <div className="downloadActions">
               {canOpen ? (
                 <button
+                  aria-label={`打开 ${artifact.name}`}
                   className="downloadSecondaryButton"
                   onClick={() => void onOpenArtifact(artifact)}
                   type="button"
@@ -333,11 +334,11 @@ export function TaskConversation({
                 </button>
               ) : null}
               <button
+                aria-label={`下载 ${artifact.name}`}
                 className="downloadPrimaryButton"
                 onClick={() => void onDownloadArtifact(artifact)}
                 type="button"
               >
-                <span className="downloadButtonIcon" aria-hidden="true" />
                 下载文件
               </button>
             </div>
@@ -357,9 +358,6 @@ export function TaskConversation({
     const groupActive = isTaskActive(group.status);
     const groupLogStatusText = formatRunLogStatus(group.status);
     const liveItems = buildLiveLogItems(group.logs, group.status);
-    const runDiagnosticsText = buildRunDiagnosticsJson(group.logs);
-    const logCopyKey = `logs:${group.runId}`;
-    const isLogCopied = copiedCopyKey === logCopyKey;
     const openLogDetailCount = openLogDetailCounts[group.runId] ?? 0;
     const totalLogDetailCount = liveItems.length;
     const hasOpenLogDetails = openLogDetailCount > 0;
@@ -367,13 +365,6 @@ export function TaskConversation({
     const toggleLogDetailsTitle = hasOpenLogDetails
       ? `折叠${group.title}全部日志`
       : `展开${group.title}全部日志`;
-    const logCopyButtonClassName = [
-      "copyButton",
-      "traceCopyButton",
-      isLogCopied ? "copyButton-copied" : "",
-    ]
-      .filter(Boolean)
-      .join(" ");
     const logToggleButtonClassName = [
       "traceLogToggleButton",
       hasOpenLogDetails ? "traceLogToggleButton-open" : "",
@@ -399,6 +390,16 @@ export function TaskConversation({
             </div>
             <div className="traceActions" aria-label={`${group.title}日志操作`}>
               <button
+                aria-label={`下载${group.title}完整日志`}
+                className="downloadSecondaryButton"
+                disabled={group.logs.length === 0}
+                onClick={() => void onDownloadLogs(group.logs, group.runId, group.title)}
+                title={group.logs.length > 0 ? `下载${group.title}完整日志（JSONL）` : "暂无日志可下载"}
+                type="button"
+              >
+                下载完整日志
+              </button>
+              <button
                 aria-expanded={hasOpenLogDetails}
                 aria-label={toggleLogDetailsTitle}
                 className={logToggleButtonClassName}
@@ -408,16 +409,6 @@ export function TaskConversation({
                 type="button"
               >
                 <span>{toggleLogDetailsLabel}</span>
-              </button>
-              <button
-                aria-label={isLogCopied ? `已复制${group.title}原始诊断日志` : `复制${group.title}原始诊断日志`}
-                className={logCopyButtonClassName}
-                disabled={group.logs.length === 0}
-                onClick={() => void onCopyLogs(group.logs, logCopyKey)}
-                title={isLogCopied ? "已复制原始诊断日志" : `复制${group.title}原始诊断日志（JSONL）`}
-                type="button"
-              >
-                <span aria-hidden="true" />
               </button>
             </div>
           </header>
@@ -449,18 +440,6 @@ export function TaskConversation({
               liveItems.map((liveItem) => renderLiveLogItem(liveItem))
             )}
           </div>
-
-          {group.logs.length > 0 ? (
-            <details className="runDiagnosticsPanel">
-              <summary>
-                <span className="runDiagnosticsPanelLabel">完整诊断 JSON</span>
-                <span className="runDiagnosticsPanelMeta">{group.logs.length} 条事件</span>
-              </summary>
-              <div className="liveLogDiagnostics runDiagnosticsBody">
-                <pre>{runDiagnosticsText}</pre>
-              </div>
-            </details>
-          ) : null}
         </article>
       </section>
     );

@@ -47,9 +47,10 @@
 - v1 不接受 `.doc`, `.xls`, `.csv` 或任意本地路径。
 - 上传事件类型为 `file_uploaded`，包含稳定 `resource_ref` 和 media type：`markdown`, `json`, `text`, `word`, `excel`。
 - 资源执行入口是 `backend/app/execution/resources.py` 的 `LocalResourceExecutionAdapter`。
-- 资源工具包括 `list_uploaded_resources`、`inspect_resource`、`read_resource_text`、`read_resource_table`。
+- 资源工具包括 `list_uploaded_resources`、`inspect_resource`、`read_resource_text`、`read_resource_table`；当 run context 和 storage 可用时，还会提供 `create_word_document` 用于把 Markdown/纯文本转换为 Word 原生标题、列表和表格，并生成登记当前 run 的 `.docx` 产物。
 - 工具失败返回 `{ok:false,error:{code,message,retryable}}` JSON，不让 runner 崩溃。
 - 用户输入错误（例如无效 Excel range）应是 `retryable:false`。
+- Word/docx 读取必须走资源工具；Word/docx 交付生成必须走 `create_word_document`，模型只选择文件名和 Markdown/纯文本参数，标题、列表、表格等 Word 结构由工具环境转换。当前 DeepAgents backend 不提供 shell/python/execute 命令执行能力，prompt 必须明确禁止模型为 Word 生成调用 `bash`、`execute` 或把简单文档生成委派给 `task` 子代理。
 - Word/Excel handle 在成功和失败路径都必须关闭。
 - 资源工具只能解析当前 task 的 `uploads/`；未来若支持本地路径，必须先注册或复制为当前 task resource。
 - Runner 注入资源 manifest 时只包含 filename、resource_id、format、size、digest，不能包含上传正文。
@@ -73,7 +74,7 @@
 - `storage.start_run()` 创建 run id；`runner.start_background()` 必须接收该 run id，确保 storage 和 streaming events 统一归属。
 - `TaskRunner.start()` 与 `start_background()` 都要把 streamed `EventRecord.run_id` 规范化为当前 run，防止 provider/status/answer delta 串到其他 run。
 - terminal events 包括 `task_completed`、`task_failed`、`task_cancelled` 和 terminal status update。
-- cancellation 由 `TaskRunner.cancel()` 管理，API 不应额外追加第二个无 run scope 的取消事件。
+- cancellation 快速路径由 `POST /api/tasks/{id}/cancel` 调用 `TaskRunner.request_cancel()` 后立即把当前 run 标记为 `cancelled` 并追加 run-scoped `task_cancelled` event；`TaskRunner.cancel()` 仍保留给需要等待后台 task 收敛的内部/测试路径。后台 task 后续若收到 `CancelledError`，不得再追加第二个取消事件。
 - `asyncio.timeout()` 通过 `settings.agent_timeout_seconds` 防止 agent run 无界运行。
 - 不同 task/session 可以并行运行；同一 task 运行中必须互斥。
 - `backend/app/api/tasks.py#send_message()` 的同 task 互斥是双层保护：先查 `runner.is_running(task_id)` 返回 409，再由 `storage.start_run(... expected_statuses=...)` 兜底。
@@ -86,6 +87,7 @@
 - `backend/app/streaming/v2_adapter.py` 负责标准化 chunk。
 - `backend/app/streaming/event_converter.py` 负责生成 `EventRecord`。
 - tool-call chunk 是增量的，adapter 必须按 tool-call index/id 累积，让持久化 `tool_call` event 有可用 tool name 和参数项。
+- tool-call partial 可能按字符级流式到达；adapter 只能按参数长度 bucket 发送少量 partial 进度，最终完整 tool call 仍需发送。event converter 必须截断 partial payload 中超长的 `args`/`raw_args`，保留 `*_truncated` 和 `*_original_chars` 元数据，避免把同一巨型参数重复写入 Postgres 和 SSE。
 - SSE endpoint `GET /api/tasks/{task_id}/stream` 使用 `EventSource`；token 通过 query 参数传入。
 - SSE `_event_stream` 每 0.5 秒轮询 `storage.read_events(task_id, after_id=last_event_id)`。
 - `last_event_id` 初始值必须是 `None`，不能是空字符串；空字符串会导致初次轮询误跳过所有事件。
@@ -112,7 +114,7 @@
 
 - `buildLiveLogItems()` 把 thinking/answer delta 作为 progress/diagnostics 信号。
 - collapsed rows 只显示 `"AI正在思考"`、`"AI正在生成结果"` 等稳定中文标签。
-- expanded JSON 和 raw JSONL copy 保留完整 normalized content。
+- expanded JSON 和 run-level raw JSONL 下载保留完整 normalized content。
 - `final_answer` 不在进度 timeline 中单独显示，但保留在 raw JSONL 和刷新触发逻辑中。
 - AI reply card 只来自 run 完成后刷新得到的 `messages` 数组。
 - 不要把 `streamedAnswer` 或最后一个 answer delta 当权威最终答案。
@@ -133,10 +135,13 @@
 - `final_answer` 不作为独立 collapsed row 展示。
 - tool progress 拆成阶段行：`selecting_tool`、`using_tool`、`tool_result`。
 - 同一 stage、同一 `tool_call_id` 的 tool-call chunk 才合并，避免参数增量刷出重复行。
-- 行级展开和复制使用 compact display JSON；run-level raw JSONL copy 才是完整诊断导出。
+- 同一 stage、同一 `tool_call_id` 的 partial tool-call delta 在前端只保留最新 compact diagnostics 和 `delta_count`；不能把几千条 partial raw record 合并进同一个 row 的 `<pre>`。
+- 主对话默认只展示关键阶段、当前动作、警告、错误和终态；完整 `assistant_thinking_delta`、`assistant_answer_delta`、`values_snapshot` 与 `final_answer` 正文不能作为默认长段落回流到主页面。
+- 行级展开和复制使用 compact display JSON；run-level raw JSONL 下载才是完整诊断导出。
+- 完整 run 日志必须通过用户点击后生成的 run-scoped JSONL 下载获得，不能在 render 阶段预构造完整诊断字符串，也不能默认渲染完整 `<pre>`。为了保护浏览器主线程，超长 partial tool-call 参数和超长 closed stream raw diagnostics 在复制/下载投影中也要保留事件边界但压缩 payload 正文。
 - `ExecutionLog.rawRecord` 必须保持 non-enumerable，避免 raw provider chunk、tool payload、内部 node name 泄露进默认渲染或 `JSON.stringify(state.logs)`。
 - `frontend/app/task-state.ts` 标准化时保留完整 `payload.content`；截断只能发生在 collapsed preview projection。
-- 每个 run card 有默认折叠的 `"完整诊断 JSON"` 面板，展示当前 run 的 pretty JSON array。
+- 前端 SSE 合并必须按浏览器帧批量 flush；不能让每条 event 都触发一次 React 全量日志 projection。
 - trace-level `"全部展开"` / `"全部折叠"` 控制必须在同一次点击内让按钮状态和所有可见 `<details open>` 状态收敛；浏览器测试断言稳定 post-click open-count。
 - 诊断 JSON 容器保持中性暗面视觉，不要给普通排障输出加红色错误框。
 
@@ -160,6 +165,9 @@
 - `artifacts/` 应在写 run manifest 或真实 artifact 时懒创建，启动 run 本身不应创建空 artifact dir。
 - 不要新增 `logs/`、`subagents/` 或 root-level manifest 等顶层 task 文件夹，除非先设计稳定文件合同。
 - 删除非 running task 必须同时删除 Postgres task row 和 matching local task workspace。
+- task workspace 内真实生成的 `.docx`、`.pptx`、`.xlsx`、`.xlsm`、`.pdf`、`.html`、`.md` 文件需要先通过 run-scoped artifact 登记或安全复制到 `artifacts/runs/{run_id}/`，再暴露给前端下载。
+- 用户明确要求的交付文件，或 final answer 明确声称“已生成/已保存”的文件，必须存在且已登记为当前 run artifact；否则 task/run 不能标记为成功完成。
+- 缺失交付文件时应给出可见的 `文件未生成或未登记为产物` 修正提示，并保持 artifact API 不暴露不可下载的本地路径或伪链接。
 - Artifact routes：
   - latest/legacy：`GET /api/tasks/{id}/artifacts/{name}`
   - run-scoped：`GET /api/tasks/{id}/runs/{run_id}/artifacts/{name}`

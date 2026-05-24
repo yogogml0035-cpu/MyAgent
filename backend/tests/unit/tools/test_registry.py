@@ -44,6 +44,20 @@ class TestGetPlatformTools:
             "read_resource_text",
             "read_resource_table",
         }.issubset(set(names))
+        assert "create_word_document" not in names
+
+    def test_includes_word_artifact_tool_when_run_context_is_available(self, test_settings, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "tasks")
+
+        tools = get_platform_tools(
+            test_settings,
+            task_id="task-1",
+            run_id="run-1",
+            storage=storage,
+        )
+        names = [t.name for t in tools]
+
+        assert "create_word_document" in names
 
     def test_searxng_tool_uses_settings_url_not_runtime_environment(self, tmp_path, monkeypatch):
         captured: dict[str, object] = {}

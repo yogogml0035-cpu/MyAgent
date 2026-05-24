@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
 
@@ -103,6 +104,21 @@ async def create_task(body: TaskCreateRequest, request: Request) -> TaskState:
     return storage.get_task(state.task_id)
 
 
+def _cancel_event_payload() -> dict[str, Any]:
+    return {
+        "previous_status": "running",
+        "live": {
+            "schema_version": 1,
+            "kind": "status",
+            "stage": "completed",
+            "display_text": "任务已取消",
+            "diagnostic_label": "runner.terminal",
+            "parameter_items": [{"key": "previous_status", "value": "running"}],
+            "result_status": "cancelled",
+        },
+    }
+
+
 @router.get("", response_model=list[TaskSummary])
 def list_tasks(request: Request) -> list[TaskSummary]:
     return _storage(request).list_task_summaries()
@@ -183,8 +199,20 @@ async def send_message(task_id: str, body: MessageRequest, request: Request) -> 
 async def cancel_task(task_id: str, request: Request) -> TaskState:
     storage = _storage(request)
     runner = _runner(request)
-    _get_existing_task(storage, task_id, include_events=False)
+    state = _get_existing_task(storage, task_id, include_events=False)
     if not runner.is_running(task_id):
         raise HTTPException(status_code=409, detail="任务未在运行中")
-    await runner.cancel(task_id)
+    cancelled_run_id = runner.request_cancel(task_id)
+    if cancelled_run_id is None:
+        raise HTTPException(status_code=409, detail="任务未在运行中")
+    storage.update_task_if_status_and_append_event(
+        task_id,
+        {"running"},
+        status="cancelled",
+        run_id=cancelled_run_id or state.active_run_id,
+        event_type="task_cancelled",
+        event_message="任务已取消。",
+        event_payload=_cancel_event_payload(),
+        event_level="warning",
+    )
     return storage.get_task(task_id)

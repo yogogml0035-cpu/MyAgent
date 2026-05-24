@@ -7,10 +7,173 @@ Source: prd.json
 ## Codebase Patterns
 
 - 前端任务工作区遵循 component -> hook -> API/state/view adapter 的分层：组件渲染 props，`use-task-workspace.ts` 管理动作，`workspace-view.ts` 构造展示模型，`task-api.ts` 负责 HTTP/SSE/blob。
+- 新增稳定平台边界或浏览器验收入口时，需要同时更新 `asset/deepagents_platform_knowledge_pack.md` 和 `frontend/e2e-playwright/README.md`：前者记录长期规则，后者记录具体 spec、环境变量和证据目录。
 - 进度日志是 append-only event log 的用户投影。主页面应展示轻量进度，完整 JSONL 诊断适合作为 run-scoped 下载，而不是默认 `<pre>` 渲染。
+- `workspace-view.ts` 的日志诊断需要区分 `rawJson` 和 `displayJson`：前者保留完整事件，后者只保留主页面需要的轻量摘要，避免流式正文和快照重新进入默认渲染。
 - `TaskConversation.tsx` 当前在 render 中构造 `buildRunDiagnosticsJson(group.logs)` 并渲染完整诊断 `<pre>`，这是大量事件卡顿的主要改造点。
 - Artifact 下载已有安全链路：前端通过 `fetchArtifactBlob()` 和 `buildArtifactRequest()` 下载，后端通过 storage resolver 和 `FileResponse` 返回文件。
+- 运行日志下载应沿用 artifact 下载模式：仅在用户点击时把 `buildLogClipboardText(logs)` 转成 JSONL Blob，并用 run-scoped 文件名触发浏览器下载，避免 render 阶段预构造大字符串。
 - 后端 artifact 的权威可见性来自 run `artifact_names`，未登记文件即使存在于磁盘也不应能通过 run-scoped artifact API 下载。
 - 二进制 Office 文件不能走纯文本 `write_run_text()`；需要安全地把 task workspace 内真实文件推广或复制为 run artifact。
+- 二进制交付文件进入 API state 时，要同时保持 `TYPE_MAP`、contracts `ArtifactKind` 和 schema `ArtifactRecord.type` 对齐，否则 `.docx/.xlsx` 会在后端合同层丢失类型语义。
+- task workspace 文件提升为 run artifact 时，应复用 `_task_relative_path()` 做边界校验，再 `copyfile()` 到 `artifacts/runs/{run_id}/` 并调用 `record_run_artifact()`，这样二进制字节、digest 和 run-scoped 下载合同会一起成立。
 - Runner 必须在 success complete 前完成交付文件检查；如果用户要求文件但没有可下载 artifact，不能先写 complete 再提示失败。
 - 行为变更必须同步前端 unit tests、后端 unit tests、真实浏览器 E2E、截图证据和 `asset/deepagents_platform_knowledge_pack.md`。
+- run artifact 若要贴在最终回复旁，前端应把它绑定到“该 run 最后一个可见 assistant message”，而不是第一个 assistant message；否则多段助手回复会把下载卡片挂错位置。
+- 带交付 artifact 的最终回复应在 `workspace-view.ts` 做摘要投影，优先过滤路径行和文件声明行，只保留首个有效结果分句，再追加“请使用下方下载卡片获取”的固定提示。
+- 真实浏览器 E2E 若要 seed `running` 大日志任务而不让切会话时回放 2000+ 历史事件，前端需要先走 `include_events=false` 轻量 task state，再用 `latest_event_id` 作为 `/events` 与 `/stream` 的 cursor；后端 storage/schema/fake storage 必须一起暴露这个字段。
+- 主页面 active thinking/answer 状态行不能把所有流式 chunk 再拼成 `details.rawJson`；2000+ chunk 会让 `buildLiveLogItems()` 在渲染期反复序列化巨量 diagnostics，滚动和点击都会卡住。主页面应只保留 chunk/char 计数摘要，完整内容继续留给 run 级 JSONL 下载。
+- 流式状态行如果复用已有 `status` item，`displayJson` 合并必须使用 `replaceDisplayOnMerge` 覆盖为当前 stream summary；否则旧的 `status_update` 或隐藏快照 display record 会污染后续 `assistant_*_delta` 投影与测试断言。
+- 在本仓库里跑真实前后端 Playwright 回归时，若需要临时启动后端 `8001`，应让 `uvicorn` 挂在持久 PTY 会话中保活到验收结束；一次性 `nohup` 子进程在当前 CLI 环境下可能被父进程回收，导致浏览器用例出现 `ECONNREFUSED`。
+
+## 2026-05-24 02:10 - US-001
+- 实现了主对话轻量日志投影：`assistant_thinking_delta`、`assistant_answer_delta`、`values_snapshot` 和 `final_answer` 默认只输出摘要，不再把大段正文塞进主页面展开内容
+- 为 `LiveLogDiagnostics` 增加 raw/display 分离和 replace-on-merge 合并语义，保留完整原始诊断用于复制/下载，同时压缩主页面默认显示
+- 更新前端测试，覆盖 2000+ 事件压缩场景，并修正一条对 CRLF 过敏的既有 CSS 断言
+- 更改的文件
+- `frontend/app/workspace-view.ts`
+- `frontend/tests/workspace/test_workspace_view.test.ts`
+- **未来迭代的学习：**
+  - `buildLiveLogItems()` 的性能边界更依赖 `displayJson` 体积；完整审计内容应留在 `rawJson` 或下载链路
+  - 流式日志摘要需要“替换式合并”，隐藏快照/终态摘要需要“附加式合并”，否则压缩后的行会被后续隐藏诊断重新膨胀
+  - `npm test -- <file>` 仍会跑 `tests/*/test_*.test.ts`，定向回归时要把这些基础测试的现状一并考虑
+---
+## 2026-05-24 02:51 - US-002
+- 实现了每个 run 卡片的“下载完整日志”入口，点击时才把当前 run 的完整原始日志拼成 JSONL Blob 下载，主页面不再渲染完整诊断 `<pre>`
+- 增加 run-scoped 日志文件名规范化 helper，并把下载动作从 `use-task-workspace.ts` 透传到 `TaskConversation.tsx`
+- 更新前端单测和相关 Playwright 邻近用例，使其识别新的“下载完整日志”入口与压缩后的日志诊断展示
+- 更改的文件
+- `frontend/components/chat/TaskConversation.tsx`
+- `frontend/components/chat/TaskWorkspace.tsx`
+- `frontend/hooks/use-task-workspace.ts`
+- `frontend/tests/workspace/test_task_workspace.test.ts`
+- `frontend/tests/workspace/test_workspace_view.test.ts`
+- `frontend/e2e-playwright/test_progress_log_disclosure.spec.mjs`
+- `frontend/e2e-playwright/test_multi_session_thinking_audit.spec.mjs`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - run 级完整日志下载按钮的可访问名称会带上轮次，例如 `下载第 1 轮完整日志`，E2E 更稳妥的定位方式是 `/下载.*完整日志/`
+  - `buildLogClipboardText()` 产物是紧凑 JSONL，不带空格缩进；浏览器验收应解析每行 JSON，而不是匹配固定格式化字符串
+  - 现有 `test_progress_log_disclosure.spec.mjs` 仍有部分旧断言默认要求展开行展示完整流式正文；在继续清理邻近回归时要以 `workspace-view` 当前的 `content_hidden/chunk_count` 压缩契约为准
+  - 本轮真实浏览器验证复用了已运行的前端 `3001`，后端 `8001` 由本 agent 临时启动；截图证据保存在 `tasks/task-log-artifact-delivery/screenshots/progress-log-us002/`
+---
+## 2026-05-24 03:09 - US-003
+- 实现了 `promote_run_artifact_file()`，可把当前 task workspace 内真实存在的文件安全复制到 `artifacts/runs/{run_id}/` 并登记为 run-scoped artifact
+- 补齐后端 artifact 类型合同，`.docx/.xlsx/.xlsm/.pptx` 现在会通过 API state 暴露为 `word`、`excel`、`powerpoint` 类型
+- 更新 fake storage 与后端单测，覆盖二进制 `.docx` 下载、task state artifact 列表投影，以及越界/产物目录来源拒绝
+- 更改的文件
+- `backend/app/contracts/__init__.py`
+- `backend/app/schemas.py`
+- `backend/app/storage.py`
+- `backend/tests/fakes.py`
+- `backend/tests/unit/api/test_artifacts.py`
+- `backend/tests/unit/storage/test_storage.py`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - run artifact 的类型不是前端自推导的附属信息；后端 contracts、schema 和 storage suffix map 必须同步演进
+  - task workspace 到 run artifact 的推广要拒绝 `artifacts/` 自身作为 source，避免把未登记或旧产物绕过当前 run 的显式登记边界
+  - 本轮未做浏览器验证，因为改动仅涉及后端 storage/API 合同，无前端行为变化
+---
+## 2026-05-24 03:28 - US-004
+- 在 runner 成功落 `complete` 之前增加交付文件校验：若用户明确要求 Word/PPT/Excel/报告文件，或 final answer 声称已保存文件，系统会先检查当前 run 是否已有对应 artifact
+- 新增 claimed-file 自动推广逻辑：final answer 提到的 `.docx/.pptx/.xlsx/.xlsm/.pdf/.html/.md` 文件会在 task workspace 非 `uploads/`、非 `artifacts/` 区域内搜索，找到真实文件后自动推广为 run artifact
+- 当交付文件缺失时，task/run 改为 `needs_input` 而不是 `complete`，写出包含 `文件未生成或未登记为产物` 的可见修正提示；同时保留重新发送消息继续修复的入口
+- 更改的文件
+- `backend/app/runner/core.py`
+- `backend/tests/unit/runner/test_core.py`
+- `backend/tests/unit/api/test_tasks.py`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - 交付文件检查要发生在 `task_completed` 和 synthetic `final_answer` 事件之前，否则前端会先收到虚假的成功态
+- final answer 中的 `/root/...docx` 之类绝对路径只能提取文件名作为线索，真实查找和推广必须继续受 task workspace 边界约束
+- 为避免把用户上传件误当成交付物，claimed-file 搜索应默认排除 `uploads/` 和 `artifacts/`，只从当前任务生成区补登记真实产物
+---
+## 2026-05-24 04:02 - US-005
+- 实现了最终回复侧的 run artifact 下载卡片：artifact 现在绑定到每轮最后一个可见 assistant reply，没有可见助手回复时仍保留独立 artifact 卡片
+- 为带交付文件的最终助手回复增加简短摘要投影，过滤绝对路径/文件声明行，只保留首个有效摘要句，再补充“请使用下方下载卡片获取”的固定提示，避免长 Office 正文替代真实交付
+- 补齐 `.docx` 下载按钮的文件名级可访问名称，并用真实 `3001/8001` 浏览器验收确认最终回复区域显示 `技术参数总结.docx` 下载卡片、点击后浏览器开始下载且无 console error
+- 更改的文件
+- `frontend/app/workspace-view.ts`
+- `frontend/components/chat/TaskConversation.tsx`
+- `frontend/tests/workspace/test_workspace_view.test.ts`
+- `frontend/tests/workspace/test_task_workspace.test.ts`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - 最终回复摘要规则属于 view projection，不要在 `task-state.ts` 改写后端原始 message；原始 assistant 内容仍应留在状态层，便于复制、下载或后续 richer rendering
+  - 浏览器验收想稳定点选文件下载按钮时，优先给按钮加上 `aria-label=\"下载 ${artifact.name}\"` 这类文件名级可访问名称，而不是依赖页面上第几个“下载”
+- 本轮浏览器证据使用真实后端 task state：截图在 `tasks/task-log-artifact-delivery/screenshots/us005-browser/us005-final-reply-card.png`，下载样本在 `tasks/task-log-artifact-delivery/logs/us005-downloaded-技术参数总结.docx`
+---
+## 2026-05-24 05:31 - US-006
+- 新增 `frontend/e2e-playwright/test_task_log_artifact_delivery.spec.mjs`，用真实 `3001/8001`、Postgres seed 和 task workspace artifact 覆盖大日志响应性、`.docx` 下载卡片、缺失交付 `needs_input` 提示三条闭环
+- 为大日志浏览器验收补齐轻量事件游标合同：前端切换运行中会话时先拉 `include_events=false` summary，再用 `latest_event_id` 续接 `/events` 和 `/stream`，避免重新灌入整段 2000+ 历史事件
+- 同步更新邻近 E2E 与单测，锁定新的文件名级按钮可访问名称、流式内容隐藏诊断、运行中/需补充 run 组轻量保留，以及 fake storage 的 `latest_event_id` 合同
+- 更改的文件
+- `frontend/e2e-playwright/test_task_log_artifact_delivery.spec.mjs`
+- `frontend/e2e-playwright/test_runtime_contracts.spec.mjs`
+- `frontend/e2e-playwright/test_progress_log_disclosure.spec.mjs`
+- `frontend/hooks/use-task-workspace.ts`
+- `frontend/lib/task-api.ts`
+- `frontend/app/task-state.ts`
+- `frontend/app/workspace-view.ts`
+- `frontend/tests/workspace/test_task_workspace.test.ts`
+- `frontend/tests/workspace/test_workspace_view.test.ts`
+- `backend/app/api/streaming.py`
+- `backend/app/schemas.py`
+- `backend/app/storage.py`
+- `backend/tests/fakes.py`
+- `backend/tests/unit/api/test_tasks.py`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - 需要用数据库直接 seed `running` 任务时，浏览器打开该会话不会自动有完整日志；若页面只需保持可操作，优先依赖 summary 状态和 SSE cursor，而不是强制全量 hydrate 历史 events
+  - run 级 artifact 下载按钮和打开按钮最好都带文件名级 `aria-label`，这样 Playwright 邻近回归不会被页面上多个“下载/打开”按钮干扰
+- 本轮真实浏览器证据目录为 `tasks/task-log-artifact-delivery/screenshots/e2e-20260524052902/task-log-artifact-delivery/`，邻近 runtime contracts 回归证据在 `tasks/task-log-artifact-delivery/screenshots/e2e-20260524052902/runtime-contracts/`
+- 验证命令通过：`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`
+---
+## 2026-05-24 06:06 - US-006
+- 修复大日志运行中主页面卡顿：`workspace-view.ts` 不再为 active thinking/answer 行累积 2000+ chunk 的 raw diagnostics，而是只维护增量的 chunk/字符计数摘要
+- 补充前端单测，锁定“主页面摘要轻量、完整流式正文不进入主页面 raw/display diagnostics”的契约，并复跑专用 Playwright E2E
+- 更改的文件
+- `frontend/app/workspace-view.ts`
+- `frontend/tests/workspace/test_workspace_view.test.ts`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - `buildLiveLogItems()` 的性能热点不仅在可见行数量，还在每次 render 时是否重新 `JSON.stringify` 大块 diagnostics；即使只渲染 1 行，若把 2000+ chunk 留在 active row diagnostics 里，滚动和点击也会卡
+  - 专用 E2E 的日志区域点击依赖主页面确实渲染出 `.logList`；一旦前端 runtime error 或诊断对象退化成大对象，失败点可能表现为滚轮/定位超时，而不是更直观的断言失败
+  - 本轮通过命令：`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts`、`cd frontend && npm run typecheck`、`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=/mnt/d/AgentProject/MyAgent/frontend/e2e-playwright/e2e-20260524060543/task-log-artifact-delivery MYAGENT_E2E_ACCESS_TOKEN=... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`
+---
+## 2026-05-24 06:31 - US-006
+- 修正 `workspace-view.ts` 的流式 diagnostics 合并逻辑：thinking/answer 行的 display 层始终保持轻量 summary，流式原始记录只在分段结束后回填到对应 run 的 raw diagnostics，避免已有状态行被 `values_snapshot` 或前序 status display 污染
+- 复跑并通过 validator 指向的前端单测、专用 Playwright 大日志/产物交付 E2E、邻近 `runtime-contracts` 浏览器回归，以及前端 `typecheck`、`lint`、全量 `npm test`、`build`
+- 更改的文件
+- `frontend/app/workspace-view.ts`
+- `tasks/task-log-artifact-delivery/prd.json`
+- **未来迭代的学习：**
+  - 流式状态行如果复用已有 `status` item，`displayJson` 必须用 `replaceDisplayOnMerge` 明确覆盖为 stream summary；否则前一个 `status_update` 或隐藏快照的 display record 会污染后续 `assistant_*_delta` 断言和页面展示
+  - 对 thinking/answer 流采用“display 轻量、raw 延迟回填”的双轨策略更稳：运行中 active 行不携带成百上千 chunk，终态或分段结束后仍能把当前段真实 `rawRecord` 留给 run-scoped JSONL 和 diagnostics
+  - 专用浏览器 E2E 依赖后端真实 `8001`；如果端口未常驻，先确认 `curl http://127.0.0.1:8001/health` 可达，再执行 `test_task_log_artifact_delivery.spec.mjs`，否则会在 `api/tasks` seed 阶段直接 `ECONNREFUSED`
+- 验证命令通过：`cd frontend && npm run typecheck`、`cd frontend && npm test -- tests/workspace/test_workspace_view.test.ts tests/workspace/test_task_workspace.test.ts`、`cd frontend && npm run lint`、`cd frontend && npm test`、`cd frontend && npm run build`、`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=/mnt/d/AgentProject/MyAgent/frontend/e2e-playwright/e2e-20260524062801/task-log-artifact-delivery MYAGENT_E2E_ACCESS_TOKEN=... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`、`cd frontend && MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 MYAGENT_E2E_API_URL=http://127.0.0.1:8001 MYAGENT_E2E_TASK_ROOT=/mnt/d/AgentProject/MyAgent/backend/storage/sessions MYAGENT_E2E_EVIDENCE_DIR=/mnt/d/AgentProject/MyAgent/frontend/e2e-playwright/e2e-20260524062801/runtime-contracts MYAGENT_E2E_ACCESS_TOKEN=... npx playwright test e2e-playwright/test_runtime_contracts.spec.mjs --reporter=line`
+---
+## 2026-05-24 06:50 - US-007
+- 同步 `asset/deepagents_platform_knowledge_pack.md`，记录主对话默认精简日志、完整日志走 run-scoped 下载，以及交付文件缺失时不能成功完成的长期平台边界
+- 更新 `frontend/e2e-playwright/README.md`，补充 `test_task_log_artifact_delivery.spec.mjs` 的运行命令、依赖环境变量与 `e2e-YYYYMMDDHHMMSS/task-log-artifact-delivery/` 证据目录约定
+- 更改的文件
+- `asset/deepagents_platform_knowledge_pack.md`
+- `frontend/e2e-playwright/README.md`
+- `tasks/task-log-artifact-delivery/prd.json`
+- `tasks/task-log-artifact-delivery/progress.txt`
+- **未来迭代的学习：**
+  - 稳定的任务交付/日志边界应写进知识包，而不是只留在任务进度或 PR 描述里
+  - 每新增一个真实浏览器 E2E spec，都应在 `frontend/e2e-playwright/README.md` 中给出可直接执行的命令和独立 evidence 子目录，避免后续回归只知道 spec 名称却不知道运行前提
+  - 本轮验收只需 `git diff --check` 和前端 `typecheck`，因为 story 范围是长期文档与测试入口文档同步，没有行为代码改动
+---
+## 2026-05-24 07:05 - US-008
+- 完成后端、前端与浏览器全量质量门回归，确认日志精简、run-scoped 日志下载、真实 artifact 交付和缺失交付拦截没有破坏现有任务工作区
+- 在任务目录下保存本轮回归日志与真实浏览器证据；`task-log-artifact-delivery` 和邻近 `runtime-contracts` 两个 Playwright spec 均通过
+- 更改的文件
+- `tasks/task-log-artifact-delivery/prd.json`
+- `tasks/task-log-artifact-delivery/progress.txt`
+- **未来迭代的学习：**
+  - 浏览器回归若依赖本 agent 临时拉起的后端，优先使用持久 PTY 会话保活 `uvicorn`，否则很容易在 Playwright 首次 `POST /api/tasks` 前后出现 `ECONNREFUSED`
+  - 证据目录可以直接复用任务约束下的 `tasks/task-log-artifact-delivery/screenshots/e2e-YYYYMMDDHHMMSS/...`；运行日志单独落到 `tasks/task-log-artifact-delivery/logs/` 更利于 validator 追溯
+  - 本轮通过命令：`cd backend && uv run pytest && uv run ruff check . && uv run mypy app tests`、`cd frontend && npm run typecheck && npm test && npm run lint && npm run build`、`cd frontend && ... npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line`、`cd frontend && ... npx playwright test e2e-playwright/test_runtime_contracts.spec.mjs --reporter=line`、`git diff --check`
+---

@@ -60,6 +60,34 @@ class TestConvertStreamEvent:
         assert record.payload["live"]["stage"] == "selecting_tool"
         assert record.payload["live"]["diagnostic_label"] == "tool_call_delta"
 
+    def test_large_partial_tool_call_payload_is_compacted(self):
+        large_args = '{"description":"' + ("x" * 2000)
+        record = convert_stream_event(
+            {
+                "type": "tool_call",
+                "data": {
+                    "id": "call-large",
+                    "name": "task",
+                    "args": large_args,
+                    "raw_args": large_args,
+                    "partial": True,
+                    "is_subgraph": False,
+                },
+            },
+            "task-1",
+            "run-1",
+            seq=3,
+        )
+
+        assert record is not None
+        assert record.payload["args"].endswith("...")
+        assert record.payload["raw_args"].endswith("...")
+        assert record.payload["args_truncated"] is True
+        assert record.payload["raw_args_truncated"] is True
+        assert record.payload["args_original_chars"] == len(large_args)
+        assert len(record.payload["args"]) < len(large_args)
+        assert record.payload["live"]["parameter_items"][0]["truncated"] is True
+
     def test_tool_result_adds_live_result_metadata(self):
         record = convert_stream_event(
             {

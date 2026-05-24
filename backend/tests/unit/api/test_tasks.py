@@ -223,10 +223,13 @@ class TestGetTask:
 
     def test_get_task_can_omit_events_for_lightweight_refresh(self, create_idle_task, app_client):
         created = create_idle_task()
+        storage = app_client.app.state.storage
+        appended = storage.append_event(created["task_id"], "status_update", "lightweight refresh")
         response = app_client.get(f"/api/tasks/{created['task_id']}?include_events=false")
 
         assert response.status_code == 200
         assert response.json()["events"] == []
+        assert response.json()["latest_event_id"] == appended.id
 
 
 class TestTaskHistoryActions:
@@ -332,6 +335,25 @@ class TestGetEvents:
         assert response.status_code == 200
         events = response.json()
         assert [event["seq"] for event in events] == [1, 2]
+
+    def test_stream_accepts_after_id_cursor_for_running_task(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+
+        first = storage.append_event(task_id, "status_update", "warming up")
+        storage.start_run(
+            task_id,
+            message="hello",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+
+        response = app_client.get(
+            f"/api/tasks/{task_id}/stream?after_id={first.id}",
+        )
+
+        assert response.status_code == 200
 
     def test_get_events_can_filter_specific_run(self, create_idle_task, app_client):
         created = create_idle_task()
@@ -520,6 +542,42 @@ class TestSendMessage:
         assert state["active_run_id"] == run_id
         assert [run["id"] for run in state["runs"]] == [run_id]
         assert [message["content"] for message in state["messages"]] == ["first message"]
+
+    def test_cancel_task_marks_cancelled_without_waiting_for_runner_completion(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+        run_result = storage.start_run(
+            task_id,
+            message="slow message",
+            model="deepseek-v4-flash-thinking",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+
+        runner = app_client.app.state.runner
+        original_is_running = runner.is_running
+        original_request_cancel = runner.request_cancel
+        runner.is_running = lambda candidate_task_id: candidate_task_id == task_id
+        runner.request_cancel = lambda candidate_task_id: run_id if candidate_task_id == task_id else None
+        try:
+            response = app_client.post(f"/api/tasks/{task_id}/cancel")
+        finally:
+            runner.is_running = original_is_running
+            runner.request_cancel = original_request_cancel
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "cancelled"
+        assert data["active_run_id"] is None
+        assert data["runs"][0]["status"] == "cancelled"
+        cancel_events = [event for event in data["events"] if event["type"] == "task_cancelled"]
+        assert len(cancel_events) == 1
+        assert cancel_events[0]["run_id"] == run_id
+        assert cancel_events[0]["payload"]["live"]["result_status"] == "cancelled"
 
     def test_send_message_with_skills_formats_storage_title_and_runner(
         self, create_idle_task, app_client
@@ -728,6 +786,64 @@ class TestSendMessage:
             "model": "deepseek-v4-flash",
             "run_id": data["active_run_id"],
         }
+
+    def test_send_message_allows_retry_from_needs_input_status(self, create_idle_task, app_client):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+        run_result = storage.start_run(
+            task_id,
+            message="请生成 Word 文档",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+        storage.update_task_if_status_and_append_event(
+            task_id,
+            {"running"},
+            status="needs_input",
+            run_id=run_id,
+            needs_input={
+                "message": "文件未生成或未登记为产物，请修复后重新生成。",
+                "reason": "deliverable_artifact_missing",
+            },
+            event_type="needs_input",
+            event_message="文件未生成或未登记为产物，请修复后重新生成。",
+            event_payload={
+                "message": "文件未生成或未登记为产物，请修复后重新生成。",
+                "reason": "deliverable_artifact_missing",
+            },
+            event_level="warning",
+        )
+        runner = app_client.app.state.runner
+        original_start = runner.start_background
+        started: dict[str, str] = {}
+
+        def mock_start_background(task_id: str, message: str, *, model: str, run_id: str) -> None:
+            started.update(
+                {
+                    "task_id": task_id,
+                    "message": message,
+                    "model": model,
+                    "run_id": run_id,
+                }
+            )
+
+        runner.start_background = mock_start_background
+        try:
+            response = app_client.post(
+                f"/api/tasks/{task_id}/messages",
+                json={"message": "请重新生成 Word 文档", "model": "deepseek-v4-flash"},
+            )
+        finally:
+            runner.start_background = original_start
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "running"
+        assert started["task_id"] == task_id
+        assert started["message"] == "请重新生成 Word 文档"
 
     def test_send_message_keeps_manual_history_title(self, create_idle_task, app_client):
         created = create_idle_task()

@@ -44,6 +44,9 @@ export type VisibleLogPartition = {
 
 export type LiveLogDiagnostics = {
   records: unknown[];
+  displayRecords: unknown[];
+  customDisplay: boolean;
+  replaceDisplayOnMerge: boolean;
   rawJson: string;
   displayJson: string;
 };
@@ -62,6 +65,7 @@ export type LiveToolLogItem = {
   resultText: string;
   resultStatus?: NonNullable<ExecutionLog["live"]>["resultStatus"];
   details: LiveLogDiagnostics;
+  mergedEventCount?: number;
 };
 
 export type LiveStatusLogItem = {
@@ -213,9 +217,15 @@ export function buildLiveLogItems(
   let lastAnswerDetails: LiveLogDiagnostics | undefined;
   let answerStreamItem: LiveStatusLogItem | undefined;
   let answerStreamBaseDetails: LiveLogDiagnostics | undefined;
-  const answerStreamLogs: ExecutionLog[] = [];
+  let answerStreamChunkCount = 0;
+  let answerStreamCharacterCount = 0;
+  let answerStreamLastLog: ExecutionLog | undefined;
+  let answerStreamLogs: ExecutionLog[] = [];
   let thinkingStreamItem: LiveStatusLogItem | undefined;
   let thinkingStreamBaseDetails: LiveLogDiagnostics | undefined;
+  let thinkingStreamChunkCount = 0;
+  let thinkingStreamCharacterCount = 0;
+  let thinkingStreamLastLog: ExecutionLog | undefined;
   let thinkingStreamLogs: ExecutionLog[] = [];
 
   function consumeHiddenDiagnostics() {
@@ -224,6 +234,7 @@ export function buildLiveLogItems(
     }
     const details = buildLiveLogDiagnosticsFromRecords(
       hiddenDiagnosticLogs.map(rawLogRecordForDiagnostics),
+      buildCompactHiddenLogDisplayRecords(hiddenDiagnosticLogs),
     );
     hiddenDiagnosticLogs = [];
     return details;
@@ -234,16 +245,42 @@ export function buildLiveLogItems(
     return hiddenDetails ? mergeLiveLogDiagnostics(hiddenDetails, details) : details;
   }
 
-  function resetThinkingStreamSegment() {
+  function clearThinkingStreamSegment() {
     thinkingStreamItem = undefined;
     thinkingStreamBaseDetails = undefined;
+    thinkingStreamChunkCount = 0;
+    thinkingStreamCharacterCount = 0;
+    thinkingStreamLastLog = undefined;
     thinkingStreamLogs = [];
   }
 
-  function resetAnswerStreamSegment() {
+  function clearAnswerStreamSegment() {
     answerStreamItem = undefined;
     answerStreamBaseDetails = undefined;
-    answerStreamLogs.length = 0;
+    answerStreamChunkCount = 0;
+    answerStreamCharacterCount = 0;
+    answerStreamLastLog = undefined;
+    answerStreamLogs = [];
+  }
+
+  function finalizeThinkingStreamSegment() {
+    if (thinkingStreamItem) {
+      const rawRecords = buildClosedStreamRawRecords(thinkingStreamLogs);
+      if (rawRecords.length > 0) {
+        thinkingStreamItem.details = withLiveLogRawRecords(thinkingStreamItem.details, rawRecords);
+      }
+    }
+    clearThinkingStreamSegment();
+  }
+
+  function finalizeAnswerStreamSegment() {
+    if (answerStreamItem) {
+      const rawRecords = buildClosedStreamRawRecords(answerStreamLogs);
+      if (rawRecords.length > 0) {
+        answerStreamItem.details = withLiveLogRawRecords(answerStreamItem.details, rawRecords);
+      }
+    }
+    clearAnswerStreamSegment();
   }
 
   function pushStatusItem(log: ExecutionLog, text: string) {
@@ -268,11 +305,19 @@ export function buildLiveLogItems(
   }
 
   function upsertThinkingStreamItem(log: ExecutionLog) {
-    if (!log.thinkingStream?.content) {
+    const thinkingContent = log.thinkingStream?.content;
+    if (!thinkingContent) {
       return;
     }
+    thinkingStreamChunkCount += 1;
+    thinkingStreamCharacterCount += thinkingContent.length;
+    thinkingStreamLastLog = log;
     thinkingStreamLogs.push(log);
-    const streamDetails = buildThinkingStreamDiagnostics(thinkingStreamLogs);
+    const streamDetails = buildThinkingStreamDiagnostics({
+      characterCount: thinkingStreamCharacterCount,
+      chunkCount: thinkingStreamChunkCount,
+      lastLog: thinkingStreamLastLog,
+    });
     if (!thinkingStreamItem) {
       const previous = items.at(-1);
       if (previous?.kind === "status" && previous.text === "AI正在思考" && !previous.active) {
@@ -302,13 +347,21 @@ export function buildLiveLogItems(
   }
 
   function upsertAnswerStreamItem(log: ExecutionLog) {
-    if (!log.answerStream?.content) {
+    const answerContent = log.answerStream?.content;
+    if (!answerContent) {
       return;
     }
     hasAnswerStream = true;
+    answerStreamChunkCount += 1;
+    answerStreamCharacterCount += answerContent.length;
+    answerStreamLastLog = log;
     answerStreamLogs.push(log);
     lastAnswerCreatedAt = log.createdAt;
-    lastAnswerDetails = buildAnswerStreamDiagnostics(answerStreamLogs);
+    lastAnswerDetails = buildAnswerStreamDiagnostics({
+      characterCount: answerStreamCharacterCount,
+      chunkCount: answerStreamChunkCount,
+      lastLog: answerStreamLastLog,
+    });
     if (!answerStreamItem) {
       const previous = items.at(-1);
       if (previous?.kind === "status" && previous.text === "AI正在生成结果" && !previous.active) {
@@ -336,6 +389,7 @@ export function buildLiveLogItems(
 
   function upsertToolCallItem(log: ExecutionLog, live: NonNullable<ExecutionLog["live"]>) {
     const existing = findToolCallStageItem(toolCallItemsByStageKey, live);
+    const isDelta = isToolCallDeltaLog(log, live);
     if (existing) {
       existing.createdAt = existing.createdAt || log.createdAt;
       existing.level = log.level || existing.level;
@@ -343,7 +397,12 @@ export function buildLiveLogItems(
       existing.title = formatLiveToolCallTitle(live);
       existing.toolName = live.toolName || existing.toolName;
       existing.parameterText = formatLiveToolParameterSummary(live.parameterItems) || existing.parameterText;
-      existing.details = mergeLiveLogDiagnostics(existing.details, buildLogDiagnostics(log));
+      if (isDelta) {
+        existing.mergedEventCount = (existing.mergedEventCount ?? 1) + 1;
+        existing.details = buildToolCallDeltaDiagnostics(log, existing.mergedEventCount);
+      } else {
+        existing.details = mergeLiveLogDiagnostics(existing.details, buildLogDiagnostics(log));
+      }
       refreshToolEventDisplayJson(existing);
       return;
     }
@@ -359,7 +418,8 @@ export function buildLiveLogItems(
       toolName: live.toolName,
       parameterText: formatLiveToolParameterSummary(live.parameterItems),
       resultText: formatLiveToolPendingText(live.toolName),
-      details: buildLogDiagnostics(log),
+      details: isDelta ? buildToolCallDeltaDiagnostics(log, 1) : buildLogDiagnostics(log),
+      mergedEventCount: isDelta ? 1 : undefined,
     };
     refreshToolEventDisplayJson(toolItem);
     items.push(toolItem);
@@ -374,19 +434,19 @@ export function buildLiveLogItems(
     }
 
     if (log.type === "assistant_answer_delta") {
-      resetThinkingStreamSegment();
+      finalizeThinkingStreamSegment();
       upsertAnswerStreamItem(log);
       return;
     }
 
     if (log.type === "assistant_thinking_delta") {
-      resetAnswerStreamSegment();
+      finalizeAnswerStreamSegment();
       upsertThinkingStreamItem(log);
       return;
     }
 
-    resetThinkingStreamSegment();
-    resetAnswerStreamSegment();
+    finalizeThinkingStreamSegment();
+    finalizeAnswerStreamSegment();
 
     // Detect cancel events to handle them specially
     if (log.type === "task_cancelled" || log.live?.resultStatus === "cancelled") {
@@ -465,6 +525,11 @@ export function buildLiveLogItems(
     activeCreatedAt = log.createdAt;
     activeDetails = statusItem.details;
   });
+
+  if (!isTaskActive(status)) {
+    finalizeThinkingStreamSegment();
+    finalizeAnswerStreamSegment();
+  }
 
   if (!isTaskActive(status) && hiddenDiagnosticLogs.length > 0) {
     const target = [...items].reverse().find((item) => item.kind === "status");
@@ -559,7 +624,7 @@ function formatRawLogRecordJson(log: ExecutionLog) {
 function buildRunDiagnosticRecord(log: ExecutionLog) {
   const fallback = fallbackRawLogRecord(log);
   if (log.memoryContext || !isPlainRecord(log.rawRecord)) {
-    return fallback;
+    return compactDiagnosticRecord(fallback);
   }
 
   const mergedRecord: Record<string, unknown> = {
@@ -575,7 +640,7 @@ function buildRunDiagnosticRecord(log: ExecutionLog) {
     });
   }
 
-  return stripUndefinedValues(mergedRecord);
+  return stripUndefinedValues(compactDiagnosticRecord(mergedRecord));
 }
 
 function fallbackRawLogRecord(log: ExecutionLog) {
@@ -621,73 +686,171 @@ function buildLogDiagnostics(log: ExecutionLog): LiveLogDiagnostics {
   return buildLiveLogDiagnosticsFromRecord(rawLogRecordForDiagnostics(log));
 }
 
-function buildAnswerStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
-  const streamLogs = filterRunScopedStreamLogs(logs, "answerStream");
-  const content = streamLogs.map((log) => log.answerStream?.content ?? "").join("");
-  const lastLog = streamLogs.at(-1);
+const TOOL_CALL_PARTIAL_ARG_PREVIEW_CHARS = 800;
+const CLOSED_STREAM_RAW_RECORD_LIMIT = 20;
+
+function compactDiagnosticRecord(record: Record<string, unknown>): Record<string, unknown> {
+  const payload = isPlainRecord(record.payload) ? record.payload : undefined;
+  if (!payload) {
+    return record;
+  }
+
+  const compactPayload = compactDiagnosticPayload(payload);
+  return compactPayload === payload ? record : { ...record, payload: compactPayload };
+}
+
+function compactDiagnosticPayload(payload: Record<string, unknown>): Record<string, unknown> {
+  let changed = false;
+  const next: Record<string, unknown> = { ...payload };
+
+  if (isPartialToolCallPayload(payload)) {
+    for (const key of ["args", "raw_args", "rawArgs"]) {
+      if (!Object.prototype.hasOwnProperty.call(payload, key)) {
+        continue;
+      }
+      const compacted = compactToolCallArgumentValue(payload[key]);
+      if (compacted.truncated) {
+        next[key] = compacted.value;
+        next[`${key}_truncated`] = true;
+        next[`${key}_original_chars`] = compacted.originalChars;
+        changed = true;
+      }
+    }
+  }
+
+  const toolCalls = payload.tool_calls;
+  if (Array.isArray(toolCalls)) {
+    const compactedToolCalls = toolCalls.map((entry) =>
+      isPlainRecord(entry) ? compactDiagnosticPayload(entry) : entry,
+    );
+    if (compactedToolCalls.some((entry, index) => entry !== toolCalls[index])) {
+      next.tool_calls = compactedToolCalls;
+      changed = true;
+    }
+  }
+
+  return changed ? next : payload;
+}
+
+function isPartialToolCallPayload(payload: Record<string, unknown>) {
+  if (payload.partial === true || payload.is_partial === true || payload.isPartial === true) {
+    return true;
+  }
+  const live = isPlainRecord(payload.live) ? payload.live : undefined;
+  return live?.diagnostic_label === "tool_call_delta" || live?.diagnosticLabel === "tool_call_delta";
+}
+
+function compactToolCallArgumentValue(value: unknown) {
+  const text = typeof value === "string" ? value : formatDiagnosticJson(value);
+  if (text.length <= TOOL_CALL_PARTIAL_ARG_PREVIEW_CHARS) {
+    return { value, truncated: false, originalChars: text.length };
+  }
+  return {
+    value: `${text.slice(0, TOOL_CALL_PARTIAL_ARG_PREVIEW_CHARS).trimEnd()}...`,
+    truncated: true,
+    originalChars: text.length,
+  };
+}
+
+function isToolCallDeltaLog(
+  log: ExecutionLog,
+  live: NonNullable<ExecutionLog["live"]>,
+) {
+  if (log.type !== "tool_call" || live.kind !== "tool_call") {
+    return false;
+  }
+  if (live.diagnosticLabel === "tool_call_delta" || live.stage === "selecting_tool") {
+    return true;
+  }
+  const payload = isPlainRecord(log.rawRecord?.payload) ? log.rawRecord.payload : undefined;
+  return Boolean(payload && isPartialToolCallPayload(payload));
+}
+
+function buildToolCallDeltaDiagnostics(
+  log: ExecutionLog,
+  deltaCount: number,
+): LiveLogDiagnostics {
+  const record = buildRunDiagnosticRecord(log);
+  const payload = isPlainRecord(record.payload) ? record.payload : {};
+  const summaryRecord = stripUndefinedValues({
+    ...record,
+    payload: {
+      ...payload,
+      tool_call_delta_count: deltaCount,
+      earlier_tool_call_deltas_hidden: deltaCount > 1,
+    },
+  });
+  return buildLiveLogDiagnosticsFromRecords([summaryRecord], summaryRecord, {
+    replaceDisplayOnMerge: true,
+  });
+}
+
+function buildAnswerStreamDiagnostics({
+  characterCount,
+  chunkCount,
+  lastLog,
+}: {
+  characterCount: number;
+  chunkCount: number;
+  lastLog: ExecutionLog | undefined;
+}): LiveLogDiagnostics {
   const payload = stripUndefinedValues({
     answer_stream: stripUndefinedValues({
       schema_version: lastLog?.answerStream?.schemaVersion ?? 1,
-      content,
+      chunk_count: chunkCount,
+      character_count: characterCount,
+      content_hidden: true,
     }),
   });
-  return buildLiveLogDiagnosticsFromRecords(
-    streamLogs.map(rawLogRecordForDiagnostics),
-    stripUndefinedValues({
-      type: "assistant_answer_delta",
-      message: "AI正在生成结果",
-      created_at: lastLog?.createdAt,
-      run_id: lastLog?.runId,
-      payload,
-    }),
-  );
+  const summaryRecord = stripUndefinedValues({
+    type: "assistant_answer_delta",
+    message: "AI正在生成结果",
+    created_at: lastLog?.createdAt,
+    run_id: lastLog?.runId ?? undefined,
+    payload,
+  });
+  return buildStreamStatusDiagnostics({
+    summaryRecord,
+  });
 }
 
-function buildThinkingStreamDiagnostics(logs: ExecutionLog[]): LiveLogDiagnostics {
-  const streamLogs = filterRunScopedStreamLogs(logs, "thinkingStream");
-  const content = streamLogs.map((log) => log.thinkingStream?.content ?? "").join("");
-  const lastLog = streamLogs.at(-1);
+function buildThinkingStreamDiagnostics({
+  characterCount,
+  chunkCount,
+  lastLog,
+}: {
+  characterCount: number;
+  chunkCount: number;
+  lastLog: ExecutionLog | undefined;
+}): LiveLogDiagnostics {
   const payload = stripUndefinedValues({
     thinking_stream: stripUndefinedValues({
       schema_version: lastLog?.thinkingStream?.schemaVersion ?? 1,
-      content,
+      chunk_count: chunkCount,
+      character_count: characterCount,
+      content_hidden: true,
     }),
   });
-  return buildLiveLogDiagnosticsFromRecords(
-    streamLogs.map(rawLogRecordForDiagnostics),
-    stripUndefinedValues({
-      type: "assistant_thinking_delta",
-      message: "AI正在思考",
-      created_at: lastLog?.createdAt,
-      run_id: lastLog?.runId,
-      payload,
-    }),
-  );
-}
-
-function sortStreamLogs(
-  logs: ExecutionLog[],
-  field: "answerStream" | "thinkingStream",
-) {
-  return [...logs].sort((left, right) => {
-    const leftIndex = left[field]?.streamIndex ?? 0;
-    const rightIndex = right[field]?.streamIndex ?? 0;
-    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
-    return byLogOrder(left, right);
+  const summaryRecord = stripUndefinedValues({
+    type: "assistant_thinking_delta",
+    message: "AI正在思考",
+    created_at: lastLog?.createdAt,
+    run_id: lastLog?.runId ?? undefined,
+    payload,
+  });
+  return buildStreamStatusDiagnostics({
+    summaryRecord,
   });
 }
 
-function filterRunScopedStreamLogs(
-  logs: ExecutionLog[],
-  field: "answerStream" | "thinkingStream",
-) {
-  const streamLogs = sortStreamLogs(logs, field)
-    .filter((log) => Boolean(log[field]?.content));
-  const lastLog = streamLogs.at(-1);
-  if (!lastLog?.runId) {
-    return streamLogs;
-  }
-  return streamLogs.filter((log) => log.runId === lastLog.runId);
+function buildStreamStatusDiagnostics({
+  summaryRecord,
+}: {
+  summaryRecord: Record<string, unknown>;
+}): LiveLogDiagnostics {
+  return buildLiveLogDiagnosticsFromRecords([summaryRecord], summaryRecord, {
+    replaceDisplayOnMerge: true,
+  });
 }
 
 function buildSyntheticLogDiagnostics(type: string, message: string): LiveLogDiagnostics {
@@ -701,14 +864,18 @@ function mergeLiveLogDiagnostics(
   if (!first) {
     return second;
   }
-  const merged = buildLiveLogDiagnosticsFromRecords([...first.records, ...second.records]);
-  if (second.displayJson !== second.rawJson) {
-    return {
-      ...merged,
-      displayJson: second.displayJson,
-    };
-  }
-  return merged;
+  const mergedDisplayRecords = second.replaceDisplayOnMerge
+    ? second.displayRecords
+    : first.replaceDisplayOnMerge
+      ? first.displayRecords
+      : [...first.displayRecords, ...second.displayRecords];
+  return buildLiveLogDiagnosticsFromRecords(
+    [...first.records, ...second.records],
+    mergedDisplayRecords,
+    {
+      replaceDisplayOnMerge: second.replaceDisplayOnMerge || first.replaceDisplayOnMerge,
+    },
+  );
 }
 
 function rawLogRecordForDiagnostics(log: ExecutionLog) {
@@ -724,18 +891,23 @@ function buildLiveLogDiagnosticsFromRecord(
 
 function buildLiveLogDiagnosticsFromRecords(
   records: unknown[],
-  displayRecord?: unknown,
+  displayRecord?: unknown | unknown[],
+  options: { replaceDisplayOnMerge?: boolean } = {},
 ): LiveLogDiagnostics {
   const normalizedRecords = records.map(normalizeDiagnosticRecord);
-  const rawDisplayRecord = normalizedRecords.length === 1
-    ? normalizedRecords[0]
-    : { records: normalizedRecords };
-  const normalizedDisplayRecord =
-    displayRecord === undefined ? rawDisplayRecord : normalizeDiagnosticRecord(displayRecord);
+  const normalizedDisplayRecords =
+    displayRecord === undefined
+      ? normalizedRecords
+      : Array.isArray(displayRecord)
+        ? displayRecord.map(normalizeDiagnosticRecord)
+        : [normalizeDiagnosticRecord(displayRecord)];
   return {
     records: normalizedRecords,
-    rawJson: formatDiagnosticJson(rawDisplayRecord),
-    displayJson: formatDiagnosticJson(normalizedDisplayRecord),
+    displayRecords: normalizedDisplayRecords,
+    customDisplay: displayRecord !== undefined,
+    replaceDisplayOnMerge: options.replaceDisplayOnMerge ?? false,
+    rawJson: formatDiagnosticRecords(normalizedRecords),
+    displayJson: formatDiagnosticRecords(normalizedDisplayRecords),
   };
 }
 
@@ -747,14 +919,88 @@ function formatDiagnosticJson(record: unknown) {
   return JSON.stringify(record, null, 2) ?? "null";
 }
 
+function formatDiagnosticRecords(records: unknown[]) {
+  return formatDiagnosticJson(records.length === 1 ? records[0] : { records });
+}
+
 function withLiveLogDisplayRecord(
   details: LiveLogDiagnostics,
   displayRecord: unknown,
 ): LiveLogDiagnostics {
-  return {
-    ...details,
-    displayJson: formatDiagnosticJson(normalizeDiagnosticRecord(displayRecord)),
-  };
+  return buildLiveLogDiagnosticsFromRecords(details.records, [displayRecord], {
+    replaceDisplayOnMerge: true,
+  });
+}
+
+function withLiveLogRawRecords(
+  details: LiveLogDiagnostics,
+  rawRecords: unknown[],
+): LiveLogDiagnostics {
+  return buildLiveLogDiagnosticsFromRecords(
+    [...details.records, ...rawRecords],
+    details.displayRecords,
+    {
+      replaceDisplayOnMerge: details.replaceDisplayOnMerge,
+    },
+  );
+}
+
+function buildClosedStreamRawRecords(logs: ExecutionLog[]) {
+  const rawRecords = logs.flatMap((log) =>
+    isPlainRecord(log.rawRecord) ? [buildRunDiagnosticRecord(log)] : [],
+  );
+  if (rawRecords.length <= CLOSED_STREAM_RAW_RECORD_LIMIT) {
+    return rawRecords;
+  }
+
+  const firstLog = logs[0];
+  const lastLog = logs.at(-1);
+  const streamType = lastLog?.type ?? firstLog?.type ?? "stream_delta";
+  return [
+    stripUndefinedValues({
+      type: streamType,
+      message:
+        streamType === "assistant_answer_delta"
+          ? "AI生成流式片段已压缩"
+          : "AI思考流式片段已压缩",
+      created_at: lastLog?.createdAt ?? firstLog?.createdAt,
+      run_id: lastLog?.runId ?? firstLog?.runId,
+      payload: {
+        schema_version: 1,
+        chunk_count: rawRecords.length,
+        content_hidden: true,
+        omitted_raw_record_count: Math.max(0, rawRecords.length - 1),
+      },
+    }),
+  ];
+}
+
+function buildCompactHiddenLogDisplayRecords(logs: ExecutionLog[]) {
+  return logs.map((log) => {
+    if (log.type === "values_snapshot") {
+      return stripUndefinedValues({
+        type: "values_snapshot",
+        message: "状态快照已省略",
+        created_at: log.createdAt,
+        run_id: log.runId,
+        payload: {
+          content_hidden: true,
+        },
+      });
+    }
+    if (log.type === "final_answer") {
+      return stripUndefinedValues({
+        type: "final_answer",
+        message: "最终回复正文已省略",
+        created_at: log.createdAt,
+        run_id: log.runId,
+        payload: {
+          content_hidden: true,
+        },
+      });
+    }
+    return rawLogRecordForDiagnostics(log);
+  });
 }
 
 const TOOL_RESULT_DISPLAY_JSON_MAX_BYTES = 100 * 1024;
@@ -789,6 +1035,9 @@ function buildToolCallDisplayRecord(item: LiveToolLogItem) {
       (toolName ? formatLiveToolLabel({ toolName } as NonNullable<ExecutionLog["live"]>) : undefined),
     tool_call_id: finalToolCall?.toolCallId,
     args: finalToolCall?.args,
+    args_truncated: finalToolCall?.argsTruncated,
+    args_original_chars: finalToolCall?.argsOriginalChars,
+    delta_count: item.mergedEventCount && item.mergedEventCount > 1 ? item.mergedEventCount : undefined,
   });
 }
 
@@ -853,6 +1102,20 @@ function readToolCallDiagnostic(record: unknown) {
     ),
     partial: readDiagnosticBoolean(payload.partial, payload.is_partial, payload.isPartial),
     args: normalizeToolArguments(argsValue),
+    argsTruncated: readDiagnosticBoolean(
+      payload.args_truncated,
+      payload.argsTruncated,
+      payload.raw_args_truncated,
+      payload.rawArgs_truncated,
+      payload.rawArgsTruncated,
+    ),
+    argsOriginalChars: readDiagnosticNumber(
+      payload.args_original_chars,
+      payload.argsOriginalChars,
+      payload.raw_args_original_chars,
+      payload.rawArgs_original_chars,
+      payload.rawArgsOriginalChars,
+    ),
   };
 }
 
@@ -924,6 +1187,15 @@ function readDiagnosticString(...values: unknown[]) {
 function readDiagnosticBoolean(...values: unknown[]) {
   for (const value of values) {
     if (typeof value === "boolean") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function readDiagnosticNumber(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "number" && Number.isFinite(value)) {
       return value;
     }
   }
@@ -1504,10 +1776,103 @@ function accumulateStreamedAnswer(logs: ExecutionLog[]): string {
 }
 
 const PUNCTUATION_PATTERN = /[。，！？、；：""''（）【】《》.,!?;:"'()\[\]{}]/g;
+const ARTIFACT_SUMMARY_MAX_CHARS = 220;
+const DELIVERY_ARTIFACT_NOTE_PREFIX = "已生成";
+const DELIVERY_ARTIFACT_EXTENSIONS = /\.(docx|pptx|xlsx|xlsm|pdf|html|md)\b/i;
+const ARTIFACT_SUMMARY_SPLIT_PATTERN = /[。！？!?；;，,]/;
 
 function hasMeaningfulContent(content: string): boolean {
   const stripped = content.replace(PUNCTUATION_PATTERN, "");
   return stripped.trim().length > 0;
+}
+
+function truncateArtifactSummary(value: string, maxChars: number) {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+}
+
+function normalizeArtifactSummaryLine(line: string) {
+  return line
+    .trim()
+    .replace(/^#{1,6}\s+/, "")
+    .replace(/^[-*+]\s+/, "")
+    .replace(/^\d+[.)]\s+/, "")
+    .trim();
+}
+
+function buildArtifactSummaryExcerpt(line: string) {
+  const clause = normalizeArtifactSummaryLine(line)
+    .split(ARTIFACT_SUMMARY_SPLIT_PATTERN)
+    .map((part) => part.trim())
+    .find(Boolean);
+  return clause ?? "";
+}
+
+function isArtifactDeliveryLine(line: string) {
+  const normalized = normalizeArtifactSummaryLine(line);
+  if (!normalized) {
+    return true;
+  }
+  if (
+    /^(保存路径|输出路径|文件路径|文件位置|下载路径|已保存到|已生成到|保存于|存放于|附件路径)[:：]/i.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /^(已保存|已生成|已写入|文件已生成|报告已生成|文档已生成).*(\.docx|\.pptx|\.xlsx|\.xlsm|\.pdf|\.html|\.md)\b/i.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  if (DELIVERY_ARTIFACT_EXTENSIONS.test(normalized) && /[\\/]/.test(normalized)) {
+    return true;
+  }
+  return DELIVERY_ARTIFACT_EXTENSIONS.test(normalized) && normalized.length <= 120;
+}
+
+function buildArtifactDeliveryNote(artifacts: Artifact[]) {
+  if (artifacts.length <= 1) {
+    return `${DELIVERY_ARTIFACT_NOTE_PREFIX} 1 个交付文件，请使用下方下载卡片获取。`;
+  }
+  return `${DELIVERY_ARTIFACT_NOTE_PREFIX} ${artifacts.length} 个交付文件，请使用下方下载卡片获取。`;
+}
+
+function buildAssistantArtifactSummary(message: ChatMessage, artifacts: Artifact[]) {
+  const deliveryNote = buildArtifactDeliveryNote(artifacts);
+  const normalizedContent = message.content.replace(/\r\n/g, "\n").trim();
+  if (!normalizedContent) {
+    return deliveryNote;
+  }
+
+  const summarySource =
+    normalizedContent
+      .split(/\n+/)
+      .map(buildArtifactSummaryExcerpt)
+      .find((line) => line && !isArtifactDeliveryLine(line)) ??
+    normalizedContent.replace(/\s+/g, " ").trim();
+
+  const summaryText = truncateArtifactSummary(summarySource, ARTIFACT_SUMMARY_MAX_CHARS);
+  if (!summaryText || summaryText === deliveryNote) {
+    return deliveryNote;
+  }
+
+  const normalizedSummary = /[。！？.!?]$/.test(summaryText) ? summaryText : `${summaryText}。`;
+  return `${normalizedSummary}\n\n${deliveryNote}`;
+}
+
+function projectAssistantMessage(message: ChatMessage, artifacts: Artifact[]) {
+  if (message.role !== "assistant" || artifacts.length === 0) {
+    return message;
+  }
+  return {
+    ...message,
+    content: buildAssistantArtifactSummary(message, artifacts),
+  };
 }
 
 export function buildRunActivityGroups(
@@ -1597,7 +1962,13 @@ export function buildRunActivityGroups(
     });
   }
 
-  return groups.filter((group) => group.logs.length > 0 || group.artifacts.length > 0);
+  return groups.filter(
+    (group) =>
+      group.logs.length > 0 ||
+      group.artifacts.length > 0 ||
+      group.status === "running" ||
+      group.status === "needs_input",
+  );
 }
 
 function groupTimeValue(group: RunActivityGroup) {
@@ -1621,15 +1992,21 @@ export function buildConversationStreamItems(
   messages: ChatMessage[],
   groups: RunActivityGroup[],
 ): ConversationStreamItem[] {
+  const groupsByRunId = new Map(groups.map((group) => [group.runId, group]));
   const remainingGroups = new Map(groups.map((group) => [group.runId, group]));
   const firstReplyIndexByRunId = new Map<string, number>();
   const lastMessageIndexByRunId = new Map<string, number>();
+  const lastVisibleAssistantIndexByRunId = new Map<string, number>();
+  const renderedArtifactRuns = new Set<string>();
 
   messages.forEach((message, index) => {
     if (message.runId) {
       lastMessageIndexByRunId.set(message.runId, index);
       if (message.role !== "user" && !firstReplyIndexByRunId.has(message.runId)) {
         firstReplyIndexByRunId.set(message.runId, index);
+      }
+      if (message.role === "assistant" && !isPlaceholderAssistantMessage(message)) {
+        lastVisibleAssistantIndexByRunId.set(message.runId, index);
       }
     }
   });
@@ -1646,6 +2023,9 @@ export function buildConversationStreamItems(
   }
 
   function pushArtifactItems(group: RunActivityGroup) {
+    if (renderedArtifactRuns.has(group.runId)) {
+      return;
+    }
     group.artifacts.forEach((artifact) => {
       items.push({
         id: `artifact:${group.runId}:${artifact.name}`,
@@ -1654,6 +2034,7 @@ export function buildConversationStreamItems(
         artifact,
       });
     });
+    renderedArtifactRuns.add(group.runId);
   }
 
   function pushStreamedAnswerItem(group: RunActivityGroup) {
@@ -1675,27 +2056,31 @@ export function buildConversationStreamItems(
     }
 
     const isPlaceholder = isPlaceholderAssistantMessage(message);
+    const assistantArtifacts =
+      message.runId &&
+      message.role === "assistant" &&
+      lastVisibleAssistantIndexByRunId.get(message.runId) === index
+        ? (groupsByRunId.get(message.runId)?.artifacts ?? [])
+        : [];
     if (!isPlaceholder) {
       items.push({
         id: `message:${message.id}`,
         kind: "message",
-        message,
-        assistantArtifacts:
-          message.role !== "user" && groupBeforeReply ? groupBeforeReply.artifacts : undefined,
-        groupTitle: groupBeforeReply?.title,
+        message: projectAssistantMessage(message, assistantArtifacts),
+        assistantArtifacts: assistantArtifacts.length > 0 ? assistantArtifacts : undefined,
+        groupTitle: assistantArtifacts.length > 0 ? groupsByRunId.get(message.runId ?? "")?.title : undefined,
       });
-    }
-
-    if (groupBeforeReply && message.role === "user") {
-      pushArtifactItems(groupBeforeReply);
+      if (assistantArtifacts.length > 0 && message.runId) {
+        renderedArtifactRuns.add(message.runId);
+      }
     }
 
     if (
       message.runId &&
-      !firstReplyIndexByRunId.has(message.runId) &&
-      lastMessageIndexByRunId.get(message.runId) === index
+      lastMessageIndexByRunId.get(message.runId) === index &&
+      !lastVisibleAssistantIndexByRunId.has(message.runId)
     ) {
-      const group = pushGroup(message.runId);
+      const group = groupBeforeReply ?? pushGroup(message.runId);
       if (group) {
         pushStreamedAnswerItem(group);
         pushArtifactItems(group);

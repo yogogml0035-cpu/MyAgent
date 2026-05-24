@@ -21,7 +21,7 @@
 - `GET /api/tasks/{task_id}/events?after_id=...`：恢复增量事件。
 - `POST /api/tasks/{task_id}/files`：上传文件。
 - `POST /api/tasks/{task_id}/messages`：发送用户消息、模型、模式和技能选择。
-- `POST /api/tasks/{task_id}/cancel`：停止运行中的任务。
+- `POST /api/tasks/{task_id}/cancel`：请求停止运行中的任务；后端会尽快把当前 run 标记为 `cancelled` 并返回最新 task state，后台 runner 继续异步收敛取消。
 - `GET /api/tasks/{task_id}/artifacts/{artifact_name}`：下载任务级产物。
 - `GET /api/tasks/{task_id}/runs/{run_id}/artifacts/{artifact_name}`：下载 run 级产物。
 
@@ -35,6 +35,7 @@
 - `EventSource` 无法设置自定义 header，因此浏览器 token 会作为 `token` query 参数发送。
 - SSE 是持久化事件的投影，不是权威状态来源。
 - 断线、终态或失败时，前端会回退到事件增量读取和任务状态刷新。
+- 前端会按浏览器帧批量合并 SSE event，避免长任务日志逐条触发全量渲染。
 
 相关位置：
 
@@ -67,6 +68,7 @@
 - 后端文件校验、任务目录、上传目录和产物目录由 `backend/app/storage.py` 管理。
 - 默认任务文件根在后端 `Settings.task_root`，默认落到 `backend/storage/sessions`。
 - 支持的上传格式以源代码事实为准，当前事实层记录为 Markdown、JSON、TXT、DOCX、XLSX 和 XLSM。
+- Agent 生成 Word/docx 交付文件时使用后端 `create_word_document` 工具登记 run-scoped artifact；工具接收 Markdown/纯文本并转换为 Word 原生标题、列表和表格，不依赖浏览器、本地 shell 或 `execute` 命令。
 - HTML 产物预览由前端生成沙盒 iframe 文档，避免直接把不可信 HTML 混入主页面。
 
 ### 模型和技能边界

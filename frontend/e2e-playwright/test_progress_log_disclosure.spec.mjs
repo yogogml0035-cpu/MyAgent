@@ -450,7 +450,25 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(toolSummaryLine.locator("code")).toHaveCount(0);
     expect(await toolSummaryLine.evaluate((element) => getComputedStyle(element).whiteSpace)).toBe("nowrap");
     const logToggleButton = logPanel.locator(".traceHeader .traceLogToggleButton");
-    const rawLogCopyButton = logPanel.locator(".traceHeader .traceCopyButton");
+    const downloadLogsButton = logPanel.getByRole("button", { name: /下载.*完整日志/ });
+    await expect(logPanel.locator(".traceHeader .traceCopyButton")).toHaveCount(0);
+    await expect(downloadLogsButton).toBeVisible();
+    await expect(downloadLogsButton).toHaveAttribute("aria-label", "下载第 1 轮完整日志");
+    await expect(logPanel.locator("details.runDiagnosticsPanel")).toHaveCount(0);
+    await expect(logPanel.getByText("完整诊断 JSON")).toHaveCount(0);
+    const downloadEvent = page.waitForEvent("download");
+    await downloadLogsButton.click();
+    const downloadedLogs = await downloadEvent;
+    expect(downloadedLogs.suggestedFilename()).toBe(`${runId}-logs.jsonl`);
+    const downloadedLogsPath = path.join(evidenceDir, "02-progress-log-full.jsonl");
+    await downloadedLogs.saveAs(downloadedLogsPath);
+    const downloadedLogsContent = fs.readFileSync(downloadedLogsPath, "utf-8");
+    const downloadedLogLines = downloadedLogsContent.trim().split("\n").map((line) => JSON.parse(line));
+    const downloadedLogTypes = new Set(downloadedLogLines.map((line) => line.type));
+    expect(downloadedLogLines.every((line) => line.run_id === runId)).toBe(true);
+    expect(downloadedLogTypes.has("assistant_thinking_delta")).toBe(true);
+    expect(downloadedLogTypes.has("tool_call")).toBe(true);
+    expect(downloadedLogTypes.has("tool_result")).toBe(true);
     await expect(logToggleButton).toHaveText("全部展开");
     await expect(logToggleButton).toHaveAttribute("aria-expanded", "false");
     await expect(logToggleButton).toHaveAttribute("aria-label", "展开第 1 轮全部日志");
@@ -503,15 +521,8 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
         borderColor: button.borderColor,
       };
     });
-    const rawLogCopyButtonStylesInitial = await rawLogCopyButton.evaluate((element) => {
-      const button = getComputedStyle(element);
-      return {
-        backgroundColor: button.backgroundColor,
-        borderColor: button.borderColor,
-      };
-    });
-    expect(expandedToggleStyles.backgroundColor).toBe(rawLogCopyButtonStylesInitial.backgroundColor);
-    expect(expandedToggleStyles.borderColor).toBe(rawLogCopyButtonStylesInitial.borderColor);
+    expect(expandedToggleStyles.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
+    expect(expandedToggleStyles.borderColor).not.toBe("rgba(0, 0, 0, 0)");
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "02-all-log-rows-expanded-by-toggle.png"),
@@ -526,19 +537,13 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(logToggleButton).toHaveText("全部展开");
     await expect(logToggleButton).toHaveAttribute("aria-expanded", "false");
 
-    await rawLogCopyButton.click();
-    const copiedRawJsonl = await page.evaluate(() => navigator.clipboard.readText());
-    const copiedRawLines = copiedRawJsonl.trim().split("\n").map((line) => JSON.parse(line));
-    expect(copiedRawLines.some((line) => line.type === "tool_call" && line.payload?.partial === true)).toBe(true);
-    expect(copiedRawLines.some((line) => line.type === "tool_result" && line.payload?.content === "2 results")).toBe(true);
-
     const collapsedGenerationCopyButton = rows.nth(8).locator("summary .liveLogCopyButton");
     await collapsedGenerationCopyButton.click();
     await expect(rows.nth(8)).not.toHaveAttribute("open", "");
     const collapsedCopiedGenerationJson = await page.evaluate(() => navigator.clipboard.readText());
-    expect(JSON.parse(collapsedCopiedGenerationJson).payload.answer_stream.content).toContain(
-      "这段原始流式内容会显示在展开日志里。",
-    );
+    const collapsedCopiedGenerationRecord = JSON.parse(collapsedCopiedGenerationJson);
+    expect(collapsedCopiedGenerationRecord.payload.answer_stream.content_hidden).toBe(true);
+    expect(collapsedCopiedGenerationRecord.payload.answer_stream.chunk_count).toBe(1);
 
     for (let index = 0; index < 11; index += 1) {
       const row = rows.nth(index);
@@ -560,11 +565,11 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(8).locator(".liveLogDiagnosticRows")).toHaveCount(0);
     await expect(rows.nth(8).locator("summary .liveLogCopyButton")).toBeVisible();
     await expect(rows.nth(8).locator("pre")).toContainText('"type": "assistant_answer_delta"');
-    await expect(rows.nth(8).locator("pre")).toContainText('"content"');
+    await expect(rows.nth(8).locator("pre")).toContainText('"content_hidden": true');
     await expect(rows.nth(8).locator("pre")).not.toContainText('"accumulated_content"');
     await expect(rows.nth(8).locator("pre")).not.toContainText('"chunks"');
-    await expect(rows.nth(8).locator("pre")).not.toContainText('"chunk_count"');
-    await expect(rows.nth(8).locator("pre")).toContainText("这段原始流式内容会显示在展开日志里。");
+    await expect(rows.nth(8).locator("pre")).toContainText('"chunk_count": 1');
+    await expect(rows.nth(8).locator("pre")).not.toContainText("这段原始流式内容会显示在展开日志里。");
     await expect(rows.nth(8)).not.toContainText("事件类型");
     await expect(rows.nth(8)).not.toContainText("显示方式");
     const generationCopyButton = rows.nth(8).locator("summary .liveLogCopyButton");
@@ -577,11 +582,11 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(generationCopyButton).toHaveAttribute("aria-label", "已复制此行日志JSON");
     await expect(rows.nth(8)).toHaveAttribute("open", "");
     const copiedGenerationJson = await page.evaluate(() => navigator.clipboard.readText());
-    expect(JSON.parse(copiedGenerationJson).payload.answer_stream.content).toContain(
-      "这段原始流式内容会显示在展开日志里。",
-    );
+    const copiedGenerationRecord = JSON.parse(copiedGenerationJson);
+    expect(copiedGenerationRecord.payload.answer_stream.content_hidden).toBe(true);
+    expect(copiedGenerationRecord.payload.answer_stream.chunk_count).toBe(1);
     await expect(rows.nth(8).locator("dt")).toHaveCount(0);
-    await expect(rows.nth(8).locator("pre")).not.toContainText('"content_hidden": true');
+    await expect(rows.nth(8).locator("pre")).toContainText('"content_hidden": true');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "03-answer-row-expanded.png"),
@@ -645,7 +650,8 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(5)).toHaveAttribute("open", "");
     await expect(rows.nth(5).locator("summary .liveLogCopyButton")).toBeVisible();
     await expect(rows.nth(5).locator("pre")).toContainText('"type": "assistant_thinking_delta"');
-    await expect(rows.nth(5).locator("pre")).toContainText("I should verify with another source.");
+    await expect(rows.nth(5).locator("pre")).toContainText('"content_hidden": true');
+    await expect(rows.nth(5).locator("pre")).toContainText('"chunk_count": 1');
     await expect(rows.nth(5).locator("pre")).not.toContainText('"chunks"');
 
     await rows.nth(0).locator("summary").click();
@@ -656,9 +662,9 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(0).locator("pre")).toContainText('"type": "assistant_thinking_delta"');
     await expect(rows.nth(0).locator("pre")).not.toContainText('"type": "values_snapshot"');
     await expect(rows.nth(0).locator("pre")).not.toContainText('"chunks"');
-    await expect(rows.nth(0).locator("pre")).not.toContainText('"chunk_count"');
+    await expect(rows.nth(0).locator("pre")).toContainText('"chunk_count": 1');
     await expect(rows.nth(0).locator("pre")).not.toContainText('"accumulated_content"');
-    await expect(rows.nth(0).locator("pre")).toContainText("I should search for recent news.");
+    await expect(rows.nth(0).locator("pre")).toContainText('"content_hidden": true');
     await expect(rows.nth(0).locator("pre")).not.toContainText("I should verify with another source.");
     await expect(rows.nth(0)).not.toContainText("思考内容");
     const thinkingCopyButton = rows.nth(0).locator("summary .liveLogCopyButton");
@@ -666,9 +672,8 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(0)).toHaveAttribute("open", "");
     const copiedThinkingJson = await page.evaluate(() => navigator.clipboard.readText());
     const copiedThinkingRecord = JSON.parse(copiedThinkingJson);
-    expect(copiedThinkingRecord.payload.thinking_stream.content).toContain(
-      "I should search for recent news.",
-    );
+    expect(copiedThinkingRecord.payload.thinking_stream.content_hidden).toBe(true);
+    expect(copiedThinkingRecord.payload.thinking_stream.chunk_count).toBe(1);
     await expect(rows.nth(0).locator("dt")).toHaveCount(0);
     await page.screenshot({
       fullPage: true,
@@ -687,7 +692,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(rows.nth(10).locator("pre")).toContainText('"type": "task_completed"');
     await expect(rows.nth(10).locator("pre")).toContainText('"display_text": "任务已完成"');
     await expect(rows.nth(10).locator("pre")).toContainText('"type": "final_answer"');
-    await expect(rows.nth(10).locator("pre")).toContainText('"display_text": "回答已完成"');
+    await expect(rows.nth(10).locator("pre")).toContainText('"content_hidden": true');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "07-terminal-rows-expanded.png"),
@@ -696,7 +701,7 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
     await expect(logToggleButton).toHaveText("全部折叠");
     await expect(logToggleButton).toHaveAttribute("aria-expanded", "true");
     await expect(logToggleButton).toHaveAttribute("aria-label", "折叠第 1 轮全部日志");
-    await expect(rawLogCopyButton).not.toHaveClass(/copyButton-copied/);
+    await expect(downloadLogsButton).toHaveAttribute("aria-label", "下载第 1 轮完整日志");
     const toggleButtonStyles = await logToggleButton.evaluate((element) => {
       const button = getComputedStyle(element);
       const before = getComputedStyle(element, "::before");
@@ -710,15 +715,6 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
         beforeDisplay: before.display,
       };
     });
-    const rawLogCopyButtonStyles = await rawLogCopyButton.evaluate((element) => {
-      const button = getComputedStyle(element);
-      return {
-        backgroundColor: button.backgroundColor,
-        borderColor: button.borderColor,
-      };
-    });
-    expect(toggleButtonStyles.backgroundColor).toBe(rawLogCopyButtonStyles.backgroundColor);
-    expect(toggleButtonStyles.borderColor).toBe(rawLogCopyButtonStyles.borderColor);
     expect(toggleButtonStyles.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
     expect(toggleButtonStyles.borderRadius).not.toBe("0px");
     expect(toggleButtonStyles.textDecorationLine).toBe("none");
@@ -755,8 +751,8 @@ test("progress log rows keep left timestamps and all rows expand diagnostics", a
         borderColor: button.borderColor,
       };
     });
-    expect(expandedToggleStylesLater.backgroundColor).toBe(rawLogCopyButtonStyles.backgroundColor);
-    expect(expandedToggleStylesLater.borderColor).toBe(rawLogCopyButtonStyles.borderColor);
+    expect(expandedToggleStylesLater.backgroundColor).toBe(toggleButtonStyles.backgroundColor);
+    expect(expandedToggleStylesLater.borderColor).toBe(toggleButtonStyles.borderColor);
     await logToggleButton.screenshot({
       path: path.join(evidenceDir, "07-log-toggle-expanded-detail.png"),
     });

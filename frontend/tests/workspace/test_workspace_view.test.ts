@@ -893,14 +893,14 @@ test("buildLiveLogItems renders DeepAgents stream order with segmented thinking 
   assert.equal(firstStatusUpdate?.kind, "status");
   assert.equal(secondThinking?.kind, "status");
   assert.equal(firstThinking?.details.rawJson.includes("Need verify."), false);
-  assert.equal(secondThinking?.details.displayJson.includes("Need verify."), true);
+  assert.equal(secondThinking?.details.displayJson.includes("Need verify."), false);
   assert.equal(firstStatusUpdate?.details.rawJson.includes("values_snapshot"), true);
   assert.equal(firstStatusUpdate?.details.rawJson.includes('"type": "status_update"'), true);
   assert.equal(firstThinking?.details.displayJson.includes("values_snapshot"), false);
-  assert.equal(
-    JSON.parse(firstThinking?.details.displayJson ?? "{}").payload.thinking_stream.content,
-    "Need search.",
-  );
+  const firstThinkingDisplay = JSON.parse(firstThinking?.details.displayJson ?? "{}");
+  assert.equal(firstThinkingDisplay.payload.thinking_stream.content_hidden, true);
+  assert.equal(firstThinkingDisplay.payload.thinking_stream.chunk_count, 1);
+  assert.equal(firstThinkingDisplay.payload.thinking_stream.character_count, "Need search.".length);
 });
 
 test("buildLiveLogItems shows status updates as a generic compact row while retaining diagnostics", () => {
@@ -1055,8 +1055,130 @@ test("buildLiveLogItems keeps final_answer only in diagnostics instead of a visi
     ["任务已完成"],
   );
   assert.equal(items[0]?.details.displayJson.includes('"type": "task_completed"'), true);
+  assert.equal(items[0]?.details.displayJson.includes("任务已完成"), true);
   assert.equal(items[0]?.details.displayJson.includes('"type": "final_answer"'), true);
-  assert.equal(items[0]?.details.displayJson.includes("Final answer generated"), true);
+  assert.equal(items[0]?.details.displayJson.includes("Final answer generated"), false);
+  assert.equal(items[0]?.details.rawJson.includes('"type": "final_answer"'), true);
+  assert.equal(items[0]?.details.rawJson.includes("Final answer generated"), true);
+});
+
+test("buildLiveLogItems compresses 2000+ raw events into a small visible projection", () => {
+  const logs: Parameters<typeof buildLiveLogItems>[0] = Array.from({ length: 2100 }, (_, index) => ({
+    id: `think-${index}`,
+    seq: index,
+    type: "assistant_thinking_delta" as const,
+    title: `thinking-${index}`,
+    createdAt: `2026-05-14T05:15:${String(index % 60).padStart(2, "0")}.000Z`,
+    thinkingStream: {
+      schemaVersion: 1 as const,
+      streamIndex: index,
+      content: `chunk-${index}`,
+    },
+    rawRecord: {
+      id: `think-${index}`,
+      type: "assistant_thinking_delta",
+      message: `thinking-${index}`,
+    },
+  }));
+
+  const items = buildLiveLogItems(logs, "running");
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.kind, "status");
+  assert.equal(items[0]?.kind === "status" ? items[0].text : "", "AI正在思考");
+  assert.equal(items[0]?.details.rawJson.includes("chunk-2099"), false);
+  assert.equal(items[0]?.details.displayJson.includes("chunk-2099"), false);
+  const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
+  assert.equal(display.type, "assistant_thinking_delta");
+  assert.equal(display.payload.thinking_stream.content_hidden, true);
+  assert.equal(display.payload.thinking_stream.chunk_count, 2100);
+});
+
+test("buildLiveLogItems keeps closed stream raw diagnostics compact", () => {
+  const logs: Parameters<typeof buildLiveLogItems>[0] = Array.from({ length: 2100 }, (_, index) => ({
+    id: `think-closed-${index}`,
+    seq: index,
+    type: "assistant_thinking_delta" as const,
+    title: `thinking-${index}`,
+    createdAt: `2026-05-14T05:15:${String(index % 60).padStart(2, "0")}.000Z`,
+    thinkingStream: {
+      schemaVersion: 1 as const,
+      streamIndex: index,
+      content: `reasoning-chunk-${index}`,
+    },
+    rawRecord: {
+      id: `think-closed-${index}`,
+      type: "assistant_thinking_delta",
+      message: `thinking-${index}`,
+      payload: { content: `reasoning-chunk-${index}` },
+    },
+  }));
+
+  const items = buildLiveLogItems(logs, "failed");
+
+  assert.equal(items.length, 1);
+  assert.equal(items[0]?.kind, "status");
+  assert.equal(items[0]?.details.rawJson.includes("reasoning-chunk-2099"), false);
+  assert.equal(items[0]?.details.rawJson.length < 2000, true);
+  const raw = JSON.parse(items[0]?.details.rawJson ?? "{}");
+  assert.equal(raw.records[1].payload.content_hidden, true);
+  assert.equal(raw.records[1].payload.chunk_count, 2100);
+});
+
+test("buildLiveLogItems compacts oversized tool-call argument deltas", () => {
+  const longArgs = `{"description":"${"x".repeat(5000)}TAIL_MARKER`;
+  const logs: Parameters<typeof buildLiveLogItems>[0] = Array.from({ length: 1350 }, (_, index) => ({
+    id: `tool-delta-${index}`,
+    seq: index,
+    type: "tool_call" as const,
+    title: "Calling tool: task",
+    createdAt: `2026-05-14T05:16:${String(index % 60).padStart(2, "0")}.000Z`,
+    live: {
+      schemaVersion: 1 as const,
+      kind: "tool_call" as const,
+      stage: "selecting_tool" as const,
+      toolName: "task",
+      toolLabel: "调用工具",
+      toolCallId: "call-large",
+      diagnosticLabel: "tool_call_delta",
+      parameterItems: [{ key: "args", value: longArgs.slice(0, 160), truncated: true }],
+    },
+    rawRecord: {
+      id: `tool-delta-${index}`,
+      type: "tool_call",
+      message: "Calling tool: task",
+      payload: {
+        id: "call-large",
+        name: "task",
+        args: longArgs,
+        raw_args: longArgs,
+        partial: true,
+      },
+    },
+  }));
+
+  const items = buildLiveLogItems(logs, "running");
+  const toolItem = items.find((item) => item.kind === "tool");
+
+  assert.ok(toolItem);
+  assert.equal(toolItem?.kind, "tool");
+  if (!toolItem || toolItem.kind !== "tool") {
+    throw new Error("expected compacted tool item");
+  }
+  assert.equal(items.filter((item) => item.kind === "tool").length, 1);
+  assert.equal(toolItem.details.rawJson.includes("TAIL_MARKER"), false);
+  assert.equal(toolItem.details.rawJson.length < 4000, true);
+  const display = JSON.parse(toolItem.details.displayJson);
+  assert.equal(display.type, "tool_call");
+  assert.equal(display.delta_count, 1350);
+  assert.equal(display.args_truncated, true);
+  assert.equal(display.args_original_chars > 5000, true);
+  assert.equal(JSON.stringify(display).includes("TAIL_MARKER"), false);
+
+  const copied = JSON.parse(buildLogClipboardText([logs[0]]));
+  assert.equal(copied.payload.args_truncated, true);
+  assert.equal(copied.payload.args_original_chars > 5000, true);
+  assert.equal(JSON.stringify(copied).includes("TAIL_MARKER"), false);
 });
 
 test("buildLiveLogItems aggregates assistant stream chunks into a generation row", () => {
@@ -1131,10 +1253,14 @@ test("buildLiveLogItems aggregates assistant stream chunks into a generation row
   );
   const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
   assert.equal(display.type, "assistant_answer_delta");
-  assert.equal(display.payload.answer_stream.content.includes("第一段"), true);
-  assert.equal(display.payload.answer_stream.content.includes("第二段"), true);
+  assert.equal(display.payload.answer_stream.content_hidden, true);
+  assert.equal(display.payload.answer_stream.chunk_count, 2);
+  assert.equal(
+    display.payload.answer_stream.character_count,
+    "第一段".length + "第一段\n第二段".length,
+  );
+  assert.equal("content" in display.payload.answer_stream, false);
   assert.equal("chunks" in display.payload.answer_stream, false);
-  assert.equal("chunk_count" in display.payload.answer_stream, false);
   assert.equal("accumulated_content" in display.payload.answer_stream, false);
 });
 
@@ -1186,14 +1312,17 @@ test("buildLiveLogItems shows answer stream deltas only inside generation diagno
   );
   assert.equal(items[0]?.kind === "status" ? items[0].text : "", "AI正在生成结果");
   assert.equal("rows" in (items[0]?.details ?? {}), false);
-  assert.equal(items[0]?.details.rawJson.includes("stream-punctuation"), true);
-  assert.equal(items[0]?.details.rawJson.includes("stream-content"), true);
+  assert.equal(items[0]?.details.rawJson.includes("stream-punctuation"), false);
+  assert.equal(items[0]?.details.rawJson.includes("stream-content"), false);
   const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
-  assert.equal(display.payload.answer_stream.content, "。第一段");
+  assert.equal(display.type, "assistant_answer_delta");
+  assert.equal(display.payload.answer_stream.content_hidden, true);
+  assert.equal(display.payload.answer_stream.chunk_count, 2);
+  assert.equal(display.payload.answer_stream.character_count, "。".length + "第一段".length);
+  assert.equal("content" in display.payload.answer_stream, false);
   assert.equal("chunks" in display.payload.answer_stream, false);
-  assert.equal("chunk_count" in display.payload.answer_stream, false);
   assert.equal("accumulated_content" in display.payload.answer_stream, false);
-  assert.equal(items[0]?.details.displayJson.includes('"content_hidden": true'), false);
+  assert.equal(items[0]?.details.displayJson.includes('"content_hidden": true'), true);
 });
 
 test("buildLiveLogItems shows thinking stream content inside thinking diagnostics", () => {
@@ -1245,13 +1374,52 @@ test("buildLiveLogItems shows thinking stream content inside thinking diagnostic
   );
   assert.equal("rows" in (items[1]?.details ?? {}), false);
   assert.equal(items[1]?.details.rawJson.includes('"assistant_thinking_delta"'), true);
+  assert.equal(items[1]?.details.rawJson.includes("先判断是否需要联网。"), false);
+  assert.equal(items[1]?.details.rawJson.includes("再选择搜索工具。"), false);
   const display = JSON.parse(items[1]?.details.displayJson ?? "{}");
   assert.equal(display.type, "assistant_thinking_delta");
-  assert.equal(display.payload.thinking_stream.content, "先判断是否需要联网。再选择搜索工具。");
+  assert.equal(display.payload.thinking_stream.content_hidden, true);
+  assert.equal(display.payload.thinking_stream.chunk_count, 2);
+  assert.equal(
+    display.payload.thinking_stream.character_count,
+    "先判断是否需要联网。".length + "再选择搜索工具。".length,
+  );
+  assert.equal("content" in display.payload.thinking_stream, false);
   assert.equal("chunks" in display.payload.thinking_stream, false);
-  assert.equal("chunk_count" in display.payload.thinking_stream, false);
   assert.equal("accumulated_content" in display.payload.thinking_stream, false);
-  assert.equal(items[1]?.details.displayJson.includes("再选择搜索工具"), true);
+  assert.equal(items[1]?.details.displayJson.includes("再选择搜索工具"), false);
+});
+
+test("buildLiveLogItems keeps streamed chunks out of active row raw diagnostics for large runs", () => {
+  const logs = Array.from({ length: 2000 }, (_, index) => ({
+    id: `thinking-${index + 1}`,
+    seq: index + 1,
+    type: "assistant_thinking_delta" as const,
+    title: `thinking-${index + 1}`,
+    createdAt: `2026-05-14T05:${String(Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
+    thinkingStream: {
+      schemaVersion: 1 as const,
+      streamIndex: index + 1,
+      content: `reasoning-chunk-${index + 1}`,
+    },
+    rawRecord: {
+      id: `thinking-${index + 1}`,
+      type: "assistant_thinking_delta",
+      payload: { content: `reasoning-chunk-${index + 1}` },
+    },
+  }));
+
+  const [item] = buildLiveLogItems(logs, "running");
+  assert.equal(item?.kind, "status");
+  if (!item || item.kind !== "status") {
+    throw new Error("expected active thinking row");
+  }
+  assert.equal(item.details.rawJson.includes("reasoning-chunk-2000"), false);
+  assert.equal(item.details.displayJson.includes("reasoning-chunk-2000"), false);
+  assert.equal(item.details.rawJson.length < 2000, true);
+  const summary = JSON.parse(item.details.rawJson);
+  assert.equal(summary.payload.thinking_stream.chunk_count, 2000);
+  assert.equal(summary.payload.thinking_stream.content_hidden, true);
 });
 
 test("buildLiveLogItems pairs same-tool legacy results in call order", () => {
@@ -1493,7 +1661,7 @@ test("workspace CSS defines dedicated warm-canvas skill picker and chip styles",
   );
   assert.match(
     cssSource,
-    /\.skillChipMarker::before,\n\.skillOptionMarker::before\s*\{[\s\S]*?transform: rotate\(45deg\);/,
+    /\.skillChipMarker::before,\r?\n\.skillOptionMarker::before\s*\{[\s\S]*?transform: rotate\(45deg\);/,
   );
   assert.match(
     cssSource,
@@ -1583,10 +1751,12 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("<pre>{details.displayJson}</pre>"), true);
   assert.equal(conversationSource.includes("details.rawJson"), false);
   assert.equal(conversationSource.includes("liveLogCopyButton"), true);
-  assert.equal(conversationSource.includes("buildRunDiagnosticsJson"), true);
-  assert.equal(conversationSource.includes('className="runDiagnosticsPanel"'), true);
-  assert.equal(conversationSource.includes("完整诊断 JSON"), true);
-  assert.equal(conversationSource.includes("<pre>{runDiagnosticsText}</pre>"), true);
+  assert.equal(conversationSource.includes("buildRunDiagnosticsJson"), false);
+  assert.equal(conversationSource.includes('className="runDiagnosticsPanel"'), false);
+  assert.equal(conversationSource.includes("完整诊断 JSON"), false);
+  assert.equal(conversationSource.includes("<pre>{runDiagnosticsText}</pre>"), false);
+  assert.equal(conversationSource.includes("下载完整日志"), true);
+  assert.equal(conversationSource.includes("onDownloadLogs(group.logs, group.runId, group.title)"), true);
   assert.equal(conversationSource.includes("onToggle={syncOpenLogDetailCounts}"), true);
   assert.equal(conversationSource.includes("toggleRunLogDetails"), true);
   assert.equal(conversationSource.includes("setLogDetailsOpen(logList, open)"), true);
@@ -1596,9 +1766,11 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.equal(conversationSource.includes("openLogDetailCount >= totalLogDetailCount"), false);
   assert.equal(conversationSource.includes('className="copyButton traceCollapseButton"'), false);
   assert.equal(conversationSource.includes("traceLogToggleButton"), true);
+  assert.equal(conversationSource.includes('className="traceDownloadButton"'), false);
   assert.equal(conversationSource.includes("全部展开"), true);
   assert.equal(conversationSource.includes("全部折叠"), true);
-  assert.equal(conversationSource.includes('"traceCopyButton"'), true);
+  assert.equal(conversationSource.includes('"traceCopyButton"'), false);
+  assert.equal(conversationSource.includes("onCopyLogs(group.logs"), false);
   assert.equal(conversationSource.includes("event.preventDefault();"), true);
   assert.equal(conversationSource.includes("event.stopPropagation();"), true);
   assert.equal(
@@ -1613,22 +1785,6 @@ test("workspace CSS keeps every live log row expandable with a left-aligned time
   assert.match(
     cssSource,
     /\.liveLogCopyButton\s*\{[\s\S]*?grid-column: 4;[\s\S]*?justify-self: end;/,
-  );
-  assert.match(
-    cssSource,
-    /\.runDiagnosticsPanel\s*\{[\s\S]*?margin: 0 14px 14px;[\s\S]*?background: rgba\(24, 23, 21, 0\.78\);/,
-  );
-  assert.match(
-    cssSource,
-    /\.runDiagnosticsPanel summary\s*\{[\s\S]*?grid-template-columns: minmax\(0, 1fr\) auto 10px;[\s\S]*?min-height: 38px;/,
-  );
-  assert.match(
-    cssSource,
-    /\.runDiagnosticsPanel\[open\] summary::after\s*\{[\s\S]*?transform: rotate\(225deg\);/,
-  );
-  assert.match(
-    cssSource,
-    /\.runDiagnosticsBody pre\s*\{[\s\S]*?max-height: 240px;/,
   );
   assert.match(
     cssSource,
@@ -1864,7 +2020,7 @@ test("buildRunActivityGroups keeps reasoning traces chronologically with operati
   ]);
 });
 
-test("buildRunActivityGroups keeps per-run diagnostics and JSONL copy isolated", () => {
+test("buildRunActivityGroups keeps per-run diagnostics and JSONL export isolated", () => {
   const groups = buildRunActivityGroups(
     [
       {
@@ -2065,17 +2221,18 @@ test("buildRunActivityGroups keeps per-run diagnostics and JSONL copy isolated",
   if (runAThinking?.kind !== "status") {
     throw new Error("expected run-a thinking diagnostics");
   }
-  assert.equal(runAThinking.details.displayJson.includes("RUN_A_REASONING_CANARY"), true);
+  assert.equal(runAThinking.details.displayJson.includes("RUN_A_REASONING_CANARY"), false);
   assert.equal(runAThinking.details.displayJson.includes("RUN_B_REASONING_CANARY"), false);
+  assert.equal(runAThinking.details.rawJson.includes("RUN_A_REASONING_CANARY"), true);
 
-  const runAClipboard = buildLogClipboardText(groups[0].logs);
-  assert.equal(runAClipboard.includes("RUN_A_RESULT_CANARY"), true);
-  assert.equal(runAClipboard.includes("RUN_A_FINAL_CANARY"), true);
-  assert.equal(runAClipboard.includes("RUN_B_REASONING_CANARY"), false);
-  assert.equal(runAClipboard.includes("RUN_B_RESULT_CANARY"), false);
-  assert.equal(runAClipboard.includes("RUN_B_FINAL_CANARY"), false);
-  assert.equal(runAClipboard.includes("uploads/run-a"), true);
-  assert.equal(runAClipboard.includes("uploads/run-b.md"), false);
+  const runAExport = buildLogClipboardText(groups[0].logs);
+  assert.equal(runAExport.includes("RUN_A_RESULT_CANARY"), true);
+  assert.equal(runAExport.includes("RUN_A_FINAL_CANARY"), true);
+  assert.equal(runAExport.includes("RUN_B_REASONING_CANARY"), false);
+  assert.equal(runAExport.includes("RUN_B_RESULT_CANARY"), false);
+  assert.equal(runAExport.includes("RUN_B_FINAL_CANARY"), false);
+  assert.equal(runAExport.includes("uploads/run-a"), true);
+  assert.equal(runAExport.includes("uploads/run-b.md"), false);
 
   const runADiagnostics = buildRunDiagnosticsJson(groups[0].logs);
   assert.equal(runADiagnostics.includes("RUN_A_REASONING_CANARY"), true);
@@ -2086,14 +2243,14 @@ test("buildRunActivityGroups keeps per-run diagnostics and JSONL copy isolated",
   assert.equal(runADiagnostics.includes("RUN_B_RESULT_CANARY"), false);
   assert.equal(runADiagnostics.includes("RUN_B_FINAL_CANARY"), false);
 
-  const runBClipboard = buildLogClipboardText(groups[1].logs);
-  assert.equal(runBClipboard.includes("RUN_B_RESULT_CANARY"), true);
-  assert.equal(runBClipboard.includes("RUN_B_FINAL_CANARY"), true);
-  assert.equal(runBClipboard.includes("RUN_A_REASONING_CANARY"), false);
-  assert.equal(runBClipboard.includes("RUN_A_RESULT_CANARY"), false);
-  assert.equal(runBClipboard.includes("RUN_A_FINAL_CANARY"), false);
-  assert.equal(runBClipboard.includes("uploads/run-b.md"), true);
-  assert.equal(runBClipboard.includes("uploads/run-a"), false);
+  const runBExport = buildLogClipboardText(groups[1].logs);
+  assert.equal(runBExport.includes("RUN_B_RESULT_CANARY"), true);
+  assert.equal(runBExport.includes("RUN_B_FINAL_CANARY"), true);
+  assert.equal(runBExport.includes("RUN_A_REASONING_CANARY"), false);
+  assert.equal(runBExport.includes("RUN_A_RESULT_CANARY"), false);
+  assert.equal(runBExport.includes("RUN_A_FINAL_CANARY"), false);
+  assert.equal(runBExport.includes("uploads/run-b.md"), true);
+  assert.equal(runBExport.includes("uploads/run-a"), false);
 });
 
 test("partitionVisibleLogs collapses excess info reasoning but preserves warnings", () => {
@@ -2560,6 +2717,77 @@ test("buildConversationStreamItems attaches run artifacts to the assistant reply
   assert.equal(assistantItem.kind === "message" ? assistantItem.groupTitle : "", "第 1 轮");
 });
 
+test("buildConversationStreamItems attaches run artifacts to the last visible assistant reply", () => {
+  const items = buildConversationStreamItems(
+    [
+      { id: "m1", role: "user", content: "请生成 Word 文件", runId: "run-1" },
+      { id: "m2", role: "assistant", content: "我先整理资料。", runId: "run-1" },
+      { id: "m3", role: "assistant", content: "文档已完成，请查收。", runId: "run-1" },
+    ],
+    [
+      {
+        runId: "run-1",
+        title: "第 1 轮",
+        status: "complete" as const,
+        logs: [{ id: "event-1", title: "完成", runId: "run-1" }],
+        artifacts: [{ id: "run-1:report.docx", name: "report.docx", runId: "run-1" }],
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    items.map((item) => item.id),
+    ["message:m1", "run:run-1", "message:m2", "message:m3"],
+  );
+  const firstAssistant = items[2];
+  const finalAssistant = items[3];
+  assert.equal(firstAssistant.kind, "message");
+  assert.equal(finalAssistant.kind, "message");
+  assert.deepEqual(
+    firstAssistant.kind === "message" ? firstAssistant.assistantArtifacts : undefined,
+    undefined,
+  );
+  assert.deepEqual(
+    finalAssistant.kind === "message"
+      ? finalAssistant.assistantArtifacts?.map((artifact) => artifact.name)
+      : [],
+    ["report.docx"],
+  );
+});
+
+test("buildConversationStreamItems compresses long delivery replies into a short artifact summary", () => {
+  const longReply = [
+    "技术参数总结.docx 已保存到 /workspace/output/技术参数总结.docx",
+    "第一章详细描述产品架构与适配范围，第二章逐条展开性能指标、接口协议、网络要求、部署前提与兼容性约束，第三章继续补充测试建议、验收说明、风险提示以及长篇结论，正文故意写得很长以验证不会直接把完整 Office 内容塞进最终气泡。",
+    "最终建议按附件下载正式交付文件。",
+  ].join("\n");
+  const items = buildConversationStreamItems(
+    [
+      { id: "m1", role: "user", content: "请输出 Word 文档", runId: "run-1" },
+      { id: "m2", role: "assistant", content: longReply, runId: "run-1" },
+    ],
+    [
+      {
+        runId: "run-1",
+        title: "第 1 轮",
+        status: "complete" as const,
+        logs: [{ id: "event-1", title: "完成", runId: "run-1" }],
+        artifacts: [{ id: "run-1:技术参数总结.docx", name: "技术参数总结.docx", runId: "run-1" }],
+      },
+    ],
+  );
+
+  const finalAssistant = items[2];
+  assert.equal(finalAssistant?.kind, "message");
+  if (!finalAssistant || finalAssistant.kind !== "message") {
+    throw new Error("expected projected assistant message");
+  }
+  assert.equal(finalAssistant.message.content.includes("/workspace/output/技术参数总结.docx"), false);
+  assert.equal(finalAssistant.message.content.includes("已生成 1 个交付文件，请使用下方下载卡片获取。"), true);
+  assert.equal(finalAssistant.message.content.includes("第一章详细描述产品架构与适配范围"), true);
+  assert.equal(finalAssistant.message.content.includes("完整 Office 内容"), false);
+});
+
 test("buildConversationStreamItems keeps artifact cards after run logs without assistant reply", () => {
   const items = buildConversationStreamItems(
     [{ id: "m1", role: "user", content: "分析", runId: "run-1" }],
@@ -2577,6 +2805,29 @@ test("buildConversationStreamItems keeps artifact cards after run logs without a
   assert.deepEqual(
     items.map((item) => item.id),
     ["message:m1", "run:run-1", "artifact:run-1:report.html"],
+  );
+});
+
+test("buildConversationStreamItems keeps artifact cards when only placeholder assistant replies exist", () => {
+  const items = buildConversationStreamItems(
+    [
+      { id: "m1", role: "user", content: "请生成报告", runId: "run-1" },
+      { id: "m2", role: "assistant", content: "AI回复", runId: "run-1" },
+    ],
+    [
+      {
+        runId: "run-1",
+        title: "第 1 轮",
+        status: "complete" as const,
+        logs: [{ id: "event-1", title: "写入报告", runId: "run-1" }],
+        artifacts: [{ id: "run-1:report.docx", name: "report.docx", runId: "run-1" }],
+      },
+    ],
+  );
+
+  assert.deepEqual(
+    items.map((item) => item.id),
+    ["message:m1", "run:run-1", "artifact:run-1:report.docx"],
   );
 });
 
@@ -2836,4 +3087,23 @@ test("buildConversationStreamItems keeps streaming messages with meaningful cont
 
   const streamItems = items.filter((i): i is Extract<typeof i, { kind: "message" }> => i.kind === "message" && Boolean(i.message.streaming));
   assert.equal(streamItems.length, 0);
+});
+
+test("buildRunActivityGroups keeps running and needs-input runs visible without hydrating full logs", () => {
+  const groups = buildRunActivityGroups(
+    [
+      { id: "run-running", status: "running", artifactNames: [] },
+      { id: "run-needs-input", status: "needs_input", artifactNames: [] },
+    ],
+    [],
+    [],
+  );
+
+  assert.deepEqual(
+    groups.map((group) => ({ runId: group.runId, status: group.status, logCount: group.logs.length })),
+    [
+      { runId: "run-running", status: "running", logCount: 0 },
+      { runId: "run-needs-input", status: "needs_input", logCount: 0 },
+    ],
+  );
 });

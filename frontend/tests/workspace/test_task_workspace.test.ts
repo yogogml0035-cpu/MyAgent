@@ -48,6 +48,14 @@ void describe("use-task-workspace exports", () => {
     assert.doesNotMatch(html, /<script/i);
   });
 
+  void it("should generate run-scoped log download filenames without absolute paths", async () => {
+    const mod = await import("../../hooks/use-task-workspace");
+
+    assert.strictEqual(mod.buildRunLogDownloadName("run-42"), "run-42-logs.jsonl");
+    assert.strictEqual(mod.buildRunLogDownloadName(" run 42 / debug "), "run-42-debug-logs.jsonl");
+    assert.strictEqual(mod.buildRunLogDownloadName(""), "run-logs.jsonl");
+  });
+
   void it("should not top-level navigate opened artifact windows to blob URLs", () => {
     const source = readFileSync(
       new URL("../../hooks/use-task-workspace.ts", import.meta.url),
@@ -57,6 +65,16 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(source.includes("location.replace(objectUrl)"), false);
     assert.strictEqual(source.includes("buildSandboxedArtifactPreviewDocument"), true);
     assert.strictEqual(source.includes("artifactWindow.document.write"), true);
+  });
+
+  void it("should expose artifact action labels with filenames for browser verification", () => {
+    const conversationSource = readFileSync(
+      new URL("../../components/chat/TaskConversation.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(conversationSource.includes("aria-label={`下载 ${artifact.name}`}"), true);
+    assert.strictEqual(conversationSource.includes("aria-label={`打开 ${artifact.name}`}"), true);
   });
 
   void it("should block unavailable models before creating tasks or uploading files", () => {
@@ -220,6 +238,39 @@ void describe("use-task-workspace exports", () => {
     );
   });
 
+  void it("should switch conversations via lightweight task state before fetching full event history", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const selectStart = hookSource.indexOf("const handleSelectConversation = useCallback");
+    const selectEnd = hookSource.indexOf("const handleRenameConversation = useCallback");
+    const selectSource = hookSource.slice(selectStart, selectEnd);
+
+    assert.strictEqual(selectSource.includes("await refreshTaskSummary(id);"), true);
+    assert.strictEqual(selectSource.includes("const shouldHydrateFullHistory = targetSummary?.status !== \"running\";"), true);
+    assert.strictEqual(selectSource.includes("void refreshTaskEvents(id, shouldHydrateFullHistory ? undefined : latestEventIdRef.current).catch"), true);
+    assert.strictEqual(selectSource.includes("await refreshTask(id);"), false);
+  });
+
+  void it("should reopen SSE streams from the latest known event cursor", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const apiSource = readFileSync(
+      new URL("../../lib/task-api.ts", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(hookSource.includes("const latestEventIdRef = useRef<string | undefined>(undefined);"), true);
+    assert.strictEqual(hookSource.includes("latestEventIdRef.current = state.latestEventId ?? state.logs.at(-1)?.id;"), true);
+    assert.strictEqual(hookSource.includes("latestEventIdRef.current = incoming.at(-1)?.id ?? latestEventIdRef.current;"), true);
+    assert.strictEqual(hookSource.includes("latestEventIdRef.current,"), true);
+    assert.strictEqual(apiSource.includes("afterId?: string"), true);
+    assert.strictEqual(apiSource.includes("url.searchParams.set(\"after_id\", afterId);"), true);
+  });
+
   void it("should scope composer placeholder and stop affordance to the selected conversation", () => {
     const hookSource = readFileSync(
       new URL("../../hooks/use-task-workspace.ts", import.meta.url),
@@ -275,6 +326,22 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(sidebarSource.includes("onClearConversations: () => Promise<void> | void"), true);
     assert.strictEqual(sidebarSource.includes("clearHistoryButton"), true);
     assert.strictEqual(sidebarSource.includes("清空所有会话"), true);
+  });
+
+  void it("should expose run log download handling through the workspace boundary", () => {
+    const hookSource = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const workspaceSource = readFileSync(
+      new URL("../../components/chat/TaskWorkspace.tsx", import.meta.url),
+      "utf-8",
+    );
+
+    assert.strictEqual(hookSource.includes("const handleDownloadLogs = useCallback"), true);
+    assert.strictEqual(hookSource.includes('new Blob([payload], { type: "application/x-ndjson;charset=utf-8" })'), true);
+    assert.strictEqual(hookSource.includes("anchor.download = buildRunLogDownloadName(runId);"), true);
+    assert.strictEqual(workspaceSource.includes("onDownloadLogs={workspace.handleDownloadLogs}"), true);
   });
 
   void it("should render the slash skill picker and removable skill chips in ChatComposer", () => {

@@ -41,10 +41,15 @@ def _format_event_record(record) -> str:
     return f"data: {payload}\n\n"
 
 
-async def _event_stream(task_id: str, request: Request) -> AsyncGenerator[str, None]:
+async def _event_stream(
+    task_id: str,
+    request: Request,
+    *,
+    after_id: str | None = None,
+) -> AsyncGenerator[str, None]:
     storage = _storage(request)
     runner = _runner(request)
-    last_event_id = None
+    last_event_id = after_id
     try:
         while True:
             if request and await request.is_disconnected():
@@ -77,12 +82,18 @@ async def _event_stream(task_id: str, request: Request) -> AsyncGenerator[str, N
 @router.get("/{task_id}/stream")
 def stream_task(task_id: str, request: Request) -> StreamingResponse:
     storage = _storage(request)
+    after_id = request.query_params.get("after_id")
     try:
         storage.get_task(task_id, include_events=False)
     except (FileNotFoundError, ValueError):
         raise HTTPException(status_code=404, detail="任务不存在") from None
+    if after_id is not None:
+        try:
+            storage.read_events(task_id, after_id=after_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from None
     return StreamingResponse(
-        _event_stream(task_id, request),
+        _event_stream(task_id, request, after_id=after_id),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

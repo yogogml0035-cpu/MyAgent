@@ -44,7 +44,7 @@ from .schemas import (
     TaskSummary,
 )
 
-ArtifactType: TypeAlias = Literal["html", "markdown", "json", "text"]
+ArtifactType: TypeAlias = Literal["html", "markdown", "json", "text", "word", "excel", "powerpoint"]
 UploadSourceFormat: TypeAlias = Literal["markdown", "json", "text", "word", "excel"]
 EventAppendSpec: TypeAlias = tuple[
     str,
@@ -87,6 +87,10 @@ TYPE_MAP: dict[str, ArtifactType] = {
     ".md": "markdown",
     ".json": "json",
     ".txt": "text",
+    ".docx": "word",
+    ".xlsx": "excel",
+    ".xlsm": "excel",
+    ".pptx": "powerpoint",
 }
 UPLOAD_FORMATS: dict[str, UploadSourceFormat] = {
     ".md": "markdown",
@@ -1417,6 +1421,41 @@ class PostgresTaskStorage:
         )
         return path
 
+    def promote_run_artifact_file(
+        self,
+        task_id: str,
+        run_id: str,
+        source_path: str,
+        artifact_name: str | None = None,
+    ) -> Path:
+        validate_run_id(run_id)
+        source = self._task_relative_path(task_id, source_path)
+        if not source.exists() or not source.is_file():
+            raise FileNotFoundError(source_path)
+        task_dir = self.task_dir(task_id)
+        runs_root = (task_dir / "artifacts" / "runs").resolve()
+        artifacts_root = (task_dir / "artifacts").resolve()
+        if runs_root in source.parents or source.parent == runs_root:
+            raise ValueError("源文件不能位于运行产物目录")
+        if artifacts_root in source.parents or source.parent == artifacts_root:
+            raise ValueError("源文件不能位于产物目录")
+
+        name = normalize_artifact_name(artifact_name or source.name)
+        destination = self.run_artifact_dir(task_id, run_id) / name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, destination)
+        if name in RUN_ARTIFACT_NAMES:
+            legacy_destination = self._task_relative_path(task_id, f"artifacts/{name}")
+            legacy_destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(destination, legacy_destination)
+        self.record_run_artifact(
+            task_id,
+            run_id,
+            name,
+            artifact_ref=self._artifact_ref_payload(task_id, run_id, name, destination),
+        )
+        return destination
+
     def run_artifact_dir(self, task_id: str, run_id: str) -> Path:
         validate_run_id(run_id)
         if run_id == LEGACY_RUN_ID:
@@ -1525,9 +1564,20 @@ class PostgresTaskStorage:
         cur.execute("SELECT * FROM messages WHERE task_id = %s ORDER BY id ASC", (task_id,))
         messages = [self._message_from_row(message_row) for message_row in cur.fetchall()]
         events: list[EventRecord] = []
+        latest_event_id: str | None = None
         if include_events:
             cur.execute("SELECT * FROM events WHERE task_id = %s ORDER BY seq ASC", (task_id,))
             events = [self._event_record_from_row(event_row) for event_row in cur.fetchall()]
+            if events:
+                latest_event_id = events[-1].id
+        else:
+            cur.execute(
+                "SELECT id FROM events WHERE task_id = %s ORDER BY seq DESC LIMIT 1",
+                (task_id,),
+            )
+            latest_event_row = cur.fetchone()
+            if latest_event_row is not None:
+                latest_event_id = str(latest_event_row["id"])
         state = TaskState(
             task_id=task_id,
             title=cast("str | None", row.get("title")),
@@ -1539,6 +1589,7 @@ class PostgresTaskStorage:
             events=events,
             runs=runs,
             active_run_id=cast("str | None", row["active_run_id"]),
+            latest_event_id=latest_event_id,
             run_count=len(runs),
             upload_count=len(self.list_uploads(task_id)),
             error=cast("str | None", row["error"]),

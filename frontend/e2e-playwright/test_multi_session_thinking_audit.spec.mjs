@@ -464,54 +464,50 @@ test("real services keep multi-session thinking audit isolated per run", async (
       path: path.join(evidenceDir, "02-conversation-b-running-while-a-running.png"),
     });
 
-    const runDiagnosticsB = logPanelB.locator("details.runDiagnosticsPanel");
-    await runDiagnosticsB.locator("summary").click();
-    await expect(runDiagnosticsB.locator("pre")).toContainText(reasoningB);
-    await expect(runDiagnosticsB.locator("pre")).toContainText(seededRunB.runId);
-    await expect(runDiagnosticsB.locator("pre")).toContainText('"type": "tool_call"');
-    await expect(runDiagnosticsB.locator("pre")).toContainText('"type": "tool_result"');
+    await expect(logPanelB.locator("details.runDiagnosticsPanel")).toHaveCount(0);
+    await expect(logPanelB.locator(".traceHeader .traceCopyButton")).toHaveCount(0);
+    const downloadLogsButtonB = logPanelB.getByRole("button", { name: /下载.*完整日志/ });
+    await expect(downloadLogsButtonB).toBeVisible();
+    const downloadEventB = page.waitForEvent("download");
+    await downloadLogsButtonB.click();
+    const downloadB = await downloadEventB;
+    expect(downloadB.suggestedFilename()).toBe(`${seededRunB.runId}-logs.jsonl`);
+    const downloadBPath = path.join(evidenceDir, "03-conversation-b-diagnostics.jsonl");
+    await downloadB.saveAs(downloadBPath);
+    const downloadBContent = fs.readFileSync(downloadBPath, "utf-8");
+    expect(downloadBContent).toContain(reasoningB);
+    expect(downloadBContent).toContain(seededRunB.runId);
+    expect(downloadBContent).toContain('"type": "tool_call"');
+    expect(downloadBContent).toContain('"type": "tool_result"');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "03-conversation-b-diagnostics-expanded.png"),
     });
-
-    await logPanelB.locator(".traceHeader .traceCopyButton").click();
-    const copiedBJsonl = await page.evaluate(() => navigator.clipboard.readText());
-    const copiedBLines = copiedBJsonl.trim().split("\n").map((line) => JSON.parse(line));
-    expect(copiedBJsonl).toContain(seededRunB.runId);
-    expect(copiedBJsonl).toContain(reasoningB);
-    expect(copiedBJsonl).not.toContain(seededRunA.runId);
-    expect(copiedBJsonl).not.toContain(reasoningA);
-    expect(copiedBLines.some((line) => line.type === "assistant_thinking_delta")).toBe(true);
-    expect(copiedBLines.some((line) => line.type === "tool_call")).toBe(true);
-    expect(copiedBLines.some((line) => line.type === "tool_result")).toBe(true);
 
     await page.getByRole("button", { name: titleA, exact: true }).click();
     await expect(page.locator(".historyItemShell-active", { hasText: titleA })).toBeVisible();
     await expect(composer).toHaveAttribute("placeholder", "当前会话正在生成回复，请稍候...");
     const logPanelA = page.getByRole("region", { name: /第 1 轮进度日志/ }).first();
     await expect(logPanelA).toBeVisible();
-    const runDiagnosticsA = logPanelA.locator("details.runDiagnosticsPanel");
-    await runDiagnosticsA.locator("summary").click();
-    await expect(runDiagnosticsA.locator("pre")).toContainText(reasoningA);
-    await expect(runDiagnosticsA.locator("pre")).toContainText(seededRunA.runId);
-    await expect(runDiagnosticsA.locator("pre")).toContainText('"type": "tool_call"');
-    await expect(runDiagnosticsA.locator("pre")).toContainText('"type": "tool_result"');
+    await expect(logPanelA.locator("details.runDiagnosticsPanel")).toHaveCount(0);
+    await expect(logPanelA.locator(".traceHeader .traceCopyButton")).toHaveCount(0);
+    const downloadLogsButtonA = logPanelA.getByRole("button", { name: /下载.*完整日志/ });
+    await expect(downloadLogsButtonA).toBeVisible();
+    const downloadEventA = page.waitForEvent("download");
+    await downloadLogsButtonA.click();
+    const downloadA = await downloadEventA;
+    expect(downloadA.suggestedFilename()).toBe(`${seededRunA.runId}-logs.jsonl`);
+    const downloadAPath = path.join(evidenceDir, "04-conversation-a-diagnostics.jsonl");
+    await downloadA.saveAs(downloadAPath);
+    const downloadAContent = fs.readFileSync(downloadAPath, "utf-8");
+    expect(downloadAContent).toContain(reasoningA);
+    expect(downloadAContent).toContain(seededRunA.runId);
+    expect(downloadAContent).toContain('"type": "tool_call"');
+    expect(downloadAContent).toContain('"type": "tool_result"');
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "04-conversation-a-diagnostics-expanded.png"),
     });
-
-    await logPanelA.locator(".traceHeader .traceCopyButton").click();
-    const copiedAJsonl = await page.evaluate(() => navigator.clipboard.readText());
-    const copiedALines = copiedAJsonl.trim().split("\n").map((line) => JSON.parse(line));
-    expect(copiedAJsonl).toContain(seededRunA.runId);
-    expect(copiedAJsonl).toContain(reasoningA);
-    expect(copiedAJsonl).not.toContain(seededRunB.runId);
-    expect(copiedAJsonl).not.toContain(reasoningB);
-    expect(copiedALines.some((line) => line.type === "assistant_thinking_delta")).toBe(true);
-    expect(copiedALines.some((line) => line.type === "tool_call")).toBe(true);
-    expect(copiedALines.some((line) => line.type === "tool_result")).toBe(true);
 
     expect(browserErrors).toEqual([]);
     expect(pageErrors).toEqual([]);
