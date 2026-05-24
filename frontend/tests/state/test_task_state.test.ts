@@ -375,6 +375,26 @@ test("normalizeTaskState extracts file-only user message file names", () => {
   assert.equal(state.messages[0].content.includes("总结内容并生成 Word"), true);
 });
 
+test("normalizeTaskState treats continuation upload follow-up as file-only", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "我已上传文件，请继续上一轮需求：总结内容并生成 Word。本轮文件：clarification-brief.txt。",
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.messages[0].fileOnly, true);
+  assert.deepEqual(state.messages[0].files, [{ name: "clarification-brief.txt" }]);
+});
+
 test("normalizeTaskState preserves explicit user message file metadata safely", () => {
   const state = normalizeTaskState(
     {

@@ -1033,6 +1033,7 @@ function normalizeAssistantThinkingStream(type: string | undefined, payload: Rec
 
 const GENERATED_FILE_ONLY_MESSAGE_PREFIXES = [
   "请继续上一轮需求",
+  "我已上传文件，请继续上一轮需求",
   "我已上传文件，请读取并处理本轮上传资源",
 ];
 

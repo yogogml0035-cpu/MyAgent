@@ -15,8 +15,10 @@ Source: prd.json
 - needs-input notice 当前在 `frontend/app/workspace-view.ts:122` 作为 warning 输出，并在 `frontend/app/workspace-view.ts:1662` 显示为“配置提醒”，需要调整或过滤。
 - 文件-only submit 在 `frontend/hooks/use-task-workspace.ts` 中用 `buildFileOnlyFollowUpMessage()` 构造非空 follow-up；有历史用户意图时显式写“继续上一轮需求”，后端 `MessageRequest.message` 仍保持非空合同。
 - 文件-only 用户消息展示由 `frontend/app/task-state.ts` 提取安全文件名元数据到 `ChatMessage.files`/`fileOnly`，`TaskConversation` 可隐藏生成式 follow-up 文案但保留原始 `content` 供复制和上下文使用。
+- `frontend/app/task-state.ts` 的文件-only 消息识别前缀必须与 `frontend/hooks/use-task-workspace.ts` 的 `buildFileOnlyFollowUpMessage()` 生成文案同步，否则浏览器会显示 follow-up prompt 而不是文件 chip。
 - 交付成功判断以当前 run 的 `artifact_names` 后缀满足请求类型为准；请求类型已满足时不要再用 final answer 中的具体文件名做失败判定。
 - 交付失败的 `needs_input` payload 对用户可见时只保留 `message`/`action_label`；历史内部字段在 `frontend/app/task-state.ts` 的 needs-input 标准化和格式化中统一过滤。
+- 真实浏览器 E2E 若要点击“清空所有会话”，应使用隔离的 `MYAGENT_E2E_POSTGRES_DB` 和 `MYAGENT_E2E_TASK_ROOT`，避免删除开发库中的真实历史会话。
 
 ## 2026-05-24 23:14 - US-001
 - 实现了缺上传/缺正文时的普通 AI 澄清：runner 在启动 agent 前识别“总结/生成交付物但没有上传、内联正文或可复用上下文”的请求，直接写入 assistant 澄清并以 success final_answer 完成 run，不再产生 `needs_input` warning。
@@ -87,4 +89,16 @@ Source: prd.json
   - 后端删除会话必须同时检查持久状态和 `runner.is_running(task_id)`，防止状态尚未刷新时误删 active run。
   - `needs_input` 是可继续、可删除、可清空的非运行终态；前端如需判断历史中是否有活跃任务，应统一走 `isTaskActive()`。
   - 清空历史的前端单测更适合锁定纯 helper 和 hook source boundary；真实浏览器“清空所有会话”路径由 US-007 覆盖。
+---
+
+## 2026-05-25 01:54 - US-007
+- 新增真实浏览器 E2E `frontend/e2e-playwright/test_missing_upload_clarification_delivery_warning.spec.mjs`，覆盖缺上传普通澄清、澄清后文件-only 上传继续上一轮需求、`.docx` 下载卡片、交付失败友好说明与内部字段隐藏、`needs_input` 可清空和 `running` 阻止清空。
+- 修复文件-only 展示识别口径：`frontend/app/task-state.ts` 现在识别 `buildFileOnlyFollowUpMessage()` 生成的“我已上传文件，请继续上一轮需求”前缀，避免浏览器路径显示默认 follow-up 文案而不显示文件 chip。
+- 截图证据保存到 `frontend/e2e-playwright/e2e-20260525015235/missing-upload-clarification-delivery-warning-fix/`，并按 `.gitignore` 保持不提交。
+- 更改的文件：`frontend/e2e-playwright/test_missing_upload_clarification_delivery_warning.spec.mjs`、`frontend/app/task-state.ts`、`frontend/tests/state/test_task_state.test.ts`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd frontend && npx playwright test e2e-playwright/test_missing_upload_clarification_delivery_warning.spec.mjs --reporter=line`；`cd frontend && npm test -- tests/state/test_task_state.test.ts`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`git diff --check`
+- **未来迭代的学习：**
+  - 会改动文件-only follow-up 文案时必须同步 `GENERATED_FILE_ONLY_MESSAGE_PREFIXES` 和状态标准化单测，否则 UI 会退回展示 prompt 文本。
+  - clear-all E2E 需要隔离数据库和任务根；否则“清空所有会话”会按真实产品路径删除当前后端返回的全部历史。
+  - 对 provider 不相关的浏览器 E2E，可让缺上传澄清走真实后端短路，后续生成交付物路径用 Postgres-backed seed 保持测试可重复。
 ---
