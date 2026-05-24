@@ -64,7 +64,9 @@ const DEFAULT_MODEL_OPTIONS: ModelOption[] = [
   },
 ];
 
-const DEFAULT_FILE_PROMPT = "请分析已上传文件，先按需读取资源内容，再总结关键差异。";
+const FILE_ONLY_FOLLOW_UP_INTENT_MAX_CHARS = 240;
+const FILE_ONLY_FOLLOW_UP_FILE_MAX_COUNT = 6;
+const FILE_ONLY_FOLLOW_UP_PREFIX = "我已上传文件，请继续上一轮需求";
 export const MAX_SSE_RETRIES = 5;
 export const ARTIFACT_OBJECT_URL_REVOKE_DELAY_MS = 60_000;
 export const TASK_WORKSPACE_STREAM_EVENT_TYPES = new Set([
@@ -169,6 +171,57 @@ export function buildRunLogDownloadName(runId: string) {
     .replace(/[^a-zA-Z0-9._-]+/g, "-")
     .replace(/^-+|-+$/g, "");
   return `${normalizedRunId || "run"}-logs.jsonl`;
+}
+
+function normalizeFollowUpText(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function stripSentenceEnding(value: string) {
+  return value.replace(/[。.!！?？]+$/g, "").trim();
+}
+
+function truncatePreviousIntent(value: string) {
+  const normalized = stripSentenceEnding(normalizeFollowUpText(value));
+  if (normalized.length <= FILE_ONLY_FOLLOW_UP_INTENT_MAX_CHARS) {
+    return normalized;
+  }
+  return `${normalized.slice(0, FILE_ONLY_FOLLOW_UP_INTENT_MAX_CHARS - 3).trimEnd()}...`;
+}
+
+function previousUserIntent(messages: readonly Pick<ChatMessage, "role" | "content">[]) {
+  for (let index = messages.length - 1; index >= 0; index--) {
+    const message = messages[index];
+    if (message.role !== "user") {
+      continue;
+    }
+    const content = normalizeFollowUpText(message.content);
+    if (!content || content.startsWith(FILE_ONLY_FOLLOW_UP_PREFIX)) {
+      continue;
+    }
+    return truncatePreviousIntent(content);
+  }
+  return "";
+}
+
+export function buildFileOnlyFollowUpMessage(
+  files: readonly { name?: string }[],
+  messages: readonly Pick<ChatMessage, "role" | "content">[] = [],
+) {
+  const fileNames = files
+    .map((file) => normalizeFollowUpText(file.name ?? ""))
+    .filter(Boolean);
+  const visibleFileNames = fileNames.slice(0, FILE_ONLY_FOLLOW_UP_FILE_MAX_COUNT);
+  const extraFileCount = fileNames.length - visibleFileNames.length;
+  const fileSummary =
+    visibleFileNames.length > 0
+      ? `本轮文件：${visibleFileNames.join("、")}${extraFileCount > 0 ? ` 等 ${fileNames.length} 个文件` : ""}。`
+      : "本轮已上传文件。";
+  const intent = previousUserIntent(messages);
+  if (intent) {
+    return `${FILE_ONLY_FOLLOW_UP_PREFIX}：${intent}。${fileSummary}`;
+  }
+  return `我已上传文件，请读取并处理本轮上传资源。${fileSummary}`;
 }
 
 export function useTaskWorkspace() {
@@ -504,8 +557,8 @@ export function useTaskWorkspace() {
     }
     setIsSubmittingTask(true);
     const content = input.trim();
-    const taskContent = content || DEFAULT_FILE_PROMPT;
     const files = selectedFiles;
+    const taskContent = content || buildFileOnlyFollowUpMessage(files, messages);
     let requestTaskId = taskId;
 
     try {
@@ -539,6 +592,7 @@ export function useTaskWorkspace() {
     input,
     isSubmittingTask,
     isSwitchingConversation,
+    messages,
     model,
     refreshTask,
     refreshTaskSummaries,

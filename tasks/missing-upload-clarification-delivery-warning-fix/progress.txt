@@ -12,7 +12,7 @@ Source: prd.json
 - 交付保护集中在 `backend/app/runner/core.py:524` 的 `_ensure_run_deliverables()`，当前 payload 暴露内部字段，需要收敛用户可见字段。
 - 前端 active 状态口径集中在 `frontend/app/task-state.ts:1349`，当前只把 `running` 视为 active，应补测试锁定。
 - needs-input notice 当前在 `frontend/app/workspace-view.ts:122` 作为 warning 输出，并在 `frontend/app/workspace-view.ts:1662` 显示为“配置提醒”，需要调整或过滤。
-- 文件-only submit 当前在 `frontend/hooks/use-task-workspace.ts:205` 允许发送，但 `frontend/hooks/use-task-workspace.ts:507` 使用通用默认 prompt，需要改成继续上一轮需求的 follow-up。
+- 文件-only submit 在 `frontend/hooks/use-task-workspace.ts` 中用 `buildFileOnlyFollowUpMessage()` 构造非空 follow-up；有历史用户意图时显式写“继续上一轮需求”，后端 `MessageRequest.message` 仍保持非空合同。
 
 ## 2026-05-24 23:14 - US-001
 - 实现了缺上传/缺正文时的普通 AI 澄清：runner 在启动 agent 前识别“总结/生成交付物但没有上传、内联正文或可复用上下文”的请求，直接写入 assistant 澄清并以 success final_answer 完成 run，不再产生 `needs_input` warning。
@@ -23,4 +23,16 @@ Source: prd.json
   - 缺上传澄清需要避开 `needs_input` 状态，否则前端会把 notice 渲染成 warning/“配置提醒”。
   - runner 的 `start_run()` 已先写入当前 user message，判断“是否有历史上下文”时要排除当前 `run_id` 的消息。
   - 交付保护测试若要验证 artifact 缺失/提升，应提供上传、内联正文或历史上下文，否则会先命中缺来源澄清。
+---
+
+## 2026-05-24 23:32 - US-002
+- 实现了文件-only follow-up：输入框为空但选中文件时，前端发送“继续上一轮需求”的非空消息，并带上上一轮用户意图和本轮文件名。
+- 补齐上传后发送失败的回归锁定：上传始终先于 message 发送，message 失败时刷新当前 task，且不清空已选文件状态。
+- 补齐后端上下文回归：文件-only follow-up 的下一轮上下文包含上一轮“总结内容并生成 Word”意图，上传资源 manifest 包含文件名但不包含上传正文。
+- 更改的文件：`frontend/hooks/use-task-workspace.ts`、`frontend/tests/workspace/test_task_workspace.test.ts`、`backend/tests/unit/runner/test_conversation_context.py`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd frontend && npm test -- tests/workspace/test_task_workspace.test.ts`；`cd backend && uv run pytest tests/unit/runner/test_conversation_context.py -q`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`git diff --check`
+- **未来迭代的学习：**
+  - 前端文件-only 发送不能提交空 message，因为后端 `MessageRequest.message` 有 `min_length=1`；应在 hook 层生成清晰 follow-up。
+  - 会话连续性由 `ConversationContextBuilder` 回放上一轮消息，上传文件内容由 runner 的资源 manifest 和资源工具提供，不应写入普通 message。
+  - `uploadTaskFiles()` 成功但 `postTaskMessage()` 失败时要保留用户可见上传状态，catch 分支的 `refreshTask(requestTaskId)` 是必要兜底。
 ---

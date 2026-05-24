@@ -4,6 +4,7 @@ from langchain_core.messages import AIMessage, HumanMessage
 
 from app.config import Settings
 from app.conversation_context import ConversationContextBuilder
+from app.execution.resources import build_resource_manifest, format_resource_manifest_message
 from app.schemas import ChatMessage
 from tests.fakes import InMemoryTaskStorage
 
@@ -51,6 +52,62 @@ def test_context_builder_injects_previous_messages_without_current_tail(tmp_path
     assert any("上海今日天气" in content for content in contents)
     assert all(content != "我刚才问了什么？" for content in contents)
     assert context.event_payload()["recent_message_count"] == 2
+
+
+def test_file_only_followup_keeps_previous_intent_and_upload_manifest(tmp_path):
+    settings = Settings(
+        task_root=tmp_path / "tasks",
+        workspace_root=tmp_path / "tasks",
+        recent_message_limit=12,
+    )
+    storage = InMemoryTaskStorage(settings.task_root)
+    state = storage.create_task(message=None, model="deepseek-v4-flash")
+    first_run = storage.start_run(
+        state.task_id,
+        message="总结内容并生成 Word",
+        model="deepseek-v4-flash",
+        expected_statuses={"idle"},
+    )
+    assert first_run is not None
+    _, first_run_id = first_run
+    storage.update_task_if_status_and_append_event(
+        state.task_id,
+        {"running"},
+        status="complete",
+        run_id=first_run_id,
+        append_message=ChatMessage(
+            role="assistant",
+            content="你是不是忘记上传文件了？上传后我继续帮你生成 Word。",
+            created_at="",
+        ),
+        event_type="task_completed",
+        event_message="任务已完成。",
+    )
+    upload_dir = settings.workspace_root / state.task_id / "uploads"
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    (upload_dir / "source.md").write_text("# 招标材料\n这是待总结正文。", encoding="utf-8")
+    followup_message = "我已上传文件，请继续上一轮需求：总结内容并生成 Word。本轮文件：source.md。"
+    followup = storage.start_run(
+        state.task_id,
+        message=followup_message,
+        model="deepseek-v4-flash",
+        expected_statuses={"complete"},
+    )
+    assert followup is not None
+
+    context = ConversationContextBuilder(settings, storage).build(
+        task_id=state.task_id,
+        current_message=followup_message,
+    )
+    serialized_context = "\n".join(str(message.content) for message in context.messages)
+    manifest_text = format_resource_manifest_message(
+        build_resource_manifest(state.task_id, settings.workspace_root)
+    )
+
+    assert "总结内容并生成 Word" in serialized_context
+    assert followup_message not in serialized_context
+    assert "source.md" in manifest_text
+    assert "这是待总结正文" not in manifest_text
 
 
 def test_context_builder_summarizes_long_history(tmp_path):

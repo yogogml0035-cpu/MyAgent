@@ -56,6 +56,31 @@ void describe("use-task-workspace exports", () => {
     assert.strictEqual(mod.buildRunLogDownloadName(""), "run-logs.jsonl");
   });
 
+  void it("should make file-only sends continue the previous user intent", async () => {
+    const mod = await import("../../hooks/use-task-workspace");
+    const message = mod.buildFileOnlyFollowUpMessage(
+      [{ name: "需求说明.docx" }, { name: "报价表.xlsx" }],
+      [
+        { role: "user", content: "总结内容并生成 Word" },
+        { role: "assistant", content: "你是不是忘记上传文件了？上传后我继续帮你生成 Word。" },
+      ],
+    );
+
+    assert.match(message, /请继续上一轮需求/);
+    assert.match(message, /总结内容并生成 Word/);
+    assert.match(message, /需求说明\.docx/);
+    assert.match(message, /报价表\.xlsx/);
+  });
+
+  void it("should use a resource-focused prompt for initial file-only sends", async () => {
+    const mod = await import("../../hooks/use-task-workspace");
+    const message = mod.buildFileOnlyFollowUpMessage([{ name: "source.md" }], []);
+
+    assert.match(message, /请读取并处理本轮上传资源/);
+    assert.match(message, /source\.md/);
+    assert.doesNotMatch(message, /继续上一轮需求/);
+  });
+
   void it("should not top-level navigate opened artifact windows to blob URLs", () => {
     const source = readFileSync(
       new URL("../../hooks/use-task-workspace.ts", import.meta.url),
@@ -146,8 +171,31 @@ void describe("use-task-workspace exports", () => {
       submitSource.includes("postTaskMessage(id, taskContent, model, selectedSkillNames)"),
       true,
     );
+    assert.strictEqual(
+      submitSource.includes("const taskContent = content || buildFileOnlyFollowUpMessage(files, messages);"),
+      true,
+    );
     assert.ok(trySource.indexOf("postTaskMessage") < trySource.indexOf("setSelectedSkills([])"));
     assert.strictEqual(catchSource.includes("setSelectedSkills([])"), false);
+  });
+
+  void it("should upload files before file-only follow-up and refresh after send failures", () => {
+    const source = readFileSync(
+      new URL("../../hooks/use-task-workspace.ts", import.meta.url),
+      "utf-8",
+    );
+    const submitStart = source.indexOf("const handleSubmit = useCallback");
+    const submitEnd = source.indexOf("const handleSelectSkill = useCallback");
+    const submitSource = source.slice(submitStart, submitEnd);
+    const trySource = submitSource.slice(
+      submitSource.indexOf("try {"),
+      submitSource.indexOf("} catch (caught)"),
+    );
+    const catchSource = submitSource.slice(submitSource.indexOf("} catch (caught)"));
+
+    assert.ok(trySource.indexOf("await uploadTaskFiles(id, files);") < trySource.indexOf("await postTaskMessage"));
+    assert.ok(catchSource.indexOf("if (requestTaskId)") < catchSource.indexOf("await refreshTask(requestTaskId);"));
+    assert.strictEqual(catchSource.includes("setSelectedFiles([])"), false);
   });
 
   void it("should expose skill state and handlers across the workspace source boundary", () => {
