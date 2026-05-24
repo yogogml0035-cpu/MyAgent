@@ -166,6 +166,31 @@ export function TaskConversation({
     return artifactKind === "html" || artifact.name.toLowerCase().endsWith(".html");
   }
 
+  function buildUserCopyText(message: ChatMessage) {
+    if (message.content) {
+      return message.content;
+    }
+    return (message.files ?? []).map((file) => file.name).join("\n");
+  }
+
+  function renderUserMessageFiles(message: ChatMessage) {
+    if (!message.files || message.files.length === 0) {
+      return null;
+    }
+    return (
+      <div className="userMessageFileList" aria-label="已上传文件">
+        {message.files.map((file, index) => (
+          <span className="userMessageFileChip" key={`${message.id}:${file.name}:${index}`}>
+            <span className="userMessageFileIcon" aria-hidden="true" />
+            <span className="userMessageFileName" title={file.name}>
+              {file.name}
+            </span>
+          </span>
+        ))}
+      </div>
+    );
+  }
+
   function renderChatMessage(
     message: ChatMessage,
     key: string,
@@ -184,6 +209,8 @@ export function TaskConversation({
     if (message.role === "user") {
       const userCopyKey = `message:${message.id}:user`;
       const isUserMessageCopied = copiedCopyKey === userCopyKey;
+      const userMessageContent = message.fileOnly ? "" : message.content;
+      const userCopyText = buildUserCopyText(message);
       const userCopyButtonClassName = [
         "copyButton",
         "userCopyButton",
@@ -196,15 +223,16 @@ export function TaskConversation({
         <div className="userMessageRow" key={key}>
           <div className="userMessageFrame">
             <article className={messageClassName}>
-              <p>{message.content}</p>
+              {userMessageContent ? <p>{userMessageContent}</p> : null}
+              {renderUserMessageFiles(message)}
             </article>
             <div className="userMessageMeta">
               <time className="userMessageTime">{formatTime(message.createdAt, "short")}</time>
               <button
                 aria-label={isUserMessageCopied ? "已复制用户消息" : "复制用户消息"}
                 className={userCopyButtonClassName}
-                disabled={!message.content}
-                onClick={() => void onCopyText(message.content, undefined, userCopyKey)}
+                disabled={!userCopyText}
+                onClick={() => void onCopyText(userCopyText, undefined, userCopyKey)}
                 title={isUserMessageCopied ? "已复制" : "复制用户消息"}
                 type="button"
               >

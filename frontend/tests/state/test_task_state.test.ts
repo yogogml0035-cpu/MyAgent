@@ -280,13 +280,28 @@ test("user message cards expose a copy action for the exact message content", ()
   const userCopyIndex = conversationSource.indexOf("className={userCopyButtonClassName}");
 
   assert.equal(conversationSource.includes("复制用户消息"), true);
-  assert.equal(conversationSource.includes("onCopyText(message.content, undefined"), true);
+  assert.equal(conversationSource.includes("onCopyText(userCopyText, undefined"), true);
   assert.equal(conversationSource.includes("onCopyText(formatTime"), false);
   assert.equal(conversationSource.includes("已复制用户消息"), true);
   assert.equal(conversationSource.includes("copyButton-copied"), true);
   assert.equal(userTimeIndex >= 0, true);
   assert.equal(userCopyIndex >= 0, true);
   assert.equal(userTimeIndex < userCopyIndex, true);
+});
+
+test("user file-only messages render compact uploaded file chips", () => {
+  const conversationSource = readFileSync(
+    new URL("../../components/chat/TaskConversation.tsx", import.meta.url),
+    "utf-8",
+  );
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.equal(conversationSource.includes("message.fileOnly ? \"\" : message.content"), true);
+  assert.equal(conversationSource.includes("userMessageFileList"), true);
+  assert.equal(conversationSource.includes("userMessageFileChip"), true);
+  assert.equal(conversationSource.includes("title={file.name}"), true);
+  assert.match(cssSource, /\.userMessageFileName\s*\{[\s\S]*?text-overflow: ellipsis;[\s\S]*?white-space: nowrap;/);
+  assert.match(cssSource, /@media \(max-width: 520px\)[\s\S]*?\.userMessageFileChip\s*\{[\s\S]*?max-width: 100%;/);
 });
 
 test("normalizeTaskState preserves user message content without display localization", () => {
@@ -318,6 +333,50 @@ test("normalizeTaskState preserves user message content without display localiza
   assert.equal(state.messages[0].content, "  Task completed\n原样复制  ");
   assert.equal(state.messages[1].content, "Uploaded input.json");
   assert.equal(state.messages[2].content, "任务已完成。");
+});
+
+test("normalizeTaskState extracts file-only user message file names", () => {
+  const longFileName = "这是一份用于验证窄屏不会撑破消息卡片的超长文件名.docx";
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: `请继续上一轮需求：总结内容并生成 Word。本轮文件：${longFileName}、报价表.xlsx。`,
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.messages[0].fileOnly, true);
+  assert.deepEqual(state.messages[0].files, [{ name: longFileName }, { name: "报价表.xlsx" }]);
+  assert.equal(state.messages[0].content.includes("总结内容并生成 Word"), true);
+});
+
+test("normalizeTaskState preserves explicit user message file metadata safely", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "",
+          files: [{ name: "source.md" }, { filename: "方案.docx" }, { name: "source.md" }],
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.messages[0].files, [{ name: "source.md" }, { name: "方案.docx" }]);
+  assert.equal(state.messages[0].fileOnly, undefined);
+  assert.equal(state.messages[0].content, "");
 });
 
 test("normalizeTaskState preserves event seq and thinking stream diagnostics", () => {
