@@ -6,9 +6,21 @@ Source: prd.json
 
 ## Codebase Patterns
 
+- 缺上传/缺正文的普通澄清应在 `backend/app/runner/core.py` 的 `start_background()` 调 agent 前短路，写入 assistant message 和 success `final_answer`，不要生成用户可见 `needs_input` warning。
 - 后端删除会话只应阻止真实运行中任务：`backend/app/api/tasks.py:142` 检查 `state.status == "running"` 或 `runner.is_running(task_id)`。
 - 发送消息允许从 `needs_input` 继续：`backend/app/api/tasks.py:170` 的 `expected_statuses` 包含 `needs_input`。
 - 交付保护集中在 `backend/app/runner/core.py:524` 的 `_ensure_run_deliverables()`，当前 payload 暴露内部字段，需要收敛用户可见字段。
 - 前端 active 状态口径集中在 `frontend/app/task-state.ts:1349`，当前只把 `running` 视为 active，应补测试锁定。
 - needs-input notice 当前在 `frontend/app/workspace-view.ts:122` 作为 warning 输出，并在 `frontend/app/workspace-view.ts:1662` 显示为“配置提醒”，需要调整或过滤。
 - 文件-only submit 当前在 `frontend/hooks/use-task-workspace.ts:205` 允许发送，但 `frontend/hooks/use-task-workspace.ts:507` 使用通用默认 prompt，需要改成继续上一轮需求的 follow-up。
+
+## 2026-05-24 23:14 - US-001
+- 实现了缺上传/缺正文时的普通 AI 澄清：runner 在启动 agent 前识别“总结/生成交付物但没有上传、内联正文或可复用上下文”的请求，直接写入 assistant 澄清并以 success final_answer 完成 run，不再产生 `needs_input` warning。
+- 保留有来源内容时的交付保护：将相关 runner 单测改为携带内联材料，继续覆盖“有来源但缺 artifact”会进入交付保护。
+- 更改的文件：`backend/app/runner/core.py`、`backend/tests/unit/runner/test_core.py`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest tests/unit/runner/test_core.py tests/unit/api/test_tasks.py -q`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`git diff --check`
+- **未来迭代的学习：**
+  - 缺上传澄清需要避开 `needs_input` 状态，否则前端会把 notice 渲染成 warning/“配置提醒”。
+  - runner 的 `start_run()` 已先写入当前 user message，判断“是否有历史上下文”时要排除当前 `run_id` 的消息。
+  - 交付保护测试若要验证 artifact 缺失/提升，应提供上传、内联正文或历史上下文，否则会先命中缺来源澄清。
+---

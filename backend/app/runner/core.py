@@ -55,6 +55,11 @@ CLAIMED_FILE_PATTERN = re.compile(
     re.IGNORECASE,
 )
 DELIVERABLE_SEARCH_EXCLUDED_DIRS = {"artifacts", "uploads", ".git", "__pycache__"}
+SOURCE_DEPENDENT_REQUEST_PATTERN = re.compile(
+    r"(总结|汇总|概括|摘要|提炼|归纳|梳理|分析|阅读|整理|summari[sz]e|summary|analy[sz]e)",
+    re.IGNORECASE,
+)
+INLINE_SOURCE_MIN_CHARS = 24
 
 
 class RunnerStorage(Protocol):
@@ -287,6 +292,46 @@ class TaskRunner:
                 )
 
             try:
+                missing_source_clarification = self._missing_source_input_clarification(
+                    task_id=task_id,
+                    run_id=run_id,
+                    user_message=message,
+                )
+                if missing_source_clarification is not None:
+                    clarification_message = ChatMessage(
+                        role="assistant",
+                        content=missing_source_clarification,
+                        created_at="",
+                        run_id=run_id,
+                    )
+                    self.storage.update_task_if_status_and_append_event(
+                        task_id,
+                        {"running"},
+                        status="complete",
+                        run_id=run_id,
+                        append_message=clarification_message,
+                        event_type="task_completed",
+                        event_message="已请求补充文件或内容。",
+                        event_payload=_terminal_event_payload(
+                            "已请求补充文件或内容",
+                            stage="completed",
+                            previous_status="running",
+                        ),
+                        event_level="success",
+                    )
+                    storage.append_event(
+                        task_id,
+                        "final_answer",
+                        "Final answer generated",
+                        payload={
+                            "content": missing_source_clarification,
+                            "live": _answer_completed_live_metadata(),
+                        },
+                        run_id=run_id,
+                        level="success",
+                    )
+                    return
+
                 collected, final_state = await self.start(
                     task_id, message, model=model, run_id=run_id, on_event=_append_event,
                 )
@@ -583,6 +628,40 @@ class TaskRunner:
             ]
         return payload
 
+    def _missing_source_input_clarification(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        user_message: str,
+    ) -> str | None:
+        storage = self.storage
+        if storage is None or not _requests_source_dependent_work(user_message):
+            return None
+
+        try:
+            state = storage.get_task(task_id, include_events=False)
+        except Exception:
+            logger.warning(
+                "Unable to inspect task %s before missing-source clarification", task_id, exc_info=True
+            )
+            return None
+
+        if state.upload_count > 0:
+            return None
+        if _message_contains_inline_source_text(user_message):
+            return None
+        if _has_reusable_source_context(state.messages, current_run_id=run_id):
+            return None
+        if _has_context_summary(storage, task_id):
+            return None
+
+        deliverable_kinds = _requested_deliverable_kinds(user_message)
+        if deliverable_kinds:
+            kind_label = _humanize_deliverable_kind(sorted(deliverable_kinds)[0])
+            return f"你是不是忘记上传文件了？上传后我继续帮你生成 {kind_label}。"
+        return "你是不是忘记上传文件或粘贴要处理的内容了？补充后我继续帮你总结。"
+
 
 def _make_runner_event(
     task_id: str,
@@ -666,6 +745,68 @@ def _requested_deliverable_kinds(message: str) -> set[str]:
         if re.search(pattern, normalized, re.IGNORECASE):
             requested.add(kind)
     return requested
+
+
+def _requests_source_dependent_work(message: str) -> bool:
+    if _requested_deliverable_kinds(message):
+        return True
+    return SOURCE_DEPENDENT_REQUEST_PATTERN.search(message) is not None
+
+
+def _message_contains_inline_source_text(message: str) -> bool:
+    normalized = " ".join(message.split())
+    if len(_source_signal_text(normalized)) >= 80:
+        return True
+    for separator in ("\n", "：", ":"):
+        if separator not in message:
+            continue
+        tail = message.rsplit(separator, 1)[-1]
+        if len(_source_signal_text(tail)) >= INLINE_SOURCE_MIN_CHARS:
+            return True
+    return False
+
+
+def _has_reusable_source_context(messages: list[ChatMessage], *, current_run_id: str) -> bool:
+    for message in messages:
+        if message.run_id == current_run_id:
+            continue
+        content = message.content.strip()
+        if not content:
+            continue
+        if message.role == "user":
+            if _message_contains_inline_source_text(content):
+                return True
+            if not _requests_source_dependent_work(content) and len(_source_signal_text(content)) >= 40:
+                return True
+        elif message.role == "assistant":
+            if "忘记上传文件" in content:
+                continue
+            if len(_source_signal_text(content)) >= 120:
+                return True
+    return False
+
+
+def _source_signal_text(text: str) -> str:
+    without_common_request_terms = re.sub(
+        r"(请|帮我|帮忙|总结|汇总|概括|摘要|提炼|归纳|梳理|分析|阅读|整理|生成|导出|输出|交付|提供|保存|"
+        r"word|docx|ppt|pptx|excel|xlsx|xlsm|报告|文档|文件|内容|材料|资料|文本|一下|一个|一份|给我)",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    return "".join(ch for ch in without_common_request_terms if ch.isalnum())
+
+
+def _has_context_summary(storage: RunnerStorage, task_id: str) -> bool:
+    get_context_summary = getattr(storage, "get_context_summary", None)
+    if not callable(get_context_summary):
+        return False
+    try:
+        summary = get_context_summary(task_id)
+    except Exception:
+        logger.warning("Unable to inspect task %s context summary", task_id, exc_info=True)
+        return False
+    return bool(str(summary or "").strip())
 
 
 def _claimed_output_filenames(final_answer: str | None) -> set[str]:
