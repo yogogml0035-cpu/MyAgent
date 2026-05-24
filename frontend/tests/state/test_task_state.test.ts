@@ -1299,6 +1299,47 @@ test("formatNeedsInput localizes fixed payload keys and fallback messages", () =
   );
 });
 
+test("formatNeedsInput hides internal deliverable failure fields from legacy payloads", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "needs_input",
+      needs_input: {
+        message: "文件未生成或未登记为产物，请修复后重新生成。",
+        reason: "deliverable_artifact_missing",
+        repair_hint: "请在当前任务工作区生成文件并登记为 artifact 后重试。",
+        missing_artifact_names: ["summary.docx"],
+        missing_deliverables: ["要求的交付类型缺失：Word"],
+        requested_deliverable_types: ["Word"],
+        promoted_artifacts: [],
+        action_label: "重新生成文件",
+      },
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.needsInput, {
+    message: "文件未生成或未登记为产物，请修复后重新生成。",
+    action_label: "重新生成文件",
+  });
+  const content = formatNeedsInput(state.needsInput ?? {});
+
+  assert.equal(
+    content,
+    "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。 建议操作：重新生成文件",
+  );
+  for (const internalField of [
+    "reason",
+    "repair_hint",
+    "missing_artifact_names",
+    "missing_deliverables",
+    "requested_deliverable_types",
+    "promoted_artifacts",
+  ]) {
+    assert.equal(content.includes(internalField), false);
+  }
+});
+
 test("normalizeTaskSummaries reads backend history titles without subtitles", () => {
   const summaries = normalizeTaskSummaries([
     {

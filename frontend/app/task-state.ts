@@ -555,6 +555,8 @@ const KNOWN_DISPLAY_TEXT: Record<string, string> = {
   "Task was interrupted because no active runner owns it.": "任务已中断：当前没有运行器接管该任务。",
   "Upload Markdown or JSON files before starting a document-analysis task.": "开始文档分析任务前，请先上传 Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件。",
   "At least two uploaded bidder documents are required for comparison.": "至少需要上传两份投标人文档才能进行对比。",
+  "文件未生成或未登记为产物，请修复后重新生成。": "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。",
+  "文件未生成或未登记为产物，请重新生成交付文件后再提交。": "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。",
   "Execution plan generated": "已生成执行计划。",
   "Concurrent sub-agent analysis started": "并发子任务分析已开始。",
   "Final report artifacts were written": "最终报告产物已写入。",
@@ -649,6 +651,8 @@ function formatNeedsInputKey(key: string) {
     minimum_bidder_documents: "至少投标人文档数",
     current_bidder_documents: "当前投标人文档数",
     required_file_type: "所需文件类型",
+    action_label: "建议操作",
+    actionLabel: "建议操作",
   };
   return labels[key] ?? key;
 }
@@ -661,11 +665,32 @@ function formatNeedsInputValue(key: string, value: unknown) {
 }
 
 export function formatNeedsInput(value: Record<string, unknown>) {
-  const message = translateKnownDisplayText(readString(value.message, "Additional input is required."));
-  const details = Object.entries(value)
+  const publicValue = sanitizeNeedsInput(value);
+  const message = translateKnownDisplayText(readString(publicValue.message, "Additional input is required."));
+  const details = Object.entries(publicValue)
     .filter(([key]) => key !== "message")
     .map(([key, entry]) => `${formatNeedsInputKey(key)}：${formatNeedsInputValue(key, entry)}`);
   return details.length > 0 ? `${message} ${details.join(" · ")}` : message;
+}
+
+const INTERNAL_NEEDS_INPUT_KEYS = new Set([
+  "reason",
+  "repair_hint",
+  "repairHint",
+  "missing_artifact_names",
+  "missingArtifactNames",
+  "missing_deliverables",
+  "missingDeliverables",
+  "requested_deliverable_types",
+  "requestedDeliverableTypes",
+  "promoted_artifacts",
+  "promotedArtifacts",
+]);
+
+function sanitizeNeedsInput(value: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !INTERNAL_NEEDS_INPUT_KEYS.has(key)),
+  );
 }
 
 function normalizeStatus(value: unknown): TaskStatus {
@@ -678,7 +703,7 @@ function statusLabel(status: TaskStatus, rawStatus: string) {
 }
 
 function readOptionalNeedsInput(value: unknown) {
-  return isRecord(value) ? value : null;
+  return isRecord(value) ? sanitizeNeedsInput(value) : null;
 }
 
 function maybeRunId(record: Record<string, unknown>) {

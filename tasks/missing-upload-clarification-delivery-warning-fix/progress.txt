@@ -15,6 +15,7 @@ Source: prd.json
 - 文件-only submit 在 `frontend/hooks/use-task-workspace.ts` 中用 `buildFileOnlyFollowUpMessage()` 构造非空 follow-up；有历史用户意图时显式写“继续上一轮需求”，后端 `MessageRequest.message` 仍保持非空合同。
 - 文件-only 用户消息展示由 `frontend/app/task-state.ts` 提取安全文件名元数据到 `ChatMessage.files`/`fileOnly`，`TaskConversation` 可隐藏生成式 follow-up 文案但保留原始 `content` 供复制和上下文使用。
 - 交付成功判断以当前 run 的 `artifact_names` 后缀满足请求类型为准；请求类型已满足时不要再用 final answer 中的具体文件名做失败判定。
+- 交付失败的 `needs_input` payload 对用户可见时只保留 `message`/`action_label`；历史内部字段在 `frontend/app/task-state.ts` 的 needs-input 标准化和格式化中统一过滤。
 
 ## 2026-05-24 23:14 - US-001
 - 实现了缺上传/缺正文时的普通 AI 澄清：runner 在启动 agent 前识别“总结/生成交付物但没有上传、内联正文或可复用上下文”的请求，直接写入 assistant 澄清并以 success final_answer 完成 run，不再产生 `needs_input` warning。
@@ -61,4 +62,16 @@ Source: prd.json
   - `_ensure_run_deliverables()` 中 `run.artifact_names` 是本轮交付成功判断的权威来源，final answer 文件名只能作为没有请求类型时的兜底保护线索。
   - Excel 请求同时接受 `.xlsx` 和 `.xlsm`，报告请求接受 `.html`、`.md` 和 `.pdf`。
   - 交付保护测试要给请求提供足够内联材料或上传资源，否则会先触发缺来源澄清。
+---
+
+## 2026-05-25 01:05 - US-005
+- 收敛了交付失败的用户可见 payload：后端仍将真实缺 artifact 的 run/task 置为 `needs_input`，但 state/event payload 只返回简短 `message` 和安全 `action_label`。
+- 前端对历史旧 `needs_input` payload 过滤 `reason`、`repair_hint`、`missing_artifact_names`、`missing_deliverables`、`requested_deliverable_types`、`promoted_artifacts` 等内部字段，并把交付失败消息渲染为生成失败而非“配置提醒”。
+- 更改的文件：`backend/app/runner/core.py`、`backend/tests/unit/runner/test_core.py`、`frontend/app/task-state.ts`、`frontend/app/workspace-view.ts`、`frontend/tests/state/test_task_state.test.ts`、`frontend/tests/workspace/test_workspace_view.test.ts`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest tests/unit/runner/test_core.py -q`；`cd frontend && npm test -- tests/state/test_task_state.test.ts tests/workspace/test_workspace_view.test.ts`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`git diff --check`
+- 浏览器验证：未执行真实浏览器 E2E；本轮只处理 US-005，完整真实浏览器路径和截图证据留给 US-007。
+- **未来迭代的学习：**
+  - `_ensure_run_deliverables()` 的返回值会直接进入 task/run `needs_input` 和 `needs_input` event payload，不能在这里放用户不应看到的诊断字段。
+  - 旧会话 payload 可能仍包含内部字段；前端展示前需要在标准化和 `formatNeedsInput()` 两层过滤，避免状态 notice 或历史数据泄漏字段名。
+  - 交付失败不能用 warning 消息卡片，否则标题会变成“配置提醒”；已知交付失败内容应走 error tone，显示“生成失败”。
 ---

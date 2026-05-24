@@ -610,26 +610,23 @@ class TaskRunner:
         if not missing_kinds and not missing_files:
             return None
 
-        missing_parts: list[str] = []
-        if missing_kinds:
-            missing_parts.append("要求的交付类型缺失：" + "、".join(_humanize_deliverable_kind(kind) for kind in missing_kinds))
-        if missing_files:
-            missing_parts.append("声称已生成的文件缺失：" + "、".join(missing_files))
-        message = "文件未生成或未登记为产物，请修复后重新生成。"
-        payload: dict[str, Any] = {
+        if missing_kinds or missing_files:
+            logger.warning(
+                "Run deliverable validation failed",
+                extra={
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "missing_deliverable_kinds": sorted(missing_kinds),
+                    "missing_artifact_names": sorted(missing_files),
+                    "promoted_artifacts": promoted,
+                },
+            )
+
+        message = "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。"
+        return {
             "message": message,
-            "reason": "deliverable_artifact_missing",
-            "missing_deliverables": missing_parts,
-            "missing_artifact_names": missing_files,
-            "promoted_artifacts": promoted,
-            "repair_hint": "请在当前任务工作区生成文件并登记为 artifact 后重试。",
             "action_label": "重新生成文件",
         }
-        if missing_kinds:
-            payload["requested_deliverable_types"] = [
-                _humanize_deliverable_kind(kind) for kind in missing_kinds
-            ]
-        return payload
 
     def _missing_source_input_clarification(
         self,

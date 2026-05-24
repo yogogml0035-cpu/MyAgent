@@ -469,9 +469,23 @@ class TestTaskRunnerTerminalEvents:
         assert final_answers == []
         assert len(needs_input_events) == 1
         assert needs_input_events[0].run_id == run_id
-        assert "文件未生成或未登记为产物" in needs_input_events[0].message
+        assert "文件未成功生成或未能登记为下载文件" in needs_input_events[0].message
         assert task_state.needs_input is not None
-        assert task_state.needs_input["reason"] == "deliverable_artifact_missing"
+        assert task_state.needs_input == {
+            "message": "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。",
+            "action_label": "重新生成文件",
+        }
+        assert needs_input_events[0].payload == task_state.needs_input
+        for internal_key in (
+            "reason",
+            "repair_hint",
+            "missing_artifact_names",
+            "missing_deliverables",
+            "requested_deliverable_types",
+            "promoted_artifacts",
+        ):
+            assert internal_key not in task_state.needs_input
+            assert internal_key not in needs_input_events[0].payload
         assert task_state.runs[-1].status == "needs_input"
 
     @pytest.mark.parametrize(
