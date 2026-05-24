@@ -1,0 +1,14 @@
+# Ralph Progress
+
+Requirement: tasks/missing-upload-clarification-delivery-warning-fix
+Started: 2026-05-24 22:41
+Source: prd.json
+
+## Codebase Patterns
+
+- 后端删除会话只应阻止真实运行中任务：`backend/app/api/tasks.py:142` 检查 `state.status == "running"` 或 `runner.is_running(task_id)`。
+- 发送消息允许从 `needs_input` 继续：`backend/app/api/tasks.py:170` 的 `expected_statuses` 包含 `needs_input`。
+- 交付保护集中在 `backend/app/runner/core.py:524` 的 `_ensure_run_deliverables()`，当前 payload 暴露内部字段，需要收敛用户可见字段。
+- 前端 active 状态口径集中在 `frontend/app/task-state.ts:1349`，当前只把 `running` 视为 active，应补测试锁定。
+- needs-input notice 当前在 `frontend/app/workspace-view.ts:122` 作为 warning 输出，并在 `frontend/app/workspace-view.ts:1662` 显示为“配置提醒”，需要调整或过滤。
+- 文件-only submit 当前在 `frontend/hooks/use-task-workspace.ts:205` 允许发送，但 `frontend/hooks/use-task-workspace.ts:507` 使用通用默认 prompt，需要改成继续上一轮需求的 follow-up。

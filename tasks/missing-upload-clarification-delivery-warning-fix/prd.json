@@ -1,0 +1,171 @@
+{
+  "project": "MyAgent",
+  "branchName": "ralph/missing-upload-clarification-delivery-warning-fix",
+  "description": "缺上传澄清与文件交付警告修复：缺上传/缺内容时以普通 AI 澄清呈现，文件-only 上传可继续上一轮需求；文件交付保护保留为后台兜底，但成功以本轮可下载 artifact 满足请求为准，失败时隐藏内部字段并提供友好重试入口。",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "将缺上传缺内容改为普通 AI 澄清",
+      "description": "作为要求总结并生成 Word 的用户，我需要在忘记上传文件时收到自然澄清，而不是技术警告。",
+      "acceptanceCriteria": [
+        "更新 `backend/app/runner/core.py` 或等价后端入口，当用户请求总结或生成 Word/PPT/Excel/报告但当前无上传资源、无可总结文本、无可复用上下文时，写入普通 assistant 澄清消息",
+        "该场景的 task/run 不能产生用户可见 `needs_input` warning notice",
+        "澄清文案表达上传文件后会继续处理上一轮需求，例如“你是不是忘记上传文件了？上传后我继续帮你生成 Word”",
+        "`cd backend && uv run pytest tests/unit/runner/test_core.py tests/unit/api/test_tasks.py -q` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 1,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-002",
+      "title": "让文件-only 上传继续上一轮待处理意图",
+      "description": "作为收到澄清的用户，我需要只上传文件就能继续上一轮“总结并生成 Word”的需求。",
+      "acceptanceCriteria": [
+        "更新 `frontend/hooks/use-task-workspace.ts`，输入框为空但选择了文件时仍可上传并发送一条有效 follow-up message",
+        "文件-only follow-up message 明确表达“继续上一轮需求”，而不是丢失上一轮总结并生成 Word 的意图",
+        "后端会话上下文在下一轮 run 中包含上一轮用户需求和本轮上传资源 manifest",
+        "上传成功但 message 发送失败时，前端刷新当前 task，用户能看到已上传文件状态",
+        "`cd frontend && npm test -- tests/workspace/test_task_workspace.test.ts` passes",
+        "`cd backend && uv run pytest tests/unit/runner/test_conversation_context.py -q` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-003",
+      "title": "渲染文件-only 用户消息",
+      "description": "作为上传文件的用户，我需要在消息区看到自己刚发送的文件，而不是只看到一段默认 prompt。",
+      "acceptanceCriteria": [
+        "更新 `frontend/app/task-state.ts` 和 `frontend/components/chat/TaskConversation.tsx`，支持文件-only 用户消息显示文件名或文件 chip",
+        "文件-only 用户消息允许文本为空或只显示紧凑文件列表，但复制按钮和时间信息仍稳定工作",
+        "窄屏视口下长文件名换行或省略显示，不撑破消息卡片",
+        "不把上传文件正文写进 message content、长期记忆、测试夹具或截图证据",
+        "`cd frontend && npm test -- tests/state/test_task_state.test.ts tests/workspace/test_workspace_view.test.ts tests/workspace/test_task_workspace.test.ts` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-004",
+      "title": "按可下载产物类型判定交付成功",
+      "description": "作为接收交付物的用户，我需要只要本轮有满足请求的下载卡片就视为成功，避免文件名不一致误报。",
+      "acceptanceCriteria": [
+        "更新 `backend/app/runner/core.py#_ensure_run_deliverables`，当用户请求 Word 且当前 run 有任意 `.docx` artifact 时判定 Word 交付成功",
+        "当用户请求 PPT 且当前 run 有任意 `.pptx` artifact 时判定 PPT 交付成功",
+        "当用户请求 Excel 且当前 run 有任意 `.xlsx` 或 `.xlsm` artifact 时判定 Excel 交付成功",
+        "当用户请求报告且当前 run 有任意 `.html`、`.md` 或 `.pdf` artifact 时判定报告交付成功",
+        "final answer 声称的文件名与 artifact 文件名不一致但类型满足请求时，不产生缺文件 warning 或 `needs_input` notice",
+        "`cd backend && uv run pytest tests/unit/runner/test_core.py tests/unit/api/test_artifacts.py -q` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-005",
+      "title": "收敛交付失败的用户可见字段",
+      "description": "作为用户，我需要看到文件未生成的简短说明和重试入口，而不是内部诊断字段。",
+      "acceptanceCriteria": [
+        "真实缺少满足请求的 artifact 时，后台交付保护仍阻止 task/run 标记为成功完成",
+        "后端返回给用户可见 state/event 的交付失败 payload 只包含短 message 和安全 action label 或等价 public 字段",
+        "用户可见 UI 不显示 `reason`、`repair_hint`、`missing_artifact_names`、`missing_deliverables`、`requested_deliverable_types`、`promoted_artifacts` 字段名",
+        "前端对历史旧 payload 也会过滤内部字段，只显示友好失败说明",
+        "交付失败消息不使用“配置提醒”标题",
+        "`cd backend && uv run pytest tests/unit/runner/test_core.py -q` passes",
+        "`cd frontend && npm test -- tests/state/test_task_state.test.ts tests/workspace/test_workspace_view.test.ts` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-006",
+      "title": "锁定 needs_input 非运行状态和清空规则",
+      "description": "作为整理历史会话的用户，我需要 `needs_input` 会话可删除可清空，只有真实运行中任务阻止清空。",
+      "acceptanceCriteria": [
+        "后端 `DELETE /api/tasks/{task_id}` 对 `complete`、`failed`、`cancelled`、`needs_input`、`interrupted` 返回 204 或等价成功结果",
+        "后端 `DELETE /api/tasks/{task_id}` 对 `running` 或 `runner.is_running(task_id)` 返回 409",
+        "前端 `isTaskActive(status)` 仍只把 `running` 判为 active",
+        "前端清空所有会话时，`needs_input` summary 不会触发“有任务正在运行”拦截",
+        "前端清空所有会话时，任意 `running` summary 仍触发等待或停止提示",
+        "`cd backend && uv run pytest tests/unit/api/test_tasks.py -q` passes",
+        "`cd frontend && npm test -- tests/workspace/test_task_workspace.test.ts tests/workspace/test_workspace_view.test.ts` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-007",
+      "title": "补齐真实浏览器 E2E",
+      "description": "作为项目维护者，我需要真实浏览器验证缺上传澄清、上传后继续、交付成功、交付失败和清空会话路径。",
+      "acceptanceCriteria": [
+        "新增 `frontend/e2e-playwright/test_missing_upload_clarification_delivery_warning.spec.mjs` 或扩展邻近 spec",
+        "Use agent-browser or Playwright to open `http://127.0.0.1:3001` with backend `http://127.0.0.1:8001`",
+        "在无上传场景发送“总结内容并生成 Word”，页面显示普通 AI 澄清，且没有“配置提醒”、`reason`、`repair_hint`、`missing_artifact_names`",
+        "澄清后只上传文件并发送，页面显示文件消息，后续 run 继续上一轮生成 Word 意图",
+        "seed 或真实生成 `.docx` artifact 后，页面显示下载卡片且没有缺文件 warning",
+        "seed 缺失 artifact 任务后，页面显示友好失败说明和重新生成入口，隐藏内部字段",
+        "`needs_input` 会话可以通过“清空所有会话”删除；包含 running 会话时清空被阻止",
+        "截图证据保存到 `frontend/e2e-playwright/e2e-YYYYMMDDHHMMSS/missing-upload-clarification-delivery-warning-fix/` 且不提交 git",
+        "`cd frontend && npx playwright test e2e-playwright/test_missing_upload_clarification_delivery_warning.spec.mjs --reporter=line` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    },
+    {
+      "id": "US-008",
+      "title": "同步知识包和完整质量门",
+      "description": "作为后续维护者，我需要长期知识包记录新的状态、交付和前端用户路径规则，并跑完质量门。",
+      "acceptanceCriteria": [
+        "更新 `asset/deepagents_platform_knowledge_pack.md`，记录缺上传普通澄清而非技术 warning",
+        "知识包记录文件交付保护后台保留但用户可见层隐藏内部字段",
+        "知识包记录交付成功以本轮可下载 artifact 类型满足请求为准",
+        "知识包记录 `needs_input` 是非运行状态，可继续、可删除、可清空",
+        "`git diff --check` passes",
+        "`cd backend && uv run pytest && uv run ruff check . && uv run mypy app tests` passes",
+        "`cd frontend && npm run typecheck && npm test && npm run lint && npm run build` passes",
+        "`cd frontend && npm run e2e:runtime-contracts` passes",
+        "Typecheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": "",
+      "retryCount": 0,
+      "blocked": false
+    }
+  ]
+}
