@@ -18,6 +18,7 @@ import {
   normalizeTaskSummaries,
   normalizeTaskState,
   resolveApiBaseUrl,
+  type TaskStatus,
   type TaskState,
 } from "../../app/task-state";
 
@@ -50,6 +51,23 @@ test("normalizeTaskState preserves interrupted as an inactive known status", () 
   assert.equal(state.status, "interrupted");
   assert.equal(state.statusLabel, "interrupted");
   assert.equal(isTaskActive(state.status), false);
+});
+
+test("isTaskActive treats only running as active", () => {
+  const inactiveStatuses: TaskStatus[] = [
+    "idle",
+    "complete",
+    "failed",
+    "cancelled",
+    "needs_input",
+    "interrupted",
+    "unknown",
+  ];
+
+  assert.equal(isTaskActive("running"), true);
+  for (const status of inactiveStatuses) {
+    assert.equal(isTaskActive(status), false);
+  }
 });
 
 test("mergeExecutionLogs appends only new events by id", () => {

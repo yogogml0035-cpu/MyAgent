@@ -11,6 +11,7 @@ Source: prd.json
 - 发送消息允许从 `needs_input` 继续：`backend/app/api/tasks.py:170` 的 `expected_statuses` 包含 `needs_input`。
 - 交付保护集中在 `backend/app/runner/core.py:524` 的 `_ensure_run_deliverables()`，当前 payload 暴露内部字段，需要收敛用户可见字段。
 - 前端 active 状态口径集中在 `frontend/app/task-state.ts:1349`，当前只把 `running` 视为 active，应补测试锁定。
+- 前端历史删除/清空的运行中拦截应复用 `isTaskActive()` 或 `hasActiveTaskSummary()`，不要把 `needs_input`、`interrupted` 等终态当作 active。
 - needs-input notice 当前在 `frontend/app/workspace-view.ts:122` 作为 warning 输出，并在 `frontend/app/workspace-view.ts:1662` 显示为“配置提醒”，需要调整或过滤。
 - 文件-only submit 在 `frontend/hooks/use-task-workspace.ts` 中用 `buildFileOnlyFollowUpMessage()` 构造非空 follow-up；有历史用户意图时显式写“继续上一轮需求”，后端 `MessageRequest.message` 仍保持非空合同。
 - 文件-only 用户消息展示由 `frontend/app/task-state.ts` 提取安全文件名元数据到 `ChatMessage.files`/`fileOnly`，`TaskConversation` 可隐藏生成式 follow-up 文案但保留原始 `content` 供复制和上下文使用。
@@ -74,4 +75,16 @@ Source: prd.json
   - `_ensure_run_deliverables()` 的返回值会直接进入 task/run `needs_input` 和 `needs_input` event payload，不能在这里放用户不应看到的诊断字段。
   - 旧会话 payload 可能仍包含内部字段；前端展示前需要在标准化和 `formatNeedsInput()` 两层过滤，避免状态 notice 或历史数据泄漏字段名。
   - 交付失败不能用 warning 消息卡片，否则标题会变成“配置提醒”；已知交付失败内容应走 error tone，显示“生成失败”。
+---
+
+## 2026-05-25 01:25 - US-006
+- 锁定了 `needs_input` 的非运行状态口径：后端删除 API 允许 `complete`、`failed`、`cancelled`、`needs_input`、`interrupted` 删除，只在 task 状态为 `running` 或 runner active 时返回 409。
+- 前端新增 `hasActiveTaskSummary()` 并让删除/清空历史复用 `isTaskActive()`，确保清空所有会话只被真实 running summary 或当前 running task 拦截。
+- 更改的文件：`backend/tests/unit/api/test_tasks.py`、`frontend/hooks/use-task-workspace.ts`、`frontend/tests/state/test_task_state.test.ts`、`frontend/tests/workspace/test_task_workspace.test.ts`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest tests/unit/api/test_tasks.py -q`；`cd frontend && npm test -- tests/workspace/test_task_workspace.test.ts tests/workspace/test_workspace_view.test.ts`；`cd frontend && npm test -- tests/state/test_task_state.test.ts`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`git diff --check`
+- 浏览器验证：未执行真实浏览器 E2E；本轮只处理 US-006 的删除/清空状态规则，完整真实浏览器路径和截图证据留给 US-007。
+- **未来迭代的学习：**
+  - 后端删除会话必须同时检查持久状态和 `runner.is_running(task_id)`，防止状态尚未刷新时误删 active run。
+  - `needs_input` 是可继续、可删除、可清空的非运行终态；前端如需判断历史中是否有活跃任务，应统一走 `isTaskActive()`。
+  - 清空历史的前端单测更适合锁定纯 helper 和 hook source boundary；真实浏览器“清空所有会话”路径由 US-007 覆盖。
 ---

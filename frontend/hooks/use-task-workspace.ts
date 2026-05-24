@@ -224,6 +224,10 @@ export function buildFileOnlyFollowUpMessage(
   return `我已上传文件，请读取并处理本轮上传资源。${fileSummary}`;
 }
 
+export function hasActiveTaskSummary(summaries: readonly Pick<TaskSummary, "status">[]) {
+  return summaries.some((summary) => isTaskActive(summary.status));
+}
+
 export function useTaskWorkspace() {
   const [taskId, setTaskId] = useState<string>("");
   const [status, setStatus] = useState<TaskStatus>("idle");
@@ -783,7 +787,7 @@ export function useTaskWorkspace() {
         return;
       }
       const summary = taskSummaries.find((item) => item.id === id);
-      if (summary?.status === "running") {
+      if (summary && isTaskActive(summary.status)) {
         setErrorLevel("warning");
         setError("任务运行中，暂时不能删除。");
         return;
@@ -826,7 +830,7 @@ export function useTaskWorkspace() {
     ) {
       return;
     }
-    if (activeTask || taskSummaries.some((summary) => isTaskActive(summary.status))) {
+    if (activeTask || hasActiveTaskSummary(taskSummaries)) {
       setErrorLevel("warning");
       setError("有任务正在运行，完成或停止后再清空历史会话。");
       return;

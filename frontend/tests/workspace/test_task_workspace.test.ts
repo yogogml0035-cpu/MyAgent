@@ -81,6 +81,25 @@ void describe("use-task-workspace exports", () => {
     assert.doesNotMatch(message, /继续上一轮需求/);
   });
 
+  void it("should treat needs-input summaries as inactive for history clearing", async () => {
+    const mod = await import("../../hooks/use-task-workspace");
+
+    assert.strictEqual(
+      mod.hasActiveTaskSummary([
+        { status: "complete" },
+        { status: "failed" },
+        { status: "cancelled" },
+        { status: "needs_input" },
+        { status: "interrupted" },
+      ]),
+      false,
+    );
+    assert.strictEqual(
+      mod.hasActiveTaskSummary([{ status: "needs_input" }, { status: "running" }]),
+      true,
+    );
+  });
+
   void it("should not top-level navigate opened artifact windows to blob URLs", () => {
     const source = readFileSync(
       new URL("../../hooks/use-task-workspace.ts", import.meta.url),
@@ -367,7 +386,8 @@ void describe("use-task-workspace exports", () => {
     );
 
     assert.strictEqual(hookSource.includes("const handleClearConversations = useCallback"), true);
-    assert.strictEqual(hookSource.includes("taskSummaries.some((summary) => isTaskActive(summary.status))"), true);
+    assert.strictEqual(hookSource.includes("hasActiveTaskSummary(taskSummaries)"), true);
+    assert.strictEqual(hookSource.includes("if (summary && isTaskActive(summary.status))"), true);
     assert.strictEqual(hookSource.includes("清空所有历史会话后无法恢复"), true);
     assert.strictEqual(hookSource.includes("for (const id of deletedIds)"), true);
     assert.strictEqual(workspaceSource.includes("onClearConversations={workspace.handleClearConversations}"), true);
