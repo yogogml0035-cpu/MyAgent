@@ -1,0 +1,4 @@
+interface:
+  display_name: "Coding Maps 系统地图"
+  short_description: "生成跨子项目系统地图"
+  default_prompt: "使用 $coding-maps 为当前仓库生成或刷新 coding_maps/SYSTEM_MAP.md。"
