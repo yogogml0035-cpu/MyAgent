@@ -19,6 +19,7 @@ Source: prd.json
 - 交付成功判断以当前 run 的 `artifact_names` 后缀满足请求类型为准；请求类型已满足时不要再用 final answer 中的具体文件名做失败判定。
 - 交付失败的 `needs_input` payload 对用户可见时只保留 `message`/`action_label`；历史内部字段在 `frontend/app/task-state.ts` 的 needs-input 标准化和格式化中统一过滤。
 - 真实浏览器 E2E 若要点击“清空所有会话”，应使用隔离的 `MYAGENT_E2E_POSTGRES_DB` 和 `MYAGENT_E2E_TASK_ROOT`，避免删除开发库中的真实历史会话。
+- `runtime-contracts` 这类会直接用 `docker exec PostgreSQL psql` 播种的 E2E，后端 `MYAGENT_DATABASE_URL` 必须指向同一个 Docker Postgres 数据面；WSL 后端可用 `host.docker.internal:5432` 对齐。
 
 ## 2026-05-24 23:14 - US-001
 - 实现了缺上传/缺正文时的普通 AI 澄清：runner 在启动 agent 前识别“总结/生成交付物但没有上传、内联正文或可复用上下文”的请求，直接写入 assistant 澄清并以 success final_answer 完成 run，不再产生 `needs_input` warning。
@@ -101,4 +102,16 @@ Source: prd.json
   - 会改动文件-only follow-up 文案时必须同步 `GENERATED_FILE_ONLY_MESSAGE_PREFIXES` 和状态标准化单测，否则 UI 会退回展示 prompt 文本。
   - clear-all E2E 需要隔离数据库和任务根；否则“清空所有会话”会按真实产品路径删除当前后端返回的全部历史。
   - 对 provider 不相关的浏览器 E2E，可让缺上传澄清走真实后端短路，后续生成交付物路径用 Postgres-backed seed 保持测试可重复。
+---
+
+## 2026-05-25 10:23 - US-008
+- 同步了长期知识包 `asset/deepagents_platform_knowledge_pack.md`：记录缺上传/缺正文应作为普通 assistant 澄清、`needs_input` 是非运行状态、交付成功按当前 run 可下载 artifact 类型判定、交付失败后台保护保留但用户可见层隐藏内部字段。
+- 跑完完整质量门：后端全量 pytest/ruff/mypy、前端 typecheck/test/lint/build、`git diff --check` 和真实浏览器 `runtime-contracts`。
+- `runtime-contracts` 截图证据保存到 `tasks/missing-upload-clarification-delivery-warning-fix/screenshots/runtime-contracts-20260525102213/`，证据目录保持不提交。
+- 更改的文件：`asset/deepagents_platform_knowledge_pack.md`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest && uv run ruff check . && uv run mypy app tests`；`cd frontend && npm run typecheck && npm test && npm run lint && npm run build`；`cd frontend && npm run e2e:runtime-contracts`；`git diff --check`
+- **未来迭代的学习：**
+  - `runtime-contracts` 同时通过公开 API 创建 task、又通过 Docker Postgres 直接播种 runs/messages/events；后端数据库 URL 和 `MYAGENT_E2E_POSTGRES_DB` 必须是同一数据面，否则会触发 runs 外键找不到 task。
+  - 在 WSL 后端连接 Docker Desktop 暴露的 Postgres 时，`host.docker.internal:5432` 比容器内网 IP 更稳定。
+  - 证据截图可写入需求目录 `screenshots/`；仓库 `.gitignore` 会保持这些时间戳证据不进入提交。
 ---
