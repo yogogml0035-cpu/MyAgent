@@ -285,6 +285,39 @@ class TestTaskHistoryActions:
         assert app_client.get(f"/api/tasks/{task_id}").status_code == 404
         assert not task_dir.exists()
 
+    @pytest.mark.parametrize(
+        "terminal_status",
+        ["complete", "failed", "cancelled", "needs_input", "interrupted"],
+    )
+    def test_delete_allows_inactive_terminal_statuses(
+        self, terminal_status, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        storage = app_client.app.state.storage
+        run_result = storage.start_run(
+            task_id,
+            message="hello",
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+        needs_input = {"message": "请补充文件"} if terminal_status == "needs_input" else None
+        updated = storage.update_task_if_status(
+            task_id,
+            {"running"},
+            status=terminal_status,
+            run_id=run_id,
+            needs_input=needs_input,
+        )
+        assert updated is not None
+
+        response = app_client.delete(f"/api/tasks/{task_id}")
+
+        assert response.status_code == 204
+        assert app_client.get(f"/api/tasks/{task_id}").status_code == 404
+
     def test_delete_running_task_returns_409(self, create_idle_task, app_client):
         created = create_idle_task()
         task_id = created["task_id"]
@@ -300,6 +333,23 @@ class TestTaskHistoryActions:
 
         assert response.status_code == 409
         assert response.json()["detail"] == "任务运行中，不能删除"
+
+    def test_delete_runner_active_task_returns_409_even_when_state_is_not_running(
+        self, create_idle_task, app_client
+    ):
+        created = create_idle_task()
+        task_id = created["task_id"]
+        runner = app_client.app.state.runner
+        original_is_running = runner.is_running
+        runner.is_running = lambda candidate_task_id: candidate_task_id == task_id
+        try:
+            response = app_client.delete(f"/api/tasks/{task_id}")
+        finally:
+            runner.is_running = original_is_running
+
+        assert response.status_code == 409
+        assert response.json()["detail"] == "任务运行中，不能删除"
+        assert app_client.get(f"/api/tasks/{task_id}").status_code == 200
 
 
 class TestGetEvents:

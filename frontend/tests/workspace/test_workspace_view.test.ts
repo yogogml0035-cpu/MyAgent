@@ -1600,7 +1600,7 @@ test("buildStateNoticeMessages renders state notices as assistant messages", () 
       id: "state:needs-input",
       role: "assistant",
       content: "需要补充字段",
-      level: "warning",
+      level: "error",
     },
   ]);
   assert.deepEqual(buildStateNoticeMessages("", "   "), []);
@@ -2574,6 +2574,24 @@ test("message panel helpers map assistant notices to TenderWord-like card states
   assert.equal(getMessagePanelTone(warningMessage), "warning");
   assert.equal(formatMessagePanelStatus(warningMessage), "配置提醒");
   assert.equal(formatMessagePanelTitle(warningMessage), "AI 生成内容");
+  assert.equal(
+    getMessagePanelTone({
+      id: "m2-deliverable",
+      role: "assistant",
+      content: "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。",
+      level: "warning",
+    }),
+    "error",
+  );
+  assert.equal(
+    formatMessagePanelStatus({
+      id: "m2-deliverable",
+      role: "assistant",
+      content: "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。",
+      level: "warning",
+    }),
+    "生成失败",
+  );
   assert.equal(getMessagePanelTone(systemMessage), "system");
   assert.equal(formatMessagePanelStatus(systemMessage), "系统消息");
   assert.equal(formatMessagePanelTitle(systemMessage), "系统消息");

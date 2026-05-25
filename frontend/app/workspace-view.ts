@@ -124,7 +124,7 @@ export function buildStateNoticeMessages(
       id: "state:needs-input",
       role: "assistant",
       content: needsInputContent,
-      level: "warning",
+      level: "error",
     });
   }
 
@@ -1646,8 +1646,20 @@ export function isWarningChatMessage(message: ChatMessage) {
   );
 }
 
+function isDeliverableFailureMessage(message: ChatMessage) {
+  const content = message.content.trim();
+  return (
+    message.role === "assistant" &&
+    (content.includes("文件未成功生成或未能登记为下载文件") ||
+      content.includes("文件未生成或未登记为产物"))
+  );
+}
+
 export function getMessagePanelTone(message: ChatMessage): MessagePanelTone {
   if (message.level === "error") {
+    return "error";
+  }
+  if (isDeliverableFailureMessage(message)) {
     return "error";
   }
   if (isWarningChatMessage(message)) {

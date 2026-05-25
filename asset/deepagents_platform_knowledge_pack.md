@@ -79,6 +79,8 @@
 - 不同 task/session 可以并行运行；同一 task 运行中必须互斥。
 - `backend/app/api/tasks.py#send_message()` 的同 task 互斥是双层保护：先查 `runner.is_running(task_id)` 返回 409，再由 `storage.start_run(... expected_statuses=...)` 兜底。
 - `backend/app/storage.py#list_task_summaries()` 只把至少有一条非空 user message 的 task 暴露给历史栏；E2E seed 历史时不能只改 title。
+- 缺上传、缺正文且没有可复用上下文时，runner 应在真正启动 agent 前写一条普通 assistant 澄清消息，并结束当前 run；这个场景不应生成用户可见的 `needs_input` warning 或“配置提醒”。
+- `needs_input` 是可继续、可删除、可清空的非运行状态；删除/清空只应阻止 `running` 或 `runner.is_running(task_id)` 仍为真。
 
 ## 事件、SSE 和恢复语义
 
@@ -167,7 +169,9 @@
 - 删除非 running task 必须同时删除 Postgres task row 和 matching local task workspace。
 - task workspace 内真实生成的 `.docx`、`.pptx`、`.xlsx`、`.xlsm`、`.pdf`、`.html`、`.md` 文件需要先通过 run-scoped artifact 登记或安全复制到 `artifacts/runs/{run_id}/`，再暴露给前端下载。
 - 用户明确要求的交付文件，或 final answer 明确声称“已生成/已保存”的文件，必须存在且已登记为当前 run artifact；否则 task/run 不能标记为成功完成。
+- 交付成功优先按当前 run 已登记 artifact 类型判定：Word 看任意 `.docx`，PPT 看任意 `.pptx`，Excel 看任意 `.xlsx`/`.xlsm`，报告看任意 `.html`/`.md`/`.pdf`；只要类型满足请求，就不要因为 final answer 推断出的文件名和 artifact 文件名不同而误报失败。
 - 缺失交付文件时应给出可见的 `文件未生成或未登记为产物` 修正提示，并保持 artifact API 不暴露不可下载的本地路径或伪链接。
+- 真实缺失交付文件时，后台交付保护仍应把 task/run 留在失败修正路径，但前端用户可见 payload 只应暴露简短说明和安全重试入口，不能泄露 `reason`、`repair_hint`、`missing_artifact_names`、`missing_deliverables`、`requested_deliverable_types`、`promoted_artifacts` 等内部字段名。
 - Artifact routes：
   - latest/legacy：`GET /api/tasks/{id}/artifacts/{name}`
   - run-scoped：`GET /api/tasks/{id}/runs/{run_id}/artifacts/{name}`

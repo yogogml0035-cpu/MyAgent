@@ -380,15 +380,66 @@ class TestTaskRunnerTerminalEvents:
         assert final_answers[0].payload["live"]["display_text"] == "回答已完成"
 
     @pytest.mark.asyncio
+    async def test_background_run_clarifies_missing_upload_as_assistant_message(
+        self, test_settings, monkeypatch
+    ):
+        storage = InMemoryTaskStorage(test_settings.task_root)
+        runner = TaskRunner(test_settings, storage)
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
+        user_message = "请总结内容并生成 Word"
+        run_result = storage.start_run(
+            state.task_id,
+            message=user_message,
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+
+        async def fail_if_agent_starts(*args, **kwargs):
+            raise AssertionError("missing-source clarification should not start the agent")
+
+        monkeypatch.setattr(runner, "start", fail_if_agent_starts)
+
+        runner.start_background(
+            state.task_id,
+            user_message,
+            model="deepseek-v4-flash",
+            run_id=run_id,
+        )
+        await _wait_for_runner(runner, state.task_id)
+
+        task_state = storage.get_task(state.task_id)
+        assistant_messages = [message for message in task_state.messages if message.role == "assistant"]
+        needs_input_events = [event for event in task_state.events if event.type == "needs_input"]
+        final_answers = [event for event in task_state.events if event.type == "final_answer"]
+
+        assert task_state.status == "complete"
+        assert task_state.needs_input is None
+        assert task_state.runs[-1].status == "complete"
+        assert task_state.runs[-1].needs_input is None
+        assert needs_input_events == []
+        assert len(assistant_messages) == 1
+        assert "你是不是忘记上传文件了" in assistant_messages[0].content
+        assert "继续帮你生成 Word" in assistant_messages[0].content
+        assert len(final_answers) == 1
+        assert final_answers[0].level == "success"
+        assert final_answers[0].payload["content"] == assistant_messages[0].content
+
+    @pytest.mark.asyncio
     async def test_background_run_requires_requested_deliverable_artifact_before_complete(
         self, test_settings, monkeypatch
     ):
         storage = InMemoryTaskStorage(test_settings.task_root)
         runner = TaskRunner(test_settings, storage)
         state = storage.create_task(message=None, model="deepseek-v4-flash")
+        user_message = (
+            "请根据以下项目材料生成一份 Word 文档并交付给我：\n"
+            "项目A在第一阶段完成需求调研、接口梳理、风险识别和交付计划确认，需要形成正式文档。"
+        )
         run_result = storage.start_run(
             state.task_id,
-            message="请生成一份 Word 文档并交付给我",
+            message=user_message,
             model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
@@ -402,7 +453,7 @@ class TestTaskRunnerTerminalEvents:
 
         runner.start_background(
             state.task_id,
-            "请生成一份 Word 文档并交付给我",
+            user_message,
             model="deepseek-v4-flash",
             run_id=run_id,
         )
@@ -418,10 +469,86 @@ class TestTaskRunnerTerminalEvents:
         assert final_answers == []
         assert len(needs_input_events) == 1
         assert needs_input_events[0].run_id == run_id
-        assert "文件未生成或未登记为产物" in needs_input_events[0].message
+        assert "文件未成功生成或未能登记为下载文件" in needs_input_events[0].message
         assert task_state.needs_input is not None
-        assert task_state.needs_input["reason"] == "deliverable_artifact_missing"
+        assert task_state.needs_input == {
+            "message": "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。",
+            "action_label": "重新生成文件",
+        }
+        assert needs_input_events[0].payload == task_state.needs_input
+        for internal_key in (
+            "reason",
+            "repair_hint",
+            "missing_artifact_names",
+            "missing_deliverables",
+            "requested_deliverable_types",
+            "promoted_artifacts",
+        ):
+            assert internal_key not in task_state.needs_input
+            assert internal_key not in needs_input_events[0].payload
         assert task_state.runs[-1].status == "needs_input"
+
+    @pytest.mark.parametrize(
+        ("request_phrase", "artifact_name", "claimed_name"),
+        [
+            ("生成一份 Word 文档", "actual-summary.docx", "model-summary.docx"),
+            ("生成一份 PPT 幻灯片", "actual-slides.pptx", "model-slides.pptx"),
+            ("生成一份 Excel 表格", "actual-workbook.xlsx", "model-workbook.xlsx"),
+            ("生成一份 Excel 表格", "actual-macro-workbook.xlsm", "model-workbook.xlsx"),
+            ("生成一份报告", "actual-report.html", "model-report.html"),
+            ("生成一份报告", "actual-report.md", "model-report.pdf"),
+            ("生成一份报告", "actual-report.pdf", "model-report.html"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_background_run_accepts_any_artifact_matching_requested_deliverable_type(
+        self,
+        test_settings,
+        monkeypatch,
+        request_phrase: str,
+        artifact_name: str,
+        claimed_name: str,
+    ):
+        storage = InMemoryTaskStorage(test_settings.task_root)
+        runner = TaskRunner(test_settings, storage)
+        state = storage.create_task(message=None, model="deepseek-v4-flash")
+        user_message = (
+            f"请根据以下材料{request_phrase}并交付给我：\n"
+            "项目资料包含范围边界、进度安排、风险负责人、验收方式和预算调整说明。"
+        )
+        run_result = storage.start_run(
+            state.task_id,
+            message=user_message,
+            model="deepseek-v4-flash",
+            expected_statuses={"idle"},
+        )
+        assert run_result is not None
+        _, run_id = run_result
+        storage.write_run_text(state.task_id, run_id, artifact_name, "placeholder")
+
+        async def fake_start(*args, **kwargs):
+            return [], {"messages": [AIMessage(content=f"已生成 {claimed_name}，请下载查看。")]}
+
+        monkeypatch.setattr(runner, "start", fake_start)
+
+        runner.start_background(
+            state.task_id,
+            user_message,
+            model="deepseek-v4-flash",
+            run_id=run_id,
+        )
+        await _wait_for_runner(runner, state.task_id)
+
+        task_state = storage.get_task(state.task_id)
+        needs_input_events = [event for event in task_state.events if event.type == "needs_input"]
+        final_answers = [event for event in task_state.events if event.type == "final_answer"]
+
+        assert task_state.status == "complete"
+        assert task_state.needs_input is None
+        assert task_state.runs[-1].status == "complete"
+        assert artifact_name in task_state.runs[-1].artifact_names
+        assert needs_input_events == []
+        assert len(final_answers) == 1
 
     @pytest.mark.asyncio
     async def test_background_run_promotes_claimed_workspace_file_before_complete(
@@ -430,9 +557,13 @@ class TestTaskRunnerTerminalEvents:
         storage = InMemoryTaskStorage(test_settings.task_root)
         runner = TaskRunner(test_settings, storage)
         state = storage.create_task(message=None, model="deepseek-v4-flash")
+        user_message = (
+            "请根据以下材料输出简短总结，并把 Word 文档交付给我：\n"
+            "本轮会议确认了实施范围、交付节点、风险负责人和后续验收安排。"
+        )
         run_result = storage.start_run(
             state.task_id,
-            message="请输出简短总结，并把 Word 文档交付给我",
+            message=user_message,
             model="deepseek-v4-flash",
             expected_statuses={"idle"},
         )
@@ -449,7 +580,7 @@ class TestTaskRunnerTerminalEvents:
 
         runner.start_background(
             state.task_id,
-            "请输出简短总结，并把 Word 文档交付给我",
+            user_message,
             model="deepseek-v4-flash",
             run_id=run_id,
         )

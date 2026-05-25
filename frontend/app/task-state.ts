@@ -21,10 +21,16 @@ export type ChatMessage = {
   id: string;
   role: "user" | "assistant" | "system";
   content: string;
+  files?: ChatMessageFile[];
+  fileOnly?: boolean;
   createdAt?: string;
   runId?: string | null;
   level?: "info" | "warning" | "error";
   streaming?: boolean;
+};
+
+export type ChatMessageFile = {
+  name: string;
 };
 
 export type ExecutionLog = {
@@ -549,6 +555,8 @@ const KNOWN_DISPLAY_TEXT: Record<string, string> = {
   "Task was interrupted because no active runner owns it.": "任务已中断：当前没有运行器接管该任务。",
   "Upload Markdown or JSON files before starting a document-analysis task.": "开始文档分析任务前，请先上传 Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件。",
   "At least two uploaded bidder documents are required for comparison.": "至少需要上传两份投标人文档才能进行对比。",
+  "文件未生成或未登记为产物，请修复后重新生成。": "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。",
+  "文件未生成或未登记为产物，请重新生成交付文件后再提交。": "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。",
   "Execution plan generated": "已生成执行计划。",
   "Concurrent sub-agent analysis started": "并发子任务分析已开始。",
   "Final report artifacts were written": "最终报告产物已写入。",
@@ -643,6 +651,8 @@ function formatNeedsInputKey(key: string) {
     minimum_bidder_documents: "至少投标人文档数",
     current_bidder_documents: "当前投标人文档数",
     required_file_type: "所需文件类型",
+    action_label: "建议操作",
+    actionLabel: "建议操作",
   };
   return labels[key] ?? key;
 }
@@ -655,11 +665,32 @@ function formatNeedsInputValue(key: string, value: unknown) {
 }
 
 export function formatNeedsInput(value: Record<string, unknown>) {
-  const message = translateKnownDisplayText(readString(value.message, "Additional input is required."));
-  const details = Object.entries(value)
+  const publicValue = sanitizeNeedsInput(value);
+  const message = translateKnownDisplayText(readString(publicValue.message, "Additional input is required."));
+  const details = Object.entries(publicValue)
     .filter(([key]) => key !== "message")
     .map(([key, entry]) => `${formatNeedsInputKey(key)}：${formatNeedsInputValue(key, entry)}`);
   return details.length > 0 ? `${message} ${details.join(" · ")}` : message;
+}
+
+const INTERNAL_NEEDS_INPUT_KEYS = new Set([
+  "reason",
+  "repair_hint",
+  "repairHint",
+  "missing_artifact_names",
+  "missingArtifactNames",
+  "missing_deliverables",
+  "missingDeliverables",
+  "requested_deliverable_types",
+  "requestedDeliverableTypes",
+  "promoted_artifacts",
+  "promotedArtifacts",
+]);
+
+function sanitizeNeedsInput(value: Record<string, unknown>) {
+  return Object.fromEntries(
+    Object.entries(value).filter(([key]) => !INTERNAL_NEEDS_INPUT_KEYS.has(key)),
+  );
 }
 
 function normalizeStatus(value: unknown): TaskStatus {
@@ -672,7 +703,7 @@ function statusLabel(status: TaskStatus, rawStatus: string) {
 }
 
 function readOptionalNeedsInput(value: unknown) {
-  return isRecord(value) ? value : null;
+  return isRecord(value) ? sanitizeNeedsInput(value) : null;
 }
 
 function maybeRunId(record: Record<string, unknown>) {
@@ -1000,16 +1031,85 @@ function normalizeAssistantThinkingStream(type: string | undefined, payload: Rec
   };
 }
 
+const GENERATED_FILE_ONLY_MESSAGE_PREFIXES = [
+  "请继续上一轮需求",
+  "我已上传文件，请继续上一轮需求",
+  "我已上传文件，请读取并处理本轮上传资源",
+];
+
+function readFileName(value: unknown) {
+  if (typeof value === "string") {
+    return value.trim();
+  }
+  if (!isRecord(value)) {
+    return "";
+  }
+  return readString(value.name ?? value.filename ?? value.file_name ?? value.fileName, "").trim();
+}
+
+function normalizeMessageFilesFromValue(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const files: ChatMessageFile[] = [];
+  value.forEach((item) => {
+    const name = readFileName(item);
+    if (!name || seen.has(name)) {
+      return;
+    }
+    seen.add(name);
+    files.push({ name });
+  });
+  return files;
+}
+
+function extractFileOnlyMessageFiles(content: string) {
+  const match = content.match(/本轮文件[:：]\s*([^。！?\n]+)(?:[。！?]|\n|$)/);
+  if (!match) {
+    return [];
+  }
+
+  const fileList = match[1].replace(/\s+等\s+\d+\s+个文件\s*$/u, "").trim();
+  if (!fileList || fileList === "本轮已上传文件") {
+    return [];
+  }
+  return normalizeMessageFilesFromValue(fileList.split("、"));
+}
+
+function isGeneratedFileOnlyMessage(content: string) {
+  const normalizedContent = content.trim();
+  return GENERATED_FILE_ONLY_MESSAGE_PREFIXES.some((prefix) => normalizedContent.startsWith(prefix));
+}
+
+function normalizeMessageFiles(record: Record<string, unknown>, content: string, role: ChatMessage["role"]) {
+  const explicitFiles = normalizeMessageFilesFromValue(
+    record.files ?? record.uploads ?? record.attachments ?? record.uploaded_files ?? record.uploadedFiles,
+  );
+  if (explicitFiles.length > 0) {
+    return explicitFiles;
+  }
+  if (role !== "user" || !isGeneratedFileOnlyMessage(content)) {
+    return [];
+  }
+  return extractFileOnlyMessageFiles(content);
+}
+
 function normalizeMessage(value: unknown, index: number): ChatMessage {
   const record = isRecord(value) ? value : {};
   const role = readString(record.role, "assistant");
   const normalizedRole = role === "user" || role === "system" ? role : "assistant";
   const level = readLevel(record.level);
   const rawContent = readString(record.content ?? record.text ?? record.message, "");
+  const files = normalizeMessageFiles(record, rawContent, normalizedRole);
+  const fileOnly = normalizedRole === "user" && files.length > 0 && isGeneratedFileOnlyMessage(rawContent);
   return {
     id: readString(record.id, `message-${index}`),
     role: normalizedRole,
     content: normalizedRole === "user" ? rawContent : translateKnownDisplayText(rawContent),
+    ...(files.length > 0 ? { files } : {}),
+    ...(fileOnly ? { fileOnly: true } : {}),
     createdAt: readOptionalString(record.created_at ?? record.createdAt),
     runId: maybeRunId(record),
     level: level === "success" ? undefined : level,

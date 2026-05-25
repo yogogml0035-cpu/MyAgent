@@ -6,9 +6,112 @@ Source: prd.json
 
 ## Codebase Patterns
 
+- 缺上传/缺正文的普通澄清应在 `backend/app/runner/core.py` 的 `start_background()` 调 agent 前短路，写入 assistant message 和 success `final_answer`，不要生成用户可见 `needs_input` warning。
 - 后端删除会话只应阻止真实运行中任务：`backend/app/api/tasks.py:142` 检查 `state.status == "running"` 或 `runner.is_running(task_id)`。
 - 发送消息允许从 `needs_input` 继续：`backend/app/api/tasks.py:170` 的 `expected_statuses` 包含 `needs_input`。
 - 交付保护集中在 `backend/app/runner/core.py:524` 的 `_ensure_run_deliverables()`，当前 payload 暴露内部字段，需要收敛用户可见字段。
 - 前端 active 状态口径集中在 `frontend/app/task-state.ts:1349`，当前只把 `running` 视为 active，应补测试锁定。
+- 前端历史删除/清空的运行中拦截应复用 `isTaskActive()` 或 `hasActiveTaskSummary()`，不要把 `needs_input`、`interrupted` 等终态当作 active。
 - needs-input notice 当前在 `frontend/app/workspace-view.ts:122` 作为 warning 输出，并在 `frontend/app/workspace-view.ts:1662` 显示为“配置提醒”，需要调整或过滤。
-- 文件-only submit 当前在 `frontend/hooks/use-task-workspace.ts:205` 允许发送，但 `frontend/hooks/use-task-workspace.ts:507` 使用通用默认 prompt，需要改成继续上一轮需求的 follow-up。
+- 文件-only submit 在 `frontend/hooks/use-task-workspace.ts` 中用 `buildFileOnlyFollowUpMessage()` 构造非空 follow-up；有历史用户意图时显式写“继续上一轮需求”，后端 `MessageRequest.message` 仍保持非空合同。
+- 文件-only 用户消息展示由 `frontend/app/task-state.ts` 提取安全文件名元数据到 `ChatMessage.files`/`fileOnly`，`TaskConversation` 可隐藏生成式 follow-up 文案但保留原始 `content` 供复制和上下文使用。
+- `frontend/app/task-state.ts` 的文件-only 消息识别前缀必须与 `frontend/hooks/use-task-workspace.ts` 的 `buildFileOnlyFollowUpMessage()` 生成文案同步，否则浏览器会显示 follow-up prompt 而不是文件 chip。
+- 交付成功判断以当前 run 的 `artifact_names` 后缀满足请求类型为准；请求类型已满足时不要再用 final answer 中的具体文件名做失败判定。
+- 交付失败的 `needs_input` payload 对用户可见时只保留 `message`/`action_label`；历史内部字段在 `frontend/app/task-state.ts` 的 needs-input 标准化和格式化中统一过滤。
+- 真实浏览器 E2E 若要点击“清空所有会话”，应使用隔离的 `MYAGENT_E2E_POSTGRES_DB` 和 `MYAGENT_E2E_TASK_ROOT`，避免删除开发库中的真实历史会话。
+- `runtime-contracts` 这类会直接用 `docker exec PostgreSQL psql` 播种的 E2E，后端 `MYAGENT_DATABASE_URL` 必须指向同一个 Docker Postgres 数据面；WSL 后端可用 `host.docker.internal:5432` 对齐。
+
+## 2026-05-24 23:14 - US-001
+- 实现了缺上传/缺正文时的普通 AI 澄清：runner 在启动 agent 前识别“总结/生成交付物但没有上传、内联正文或可复用上下文”的请求，直接写入 assistant 澄清并以 success final_answer 完成 run，不再产生 `needs_input` warning。
+- 保留有来源内容时的交付保护：将相关 runner 单测改为携带内联材料，继续覆盖“有来源但缺 artifact”会进入交付保护。
+- 更改的文件：`backend/app/runner/core.py`、`backend/tests/unit/runner/test_core.py`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest tests/unit/runner/test_core.py tests/unit/api/test_tasks.py -q`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`git diff --check`
+- **未来迭代的学习：**
+  - 缺上传澄清需要避开 `needs_input` 状态，否则前端会把 notice 渲染成 warning/“配置提醒”。
+  - runner 的 `start_run()` 已先写入当前 user message，判断“是否有历史上下文”时要排除当前 `run_id` 的消息。
+  - 交付保护测试若要验证 artifact 缺失/提升，应提供上传、内联正文或历史上下文，否则会先命中缺来源澄清。
+---
+
+## 2026-05-24 23:32 - US-002
+- 实现了文件-only follow-up：输入框为空但选中文件时，前端发送“继续上一轮需求”的非空消息，并带上上一轮用户意图和本轮文件名。
+- 补齐上传后发送失败的回归锁定：上传始终先于 message 发送，message 失败时刷新当前 task，且不清空已选文件状态。
+- 补齐后端上下文回归：文件-only follow-up 的下一轮上下文包含上一轮“总结内容并生成 Word”意图，上传资源 manifest 包含文件名但不包含上传正文。
+- 更改的文件：`frontend/hooks/use-task-workspace.ts`、`frontend/tests/workspace/test_task_workspace.test.ts`、`backend/tests/unit/runner/test_conversation_context.py`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd frontend && npm test -- tests/workspace/test_task_workspace.test.ts`；`cd backend && uv run pytest tests/unit/runner/test_conversation_context.py -q`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`git diff --check`
+- **未来迭代的学习：**
+  - 前端文件-only 发送不能提交空 message，因为后端 `MessageRequest.message` 有 `min_length=1`；应在 hook 层生成清晰 follow-up。
+  - 会话连续性由 `ConversationContextBuilder` 回放上一轮消息，上传文件内容由 runner 的资源 manifest 和资源工具提供，不应写入普通 message。
+  - `uploadTaskFiles()` 成功但 `postTaskMessage()` 失败时要保留用户可见上传状态，catch 分支的 `refreshTask(requestTaskId)` 是必要兜底。
+---
+
+## 2026-05-25 00:15 - US-003
+- 实现了文件-only 用户消息渲染：前端标准化层从生成式 follow-up 或显式 message 文件元数据中提取安全文件名，用户消息气泡渲染紧凑文件 chip。
+- 隐藏文件-only 消息的生成式 follow-up 文案，但保留原始 `message.content` 用于复制按钮和后端上下文；空文本但有文件元数据时复制按钮回退复制文件名列表。
+- 补齐窄屏和长文件名样式约束：文件 chip 在用户气泡内省略长文件名，520px 以下占满可用宽度，不撑破消息卡片。
+- 更改的文件：`frontend/app/task-state.ts`、`frontend/components/chat/TaskConversation.tsx`、`frontend/app/globals.css`、`frontend/tests/state/test_task_state.test.ts`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd frontend && npm test -- tests/state/test_task_state.test.ts tests/workspace/test_workspace_view.test.ts tests/workspace/test_task_workspace.test.ts`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`git diff --check`
+- 浏览器验证：未执行完整浏览器路径；`3001` 前端可访问，但 `8001` 后端不可连接，且本轮只处理 US-003，真实浏览器 E2E 留给 US-007。
+- **未来迭代的学习：**
+  - `ChatMessage.content` 仍是后端上下文和复制的权威文本；展示层如果要压缩文件-only prompt，应通过 `fileOnly`/`files` 投影处理，不要改写原始 content。
+  - 从 `buildFileOnlyFollowUpMessage()` 文案解析文件名时不能把扩展名中的 `.` 当句末截断。
+  - 用户消息内的文件 chip 需要 `min-width: 0`、`max-width` 和 `text-overflow: ellipsis` 同时存在，窄屏下再把 chip 设为 100% 宽。
+---
+
+## 2026-05-25 00:32 - US-004
+- 实现了交付成功按可下载产物类型判定：Word/PPT/Excel/报告请求只要当前 run 存在匹配后缀的 artifact，就不再因 final answer 中声称文件名不一致而进入缺文件保护。
+- 补齐后端回归测试，覆盖 `.docx`、`.pptx`、`.xlsx`、`.xlsm`、`.html`、`.md`、`.pdf` 满足对应请求类型。
+- 更改的文件：`backend/app/runner/core.py`、`backend/tests/unit/runner/test_core.py`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest tests/unit/runner/test_core.py tests/unit/api/test_artifacts.py -q`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`git diff --check`
+- **未来迭代的学习：**
+  - `_ensure_run_deliverables()` 中 `run.artifact_names` 是本轮交付成功判断的权威来源，final answer 文件名只能作为没有请求类型时的兜底保护线索。
+  - Excel 请求同时接受 `.xlsx` 和 `.xlsm`，报告请求接受 `.html`、`.md` 和 `.pdf`。
+  - 交付保护测试要给请求提供足够内联材料或上传资源，否则会先触发缺来源澄清。
+---
+
+## 2026-05-25 01:05 - US-005
+- 收敛了交付失败的用户可见 payload：后端仍将真实缺 artifact 的 run/task 置为 `needs_input`，但 state/event payload 只返回简短 `message` 和安全 `action_label`。
+- 前端对历史旧 `needs_input` payload 过滤 `reason`、`repair_hint`、`missing_artifact_names`、`missing_deliverables`、`requested_deliverable_types`、`promoted_artifacts` 等内部字段，并把交付失败消息渲染为生成失败而非“配置提醒”。
+- 更改的文件：`backend/app/runner/core.py`、`backend/tests/unit/runner/test_core.py`、`frontend/app/task-state.ts`、`frontend/app/workspace-view.ts`、`frontend/tests/state/test_task_state.test.ts`、`frontend/tests/workspace/test_workspace_view.test.ts`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest tests/unit/runner/test_core.py -q`；`cd frontend && npm test -- tests/state/test_task_state.test.ts tests/workspace/test_workspace_view.test.ts`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`git diff --check`
+- 浏览器验证：未执行真实浏览器 E2E；本轮只处理 US-005，完整真实浏览器路径和截图证据留给 US-007。
+- **未来迭代的学习：**
+  - `_ensure_run_deliverables()` 的返回值会直接进入 task/run `needs_input` 和 `needs_input` event payload，不能在这里放用户不应看到的诊断字段。
+  - 旧会话 payload 可能仍包含内部字段；前端展示前需要在标准化和 `formatNeedsInput()` 两层过滤，避免状态 notice 或历史数据泄漏字段名。
+  - 交付失败不能用 warning 消息卡片，否则标题会变成“配置提醒”；已知交付失败内容应走 error tone，显示“生成失败”。
+---
+
+## 2026-05-25 01:25 - US-006
+- 锁定了 `needs_input` 的非运行状态口径：后端删除 API 允许 `complete`、`failed`、`cancelled`、`needs_input`、`interrupted` 删除，只在 task 状态为 `running` 或 runner active 时返回 409。
+- 前端新增 `hasActiveTaskSummary()` 并让删除/清空历史复用 `isTaskActive()`，确保清空所有会话只被真实 running summary 或当前 running task 拦截。
+- 更改的文件：`backend/tests/unit/api/test_tasks.py`、`frontend/hooks/use-task-workspace.ts`、`frontend/tests/state/test_task_state.test.ts`、`frontend/tests/workspace/test_task_workspace.test.ts`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest tests/unit/api/test_tasks.py -q`；`cd frontend && npm test -- tests/workspace/test_task_workspace.test.ts tests/workspace/test_workspace_view.test.ts`；`cd frontend && npm test -- tests/state/test_task_state.test.ts`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`cd backend && uv run ruff check .`；`cd backend && uv run mypy app tests`；`git diff --check`
+- 浏览器验证：未执行真实浏览器 E2E；本轮只处理 US-006 的删除/清空状态规则，完整真实浏览器路径和截图证据留给 US-007。
+- **未来迭代的学习：**
+  - 后端删除会话必须同时检查持久状态和 `runner.is_running(task_id)`，防止状态尚未刷新时误删 active run。
+  - `needs_input` 是可继续、可删除、可清空的非运行终态；前端如需判断历史中是否有活跃任务，应统一走 `isTaskActive()`。
+  - 清空历史的前端单测更适合锁定纯 helper 和 hook source boundary；真实浏览器“清空所有会话”路径由 US-007 覆盖。
+---
+
+## 2026-05-25 01:54 - US-007
+- 新增真实浏览器 E2E `frontend/e2e-playwright/test_missing_upload_clarification_delivery_warning.spec.mjs`，覆盖缺上传普通澄清、澄清后文件-only 上传继续上一轮需求、`.docx` 下载卡片、交付失败友好说明与内部字段隐藏、`needs_input` 可清空和 `running` 阻止清空。
+- 修复文件-only 展示识别口径：`frontend/app/task-state.ts` 现在识别 `buildFileOnlyFollowUpMessage()` 生成的“我已上传文件，请继续上一轮需求”前缀，避免浏览器路径显示默认 follow-up 文案而不显示文件 chip。
+- 截图证据保存到 `frontend/e2e-playwright/e2e-20260525015235/missing-upload-clarification-delivery-warning-fix/`，并按 `.gitignore` 保持不提交。
+- 更改的文件：`frontend/e2e-playwright/test_missing_upload_clarification_delivery_warning.spec.mjs`、`frontend/app/task-state.ts`、`frontend/tests/state/test_task_state.test.ts`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd frontend && npx playwright test e2e-playwright/test_missing_upload_clarification_delivery_warning.spec.mjs --reporter=line`；`cd frontend && npm test -- tests/state/test_task_state.test.ts`；`cd frontend && npm run typecheck`；`cd frontend && npm run lint`；`git diff --check`
+- **未来迭代的学习：**
+  - 会改动文件-only follow-up 文案时必须同步 `GENERATED_FILE_ONLY_MESSAGE_PREFIXES` 和状态标准化单测，否则 UI 会退回展示 prompt 文本。
+  - clear-all E2E 需要隔离数据库和任务根；否则“清空所有会话”会按真实产品路径删除当前后端返回的全部历史。
+  - 对 provider 不相关的浏览器 E2E，可让缺上传澄清走真实后端短路，后续生成交付物路径用 Postgres-backed seed 保持测试可重复。
+---
+
+## 2026-05-25 10:23 - US-008
+- 同步了长期知识包 `asset/deepagents_platform_knowledge_pack.md`：记录缺上传/缺正文应作为普通 assistant 澄清、`needs_input` 是非运行状态、交付成功按当前 run 可下载 artifact 类型判定、交付失败后台保护保留但用户可见层隐藏内部字段。
+- 跑完完整质量门：后端全量 pytest/ruff/mypy、前端 typecheck/test/lint/build、`git diff --check` 和真实浏览器 `runtime-contracts`。
+- `runtime-contracts` 截图证据保存到 `tasks/missing-upload-clarification-delivery-warning-fix/screenshots/runtime-contracts-20260525102213/`，证据目录保持不提交。
+- 更改的文件：`asset/deepagents_platform_knowledge_pack.md`、`tasks/missing-upload-clarification-delivery-warning-fix/prd.json`、`tasks/missing-upload-clarification-delivery-warning-fix/progress.txt`
+- 验证：`cd backend && uv run pytest && uv run ruff check . && uv run mypy app tests`；`cd frontend && npm run typecheck && npm test && npm run lint && npm run build`；`cd frontend && npm run e2e:runtime-contracts`；`git diff --check`
+- **未来迭代的学习：**
+  - `runtime-contracts` 同时通过公开 API 创建 task、又通过 Docker Postgres 直接播种 runs/messages/events；后端数据库 URL 和 `MYAGENT_E2E_POSTGRES_DB` 必须是同一数据面，否则会触发 runs 外键找不到 task。
+  - 在 WSL 后端连接 Docker Desktop 暴露的 Postgres 时，`host.docker.internal:5432` 比容器内网 IP 更稳定。
+  - 证据截图可写入需求目录 `screenshots/`；仓库 `.gitignore` 会保持这些时间戳证据不进入提交。
+---

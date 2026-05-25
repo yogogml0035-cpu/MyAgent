@@ -18,6 +18,7 @@ import {
   normalizeTaskSummaries,
   normalizeTaskState,
   resolveApiBaseUrl,
+  type TaskStatus,
   type TaskState,
 } from "../../app/task-state";
 
@@ -50,6 +51,23 @@ test("normalizeTaskState preserves interrupted as an inactive known status", () 
   assert.equal(state.status, "interrupted");
   assert.equal(state.statusLabel, "interrupted");
   assert.equal(isTaskActive(state.status), false);
+});
+
+test("isTaskActive treats only running as active", () => {
+  const inactiveStatuses: TaskStatus[] = [
+    "idle",
+    "complete",
+    "failed",
+    "cancelled",
+    "needs_input",
+    "interrupted",
+    "unknown",
+  ];
+
+  assert.equal(isTaskActive("running"), true);
+  for (const status of inactiveStatuses) {
+    assert.equal(isTaskActive(status), false);
+  }
 });
 
 test("mergeExecutionLogs appends only new events by id", () => {
@@ -280,13 +298,28 @@ test("user message cards expose a copy action for the exact message content", ()
   const userCopyIndex = conversationSource.indexOf("className={userCopyButtonClassName}");
 
   assert.equal(conversationSource.includes("复制用户消息"), true);
-  assert.equal(conversationSource.includes("onCopyText(message.content, undefined"), true);
+  assert.equal(conversationSource.includes("onCopyText(userCopyText, undefined"), true);
   assert.equal(conversationSource.includes("onCopyText(formatTime"), false);
   assert.equal(conversationSource.includes("已复制用户消息"), true);
   assert.equal(conversationSource.includes("copyButton-copied"), true);
   assert.equal(userTimeIndex >= 0, true);
   assert.equal(userCopyIndex >= 0, true);
   assert.equal(userTimeIndex < userCopyIndex, true);
+});
+
+test("user file-only messages render compact uploaded file chips", () => {
+  const conversationSource = readFileSync(
+    new URL("../../components/chat/TaskConversation.tsx", import.meta.url),
+    "utf-8",
+  );
+  const cssSource = readFileSync(new URL("../../app/globals.css", import.meta.url), "utf-8");
+
+  assert.equal(conversationSource.includes("message.fileOnly ? \"\" : message.content"), true);
+  assert.equal(conversationSource.includes("userMessageFileList"), true);
+  assert.equal(conversationSource.includes("userMessageFileChip"), true);
+  assert.equal(conversationSource.includes("title={file.name}"), true);
+  assert.match(cssSource, /\.userMessageFileName\s*\{[\s\S]*?text-overflow: ellipsis;[\s\S]*?white-space: nowrap;/);
+  assert.match(cssSource, /@media \(max-width: 520px\)[\s\S]*?\.userMessageFileChip\s*\{[\s\S]*?max-width: 100%;/);
 });
 
 test("normalizeTaskState preserves user message content without display localization", () => {
@@ -318,6 +351,70 @@ test("normalizeTaskState preserves user message content without display localiza
   assert.equal(state.messages[0].content, "  Task completed\n原样复制  ");
   assert.equal(state.messages[1].content, "Uploaded input.json");
   assert.equal(state.messages[2].content, "任务已完成。");
+});
+
+test("normalizeTaskState extracts file-only user message file names", () => {
+  const longFileName = "这是一份用于验证窄屏不会撑破消息卡片的超长文件名.docx";
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: `请继续上一轮需求：总结内容并生成 Word。本轮文件：${longFileName}、报价表.xlsx。`,
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.messages[0].fileOnly, true);
+  assert.deepEqual(state.messages[0].files, [{ name: longFileName }, { name: "报价表.xlsx" }]);
+  assert.equal(state.messages[0].content.includes("总结内容并生成 Word"), true);
+});
+
+test("normalizeTaskState treats continuation upload follow-up as file-only", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "我已上传文件，请继续上一轮需求：总结内容并生成 Word。本轮文件：clarification-brief.txt。",
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.equal(state.messages[0].fileOnly, true);
+  assert.deepEqual(state.messages[0].files, [{ name: "clarification-brief.txt" }]);
+});
+
+test("normalizeTaskState preserves explicit user message file metadata safely", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "complete",
+      messages: [
+        {
+          id: "message-1",
+          role: "user",
+          content: "",
+          files: [{ name: "source.md" }, { filename: "方案.docx" }, { name: "source.md" }],
+        },
+      ],
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.messages[0].files, [{ name: "source.md" }, { name: "方案.docx" }]);
+  assert.equal(state.messages[0].fileOnly, undefined);
+  assert.equal(state.messages[0].content, "");
 });
 
 test("normalizeTaskState preserves event seq and thinking stream diagnostics", () => {
@@ -1238,6 +1335,47 @@ test("formatNeedsInput localizes fixed payload keys and fallback messages", () =
     formatNeedsInput(state.needsInput ?? {}),
     "需要补充输入。 所需文件类型：Markdown、JSON、TXT、DOCX、XLSX 或 XLSM 文件",
   );
+});
+
+test("formatNeedsInput hides internal deliverable failure fields from legacy payloads", () => {
+  const state = normalizeTaskState(
+    {
+      task_id: "task-1",
+      status: "needs_input",
+      needs_input: {
+        message: "文件未生成或未登记为产物，请修复后重新生成。",
+        reason: "deliverable_artifact_missing",
+        repair_hint: "请在当前任务工作区生成文件并登记为 artifact 后重试。",
+        missing_artifact_names: ["summary.docx"],
+        missing_deliverables: ["要求的交付类型缺失：Word"],
+        requested_deliverable_types: ["Word"],
+        promoted_artifacts: [],
+        action_label: "重新生成文件",
+      },
+    },
+    "fallback",
+  );
+
+  assert.deepEqual(state.needsInput, {
+    message: "文件未生成或未登记为产物，请修复后重新生成。",
+    action_label: "重新生成文件",
+  });
+  const content = formatNeedsInput(state.needsInput ?? {});
+
+  assert.equal(
+    content,
+    "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。 建议操作：重新生成文件",
+  );
+  for (const internalField of [
+    "reason",
+    "repair_hint",
+    "missing_artifact_names",
+    "missing_deliverables",
+    "requested_deliverable_types",
+    "promoted_artifacts",
+  ]) {
+    assert.equal(content.includes(internalField), false);
+  }
 });
 
 test("normalizeTaskSummaries reads backend history titles without subtitles", () => {

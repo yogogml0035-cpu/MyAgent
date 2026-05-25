@@ -704,6 +704,64 @@ p {
   line-height: 1.7;
 }
 
+.userMessageFileList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.userMessageFileChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  max-width: min(280px, 100%);
+  min-height: 30px;
+  padding: 6px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.34);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--on-primary);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
+}
+
+.userMessageFileIcon {
+  position: relative;
+  width: 14px;
+  height: 17px;
+  flex: 0 0 auto;
+  border: 1.5px solid currentColor;
+  border-radius: 3px;
+  opacity: 0.84;
+}
+
+.userMessageFileIcon::before {
+  position: absolute;
+  top: -1.5px;
+  right: -1.5px;
+  width: 6px;
+  height: 6px;
+  border-bottom: 1.5px solid currentColor;
+  border-left: 1.5px solid currentColor;
+  border-radius: 0 3px 0 2px;
+  background: var(--primary);
+  content: "";
+}
+
+.userMessageFileName {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--on-primary);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .userMessageMeta {
   display: flex;
   align-items: center;
@@ -2860,6 +2918,11 @@ button:hover:not(:disabled),
 
   .fileChip {
     width: 100%;
+  }
+
+  .userMessageFileChip {
+    width: 100%;
+    max-width: 100%;
   }
 
   .replaceFileButton {
