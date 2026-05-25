@@ -1,6 +1,6 @@
 # 后端编码约定
 
-**分析日期：** 2026-05-24
+**分析日期：** 2026-05-25
 
 ## 命名模式
 
@@ -74,8 +74,8 @@
 - 项目技能是运行时一等内容，放在 `backend/skills/<skill>/SKILL.md`。
 - 技能文件通过 `backend/app/skills/project.py` 和 `backend/app/skills/loader.py` 发现。
 - 运行时技能源被 `backend/app/agent/factory.py` 只读挂载；更改 skill access 时保留 `_ReadOnlyBackend` 模式。
-- `web_research` 依赖 SearXNG 工具，`code_review` 依赖安全、测试和代码质量约定。
+- `web_research` 依赖 SearXNG 工具；runner 会为该技能追加快速联网核查提示、5 次总搜索预算、禁止子任务委派，并在没有明确交付文件要求时关闭 `create_word_document`。`code_review` 依赖安全、测试和代码质量约定。
 
 ---
 
-*约定分析：2026-05-24*
+*约定分析：2026-05-25*

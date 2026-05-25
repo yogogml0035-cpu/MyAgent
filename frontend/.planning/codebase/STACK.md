@@ -1,6 +1,6 @@
 # 前端技术栈
 
-**分析日期：** 2026-05-24
+**分析日期：** 2026-05-25
 
 ## 语言
 
@@ -76,7 +76,7 @@ npm run e2e:runtime-contracts
 ## 平台要求
 
 - 默认本地前端端口 `3001`，后端端口 `8001`。
-- WSL 开发建议使用 `/mnt/d/AgentProject/MyAgent/frontend`，避免混用 Windows/WSL 生成物。
+- 本地前端支持 WSL 模式和 Windows 原生模式。WSL 模式使用 `frontend/node_modules-wsl`，Windows 模式使用 `frontend/node_modules-win`；`frontend/node_modules` 是当前模式 junction，同一工作区不要并发运行 Windows 前端和 WSL 前端。
 - 后端 CORS 必须允许前端 origin；改 API base URL 时同步检查后端 CORS。
 - provider secrets 留在后端，浏览器只发送安全 model ID 和可选本地访问 token。
 
@@ -88,4 +88,4 @@ npm run e2e:runtime-contracts
 
 ---
 
-*技术栈分析：2026-05-24*
+*技术栈分析：2026-05-25*

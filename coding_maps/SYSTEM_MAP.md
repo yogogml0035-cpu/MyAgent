@@ -83,10 +83,10 @@ TaskRunner
   -> DashScope-compatible embeddings
   -> Qdrant semantic index
   -> DeepSeek chat model
-  -> optional SearXNG search tool
+  -> optional SearXNG search tool / web-research budget
 ```
 
-前端运行时不直接访问 DeepSeek、DashScope、Qdrant、Postgres 或 SearXNG。浏览器只发送后端注册的安全模型 ID 和可选浏览器访问 token。provider key、数据库 URL、Qdrant URL、embedding 凭据和客户资料必须留在后端环境或 ignored 本地 env 文件。
+前端运行时不直接访问 DeepSeek、DashScope、Qdrant、Postgres 或 SearXNG。浏览器只发送后端注册的安全模型 ID 和可选浏览器访问 token。`[$web-research]` 的搜索引擎选择、调用预算、代理重试和是否暴露产物工具都在后端 runner/tool registry 边界处理。provider key、数据库 URL、Qdrant URL、embedding 凭据和客户资料必须留在后端环境或 ignored 本地 env 文件。
 
 ## 后端到前端的接口边界
 
@@ -118,7 +118,7 @@ TaskRunner
 
 已确认事实：
 
-- `backend/` 可以依赖外部 provider、Postgres、Qdrant、SearXNG 和本地 filesystem。
+- `backend/` 可以依赖外部 provider、Postgres、Qdrant、SearXNG 和本地 filesystem；SearXNG 工具的浏览器可见效果只能通过后端事件和最终回答投影到前端。
 - `frontend/` 只依赖 MyAgent 后端和浏览器 API。
 - `asset/` 不参与运行时 import，是长期业务/平台约束输入。
 - `.agents/` 和 `scripts/ralph/` 是本地 agent tooling，不是产品实现事实来源。
@@ -330,4 +330,5 @@ git diff --check
 - 当 `backend/.planning/codebase/` 或 `frontend/.planning/codebase/` 刷新后，如果跨系统边界或阅读路线变化，同步刷新本文件。
 - 当 `ARCHITECTURE.md` 或 `INTERFACES.md` 改变系统边界时，同步检查本文件是否过时。
 - 不把 `.agents/`、`scripts/ralph/`、`.next/`、`.next-dev/`、`node_modules/`、测试证据目录或本地 env 文件当作产品事实来源。
+- Windows/WSL 双模式开发依赖分别落在 `backend/.venv`、`backend/.venv-wsl`、`frontend/node_modules-win`、`frontend/node_modules-wsl`；`frontend/node_modules` 只是当前模式 junction，不应作为稳定产品事实来源。
 - 证据不足时保留“当前源文档未确认”表述，不把推断写成硬规则。

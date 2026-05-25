@@ -1,6 +1,6 @@
 # 后端风险与关注点
 
-**分析日期：** 2026-05-24
+**分析日期：** 2026-05-25
 
 ## 技术债
 
@@ -92,11 +92,11 @@
 
 - 真实 Postgres 路径多为 env-gated integration，CI 未配置时会漏掉生产 storage 回归。
 - Qdrant/DashScope 网络错误、维度漂移、部分写失败和 recall threshold 覆盖不足。
-- SearXNG invalid URL、慢响应、redirect、大 payload 和 refresh cache 行为覆盖不足。
+- SearXNG invalid URL、慢响应、redirect、大 payload、预算耗尽和 refresh cache 行为仍需要继续扩展覆盖；当前已有引擎选择、代理重试和预算相关单测。
 - Office 文档安全解析缺少 malformed/zip-bomb-like/huge sheet/formula/external link 测试。
 - auth 缺少非 loopback、proxy、LAN origin/CORS 场景。
 - startup/shutdown 对 active runs、memory write、文件写入中断的覆盖有限。
 
 ---
 
-*风险审计：2026-05-24*
+*风险审计：2026-05-25*

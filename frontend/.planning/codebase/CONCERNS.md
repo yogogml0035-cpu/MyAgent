@@ -1,6 +1,6 @@
 # 前端风险与关注点
 
-**分析日期：** 2026-05-24
+**分析日期：** 2026-05-25
 
 ## 技术债
 
@@ -76,7 +76,7 @@
 
 ## 构建/测试风险
 
-- `npm run dev` 使用 POSIX/WSL 风格 env assignments，原生 PowerShell 可能失败；默认从 WSL 路径开发。
+- `npm run dev` 使用 POSIX/WSL 风格 env assignments；Windows 原生开发应使用 `scripts/start-dev-win.ps1`，由脚本设置环境变量并调用 `next.cmd`。切换 Windows/WSL 模式时要同步切换 `frontend/node_modules` junction 并避免复用另一模式缓存。
 - E2E specs 依赖真实服务、Postgres、可选 memory setup、access token 和 evidence dir，容易因环境而失败。
 - E2E env naming 有混用，`test_storage_memory_e2e.mjs` 使用不同变量名，应文档化为 legacy/manual 或统一。
 
@@ -89,4 +89,4 @@
 
 ---
 
-*风险审计：2026-05-24*
+*风险审计：2026-05-25*

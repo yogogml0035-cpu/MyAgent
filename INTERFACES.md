@@ -68,7 +68,7 @@
 - 后端文件校验、任务目录、上传目录和产物目录由 `backend/app/storage.py` 管理。
 - 默认任务文件根在后端 `Settings.task_root`，默认落到 `backend/storage/sessions`。
 - 支持的上传格式以源代码事实为准，当前事实层记录为 Markdown、JSON、TXT、DOCX、XLSX 和 XLSM。
-- Agent 生成 Word/docx 交付文件时使用后端 `create_word_document` 工具登记 run-scoped artifact；工具接收 Markdown/纯文本并转换为 Word 原生标题、列表和表格，不依赖浏览器、本地 shell 或 `execute` 命令。
+- Agent 生成 Word/docx 交付文件时，在 runner 暴露产物工具的场景使用后端 `create_word_document` 工具登记 run-scoped artifact；工具接收 Markdown/纯文本并转换为 Word 原生标题、列表和表格，不依赖浏览器、本地 shell 或 `execute` 命令。
 - HTML 产物预览由前端生成沙盒 iframe 文档，避免直接把不可信 HTML 混入主页面。
 
 ### 模型和技能边界

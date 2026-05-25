@@ -1,7 +1,7 @@
-<!-- refreshed: 2026-05-24 -->
+<!-- refreshed: 2026-05-25 -->
 # 后端架构
 
-**分析日期：** 2026-05-24
+**分析日期：** 2026-05-25
 
 ## 系统总览
 
@@ -52,7 +52,7 @@ FastAPI app (`backend/app/main.py`)
 ### Runner 编排层
 
 - 位置：`backend/app/runner/core.py`
-- `TaskRunner` 管理 active run、取消、超时、流事件落库、终态事件、final answer 和 completed-run memory write。
+- `TaskRunner` 管理 active run、取消、超时、流事件落库、终态事件、final answer、web-research 快速核查策略和 completed-run memory write。
 - 当前 active run map 是进程内状态，不能绕过单 worker 保护。
 
 ### Agent 构建层
@@ -65,7 +65,7 @@ FastAPI app (`backend/app/main.py`)
 
 - 位置：`backend/app/tools/`, `backend/app/execution/`
 - 上传文件不是自动上下文，只通过 `list_uploaded_resources`、`inspect_resource`、`read_resource_text`、`read_resource_table` 暴露。
-- SearXNG 搜索工具只通过 settings 中的 URL 注册和调用。
+- SearXNG 搜索工具只通过 settings 中的 URL 注册和调用；`[$web-research]` 运行会附加快速联网核查提示、总搜索调用预算和只在明确要求交付文件时才启用产物工具的策略。
 
 ### 持久化层
 
@@ -113,7 +113,7 @@ FastAPI app (`backend/app/main.py`)
 3. Storage 校验文件名、扩展名、重复、大小、JSON 内容和请求限制，写入 `<task>/uploads/`。
 4. Storage 追加 `file_uploaded` 事件和稳定 `resource_ref`。
 5. 下一轮 run 中，Runner 注入资源 manifest，agent 通过资源工具按需读取。
-6. Word/docx 交付生成走 `create_word_document`，该工具接收 Markdown/纯文本并转换为 Word 原生标题、列表和表格，然后直接生成并登记当前 run artifact；当前 backend 不提供 shell/python/execute 命令执行能力，不应通过 `bash`、`execute` 或 `task` 子代理生成简单 Word 文件。
+6. Word/docx 交付生成在 runner 允许产物工具时走 `create_word_document`，该工具接收 Markdown/纯文本并转换为 Word 原生标题、列表和表格，然后直接生成并登记当前 run artifact；当前 backend 不提供 shell/python/execute 命令执行能力，不应通过 `bash`、`execute` 或 `task` 子代理生成简单 Word 文件。
 
 ### 产物下载路径
 
@@ -165,7 +165,7 @@ FastAPI app (`backend/app/main.py`)
 - 不要把原始 LangGraph chunks 直接推给浏览器；必须规范化、落库，再由 SSE 投影。
 - 不要把 worker 数调大来“扩容”当前 runner；需要先设计外部队列、租约、心跳和跨进程事件发布。
 - 不要假设上传文件内容已在 chat context 中；agent 必须通过资源工具读取。
-- 不要让模型调用 `bash`、`execute` 或子代理来生成 Word/docx 交付文件；使用 `create_word_document`，并依赖工具内 Markdown 到 Word 转换和 storage 登记 run-scoped artifact。
+- 不要让模型调用 `bash`、`execute` 或子代理来生成 Word/docx 交付文件；当 runner 暴露 `create_word_document` 时，使用该工具并依赖工具内 Markdown 到 Word 转换和 storage 登记 run-scoped artifact。
 
 ## 错误处理
 
@@ -186,4 +186,4 @@ FastAPI app (`backend/app/main.py`)
 
 ---
 
-*架构分析：2026-05-24*
+*架构分析：2026-05-25*
