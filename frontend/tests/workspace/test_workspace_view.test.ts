@@ -323,20 +323,18 @@ test("buildLiveLogItems pairs tool events and keeps one active status row", () =
     "running",
   );
 
-  assert.equal(items.length, 4);
+  assert.equal(items.length, 3);
   assert.equal(items[0]?.kind, "tool");
   assert.equal(items[0]?.kind === "tool" ? items[0].title : "", "调用联网搜索");
   assert.equal(items[0]?.kind === "tool" ? items[0].toolName : "", "tavily_search");
   assert.equal(items[0]?.kind === "tool" ? items[0].parameterText : "", "query=上海天气");
-  assert.equal(items[1]?.kind, "status");
-  assert.equal(items[1]?.kind === "status" ? items[1].text : "", "AI正在生成结果");
-  assert.equal(items[2]?.kind, "tool");
-  assert.equal(items[2]?.kind === "tool" ? items[2].title : "", "联网搜索暂无可用结果");
-  assert.equal(items[2]?.kind === "tool" ? items[2].resultText : "", "未找到可用结果，正在尝试其他方式");
-  assert.equal(items[2]?.kind === "tool" ? items[2].resultStatus : "", "empty");
-  assert.equal(items[3]?.kind, "status");
-  assert.equal(items[3]?.kind === "status" ? items[3].text : "", "AI正在生成结果");
-  assert.equal(items[3]?.kind === "status" ? items[3].active : false, true);
+  assert.equal(items[1]?.kind, "tool");
+  assert.equal(items[1]?.kind === "tool" ? items[1].title : "", "联网搜索暂无可用结果");
+  assert.equal(items[1]?.kind === "tool" ? items[1].resultText : "", "未找到可用结果，正在尝试其他方式");
+  assert.equal(items[1]?.kind === "tool" ? items[1].resultStatus : "", "empty");
+  assert.equal(items[2]?.kind, "status");
+  assert.equal(items[2]?.kind === "status" ? items[2].text : "", "联网搜索暂无可用结果");
+  assert.equal(items[2]?.kind === "status" ? items[2].active : false, true);
 });
 
 test("buildLiveLogItems keeps event seq order and merges tool call argument deltas", () => {
@@ -1264,7 +1262,7 @@ test("buildLiveLogItems aggregates assistant stream chunks into a generation row
   assert.equal("accumulated_content" in display.payload.answer_stream, false);
 });
 
-test("buildLiveLogItems shows answer stream deltas only inside generation diagnostics", () => {
+test("buildLiveLogItems hides running answer deltas until the final answer stage", () => {
   const items = buildLiveLogItems(
     [
       {
@@ -1308,21 +1306,57 @@ test("buildLiveLogItems shows answer stream deltas only inside generation diagno
 
   assert.deepEqual(
     items.map((item) => (item.kind === "status" ? item.text : item.title)),
-    ["AI正在生成结果"],
+    ["AI正在思考"],
   );
-  assert.equal(items[0]?.kind === "status" ? items[0].text : "", "AI正在生成结果");
+  assert.equal(items[0]?.kind === "status" ? items[0].text : "", "AI正在思考");
+  assert.equal(items[0]?.kind === "status" ? items[0].active : false, true);
   assert.equal("rows" in (items[0]?.details ?? {}), false);
   assert.equal(items[0]?.details.rawJson.includes("stream-punctuation"), false);
   assert.equal(items[0]?.details.rawJson.includes("stream-content"), false);
-  const display = JSON.parse(items[0]?.details.displayJson ?? "{}");
-  assert.equal(display.type, "assistant_answer_delta");
-  assert.equal(display.payload.answer_stream.content_hidden, true);
-  assert.equal(display.payload.answer_stream.chunk_count, 2);
-  assert.equal(display.payload.answer_stream.character_count, "。".length + "第一段".length);
-  assert.equal("content" in display.payload.answer_stream, false);
-  assert.equal("chunks" in display.payload.answer_stream, false);
-  assert.equal("accumulated_content" in display.payload.answer_stream, false);
-  assert.equal(items[0]?.details.displayJson.includes('"content_hidden": true'), true);
+  assert.equal(items[0]?.details.displayJson.includes("AI正在生成结果"), false);
+});
+
+test("buildLiveLogItems lets later running tool events override earlier answer deltas", () => {
+  const items = buildLiveLogItems(
+    [
+      {
+        id: "stream-content",
+        seq: 1,
+        type: "assistant_answer_delta",
+        title: "第一段",
+        createdAt: "2026-04-27T08:01:00.000Z",
+        answerStream: {
+          schemaVersion: 1,
+          streamIndex: 1,
+          content: "第一段",
+        },
+      },
+      {
+        id: "search-call",
+        seq: 2,
+        type: "tool_call",
+        title: "Calling tool: tavily_search",
+        createdAt: "2026-04-27T08:01:01.000Z",
+        live: {
+          schemaVersion: 1,
+          kind: "tool_call",
+          stage: "using_tool",
+          toolName: "tavily_search",
+          toolCallId: "tool-after-answer",
+          parameterItems: [{ key: "query", value: "progress log" }],
+        },
+      },
+    ],
+    "running",
+  );
+
+  assert.deepEqual(
+    items.map((item) => (item.kind === "status" ? item.text : item.title)),
+    ["调用联网搜索", "调用联网搜索"],
+  );
+  const activeItem = items.at(-1);
+  assert.equal(activeItem?.kind === "status" ? activeItem.active : false, true);
+  assert.equal(items.some((item) => item.kind === "status" && item.text === "AI正在生成结果"), false);
 });
 
 test("buildLiveLogItems shows thinking stream content inside thinking diagnostics", () => {

@@ -196,6 +196,49 @@ class TestTaskRunnerStreamState:
         assert "notes.txt" in manifest_text
         assert "alpha body" not in manifest_text
 
+    @pytest.mark.asyncio
+    async def test_web_research_run_uses_bounded_read_only_tool_policy(
+        self, test_settings, monkeypatch
+    ):
+        task_id = "task-1"
+        upload_dir = test_settings.workspace_root / task_id / "uploads"
+        upload_dir.mkdir(parents=True)
+        (upload_dir / "技术参数.docx").write_bytes(b"placeholder")
+        captured: dict[str, Any] = {}
+
+        async def fake_stream_agent(agent, messages, config):
+            captured["messages"] = messages
+            yield {"type": "values_snapshot", "data": {"messages": [AIMessage(content="done")]}}
+
+        def fake_build_agent(*args, **kwargs):
+            captured["tools"] = kwargs["tools"]
+            captured["system_prompt"] = kwargs["system_prompt"]
+            return object()
+
+        monkeypatch.setattr("app.runner.core.build_agent", fake_build_agent)
+        monkeypatch.setattr("app.runner.core.stream_agent", fake_stream_agent)
+
+        storage = InMemoryTaskStorage(test_settings.workspace_root)
+        runner = TaskRunner(test_settings, storage=storage)
+        await runner.start(
+            task_id,
+            "[$web-research]\n\n能帮我查看一下这个器械是否具有倾向性或者指向性",
+            run_id="run-1",
+        )
+
+        tool_names = {tool.name for tool in captured["tools"]}
+        assert "searxng_search" in tool_names
+        assert "read_resource_text" in tool_names
+        assert "create_word_document" not in tool_names
+        assert "快速联网核查模式" in captured["system_prompt"]
+        assert "不要使用 task/sub-agent 委派" in captured["system_prompt"]
+        assert "当前任务没有提供文档生成工具" in captured["system_prompt"]
+        system_messages = [
+            message for message in captured["messages"] if isinstance(message, SystemMessage)
+        ]
+        manifest_text = "\n".join(str(message.content) for message in system_messages)
+        assert "当前任务没有提供文档生成工具" in manifest_text
+
 
 class TestTaskRunnerMemory:
     @pytest.mark.asyncio
@@ -427,7 +470,7 @@ class TestTaskRunnerTerminalEvents:
         assert final_answers[0].payload["content"] == assistant_messages[0].content
 
     @pytest.mark.asyncio
-    async def test_background_run_requires_requested_deliverable_artifact_before_complete(
+    async def test_background_run_completes_even_when_requested_deliverable_is_missing(
         self, test_settings, monkeypatch
     ):
         storage = InMemoryTaskStorage(test_settings.task_root)
@@ -460,33 +503,16 @@ class TestTaskRunnerTerminalEvents:
         await _wait_for_runner(runner, state.task_id)
 
         task_state = storage.get_task(state.task_id)
-        needs_input_events = [event for event in task_state.events if event.type == "needs_input"]
         completed = [event for event in task_state.events if event.type == "task_completed"]
         final_answers = [event for event in task_state.events if event.type == "final_answer"]
 
-        assert task_state.status == "needs_input"
-        assert completed == []
-        assert final_answers == []
-        assert len(needs_input_events) == 1
-        assert needs_input_events[0].run_id == run_id
-        assert "文件未成功生成或未能登记为下载文件" in needs_input_events[0].message
-        assert task_state.needs_input is not None
-        assert task_state.needs_input == {
-            "message": "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。",
-            "action_label": "重新生成文件",
-        }
-        assert needs_input_events[0].payload == task_state.needs_input
-        for internal_key in (
-            "reason",
-            "repair_hint",
-            "missing_artifact_names",
-            "missing_deliverables",
-            "requested_deliverable_types",
-            "promoted_artifacts",
-        ):
-            assert internal_key not in task_state.needs_input
-            assert internal_key not in needs_input_events[0].payload
-        assert task_state.runs[-1].status == "needs_input"
+        assert task_state.status == "complete"
+        assert task_state.needs_input is None
+        assert task_state.runs[-1].status == "complete"
+        assert task_state.runs[-1].needs_input is None
+        assert task_state.runs[-1].artifact_names == []
+        assert len(completed) == 1
+        assert len(final_answers) == 1
 
     @pytest.mark.parametrize(
         ("request_phrase", "artifact_name", "claimed_name"),
@@ -548,51 +574,6 @@ class TestTaskRunnerTerminalEvents:
         assert task_state.runs[-1].status == "complete"
         assert artifact_name in task_state.runs[-1].artifact_names
         assert needs_input_events == []
-        assert len(final_answers) == 1
-
-    @pytest.mark.asyncio
-    async def test_background_run_promotes_claimed_workspace_file_before_complete(
-        self, test_settings, monkeypatch
-    ):
-        storage = InMemoryTaskStorage(test_settings.task_root)
-        runner = TaskRunner(test_settings, storage)
-        state = storage.create_task(message=None, model="deepseek-v4-flash")
-        user_message = (
-            "请根据以下材料输出简短总结，并把 Word 文档交付给我：\n"
-            "本轮会议确认了实施范围、交付节点、风险负责人和后续验收安排。"
-        )
-        run_result = storage.start_run(
-            state.task_id,
-            message=user_message,
-            model="deepseek-v4-flash",
-            expected_statuses={"idle"},
-        )
-        assert run_result is not None
-        _, run_id = run_result
-        outputs_dir = test_settings.workspace_root / state.task_id / "outputs"
-        outputs_dir.mkdir(parents=True, exist_ok=True)
-        (outputs_dir / "brief.docx").write_bytes(b"docx bytes")
-
-        async def fake_start(*args, **kwargs):
-            return [], {"messages": [AIMessage(content="Word 文档已保存到 /root/brief.docx")]}
-
-        monkeypatch.setattr(runner, "start", fake_start)
-
-        runner.start_background(
-            state.task_id,
-            user_message,
-            model="deepseek-v4-flash",
-            run_id=run_id,
-        )
-        await _wait_for_runner(runner, state.task_id)
-
-        task_state = storage.get_task(state.task_id)
-        run = task_state.runs[-1]
-        final_answers = [event for event in task_state.events if event.type == "final_answer"]
-
-        assert task_state.status == "complete"
-        assert "brief.docx" in run.artifact_names
-        assert storage.resolve_run_artifact(state.task_id, run_id, "brief.docx").read_bytes() == b"docx bytes"
         assert len(final_answers) == 1
 
     @pytest.mark.asyncio

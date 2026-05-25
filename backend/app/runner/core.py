@@ -8,9 +8,7 @@ import inspect
 import logging
 import re
 from collections.abc import Callable
-from pathlib import Path
 from typing import Any, Protocol
-from urllib.parse import unquote
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
@@ -20,6 +18,7 @@ from app.config import Settings
 from app.contracts import EventLevel
 from app.conversation_context import ConversationContextBuilder
 from app.execution.resources import (
+    RESOURCE_TOOL_READ_ONLY_SYSTEM_PROMPT,
     RESOURCE_TOOL_SYSTEM_PROMPT,
     build_resource_manifest,
     format_resource_manifest_message,
@@ -31,35 +30,24 @@ from app.tools.registry import get_platform_tools
 
 logger = logging.getLogger(__name__)
 
-DELIVERABLE_SUFFIX_TO_KIND: dict[str, str] = {
-    ".docx": "Word",
-    ".pptx": "PPT",
-    ".xlsx": "Excel",
-    ".xlsm": "Excel",
-    ".html": "报告",
-    ".md": "报告",
-    ".pdf": "报告",
-}
 DELIVERABLE_REQUEST_PATTERNS: tuple[tuple[str, str], ...] = (
     ("word", r"(生成|导出|输出|交付|提供|整理|保存).{0,24}(word|docx|文档)"),
     ("powerpoint", r"(生成|导出|输出|交付|提供|整理|保存).{0,24}(ppt|pptx|幻灯片)"),
     ("excel", r"(生成|导出|输出|交付|提供|整理|保存).{0,24}(excel|xlsx|xlsm|表格)"),
     ("report", r"(生成|导出|输出|交付|提供|整理|保存).{0,24}(报告|report|pdf|html)"),
 )
-DELIVERABLE_CLAIM_PATTERN = re.compile(
-    r"(已(?:保存|生成|输出|整理|写入)|保存到|生成了|输出到|导出到|已写入)",
-    re.IGNORECASE,
-)
-CLAIMED_FILE_PATTERN = re.compile(
-    r"(?P<path>(?:[A-Za-z]:[\\/]|/)?[^\s'\"`<>]+?\.(?:docx|pptx|xlsx|xlsm|pdf|html|md|txt))",
-    re.IGNORECASE,
-)
-DELIVERABLE_SEARCH_EXCLUDED_DIRS = {"artifacts", "uploads", ".git", "__pycache__"}
 SOURCE_DEPENDENT_REQUEST_PATTERN = re.compile(
     r"(总结|汇总|概括|摘要|提炼|归纳|梳理|分析|阅读|整理|summari[sz]e|summary|analy[sz]e)",
     re.IGNORECASE,
 )
 INLINE_SOURCE_MIN_CHARS = 24
+WEB_RESEARCH_SKILL_REF = "[$web-research]"
+WEB_RESEARCH_MAX_SEARCH_CALLS = 5
+WEB_RESEARCH_RUNTIME_SYSTEM_PROMPT = f"""当前消息选择了 web-research 技能，按快速联网核查模式执行。
+- 总搜索调用不超过 {WEB_RESEARCH_MAX_SEARCH_CALLS} 次，每次 max_results 不超过 5。
+- 先读取必要的上传资源，提取关键参数，再只做针对性搜索。
+- 不要使用 task/sub-agent 委派，不要为简单联网核查创建 Word、PPT、Excel 或报告产物，除非用户明确要求可下载文件。
+- 搜到足够证据后立即综合回答；如果搜索引擎返回验证码、502、无关结果或证据不足，说明不确定性并结束，不要继续扩展搜索。"""
 
 
 class RunnerStorage(Protocol):
@@ -75,16 +63,6 @@ class RunnerStorage(Protocol):
     ) -> EventRecord: ...
 
     def get_task(self, task_id: str, *, include_events: bool = True) -> Any: ...
-
-    def task_dir(self, task_id: str) -> Path: ...
-
-    def promote_run_artifact_file(
-        self,
-        task_id: str,
-        run_id: str,
-        source_path: str,
-        artifact_name: str | None = None,
-    ) -> Path: ...
 
     def update_task_if_status_and_append_event(
         self,
@@ -165,18 +143,27 @@ class TaskRunner:
 
         task_workspace = self.settings.workspace_root / task_id
         task_workspace.mkdir(parents=True, exist_ok=True)
+        web_research_mode = _is_web_research_message(message)
+        include_artifact_tools = _should_include_artifact_tools(message)
         tools = get_platform_tools(
             self.settings,
             task_id=task_id,
             run_id=run_id,
             storage=self.storage,
+            include_artifact_tools=include_artifact_tools,
+            searxng_max_calls_per_run=(
+                WEB_RESEARCH_MAX_SEARCH_CALLS if web_research_mode else None
+            ),
         )
 
         agent = build_agent(
             self.settings,
             model=model_id,
             tools=tools,
-            system_prompt=RESOURCE_TOOL_SYSTEM_PROMPT,
+            system_prompt=_runner_system_prompt(
+                web_research_mode=web_research_mode,
+                include_artifact_tools=include_artifact_tools,
+            ),
             skills=list(self.settings.skills_dirs),
             workspace_dir=task_workspace,
             store=self.agent_store,
@@ -218,7 +205,10 @@ class TaskRunner:
                         seq=-1,
                     )
                 )
-        resource_message = self._resource_manifest_context(task_id)
+        resource_message = self._resource_manifest_context(
+            task_id,
+            include_artifact_tools=include_artifact_tools,
+        )
         if resource_message:
             messages.append(SystemMessage(content=resource_message))
         messages.append(HumanMessage(content=message))
@@ -337,27 +327,6 @@ class TaskRunner:
                 )
 
                 final_answer = extract_final_answer(final_state)
-                deliverable_check = self._ensure_run_deliverables(
-                    task_id=task_id,
-                    run_id=run_id,
-                    user_message=message,
-                    final_answer=final_answer,
-                )
-
-                if deliverable_check is not None:
-                    self.storage.update_task_if_status_and_append_event(
-                        task_id,
-                        {"running"},
-                        status="needs_input",
-                        run_id=run_id,
-                        needs_input=deliverable_check,
-                        event_type="needs_input",
-                        event_message=deliverable_check["message"],
-                        event_payload=deliverable_check,
-                        event_level="warning",
-                    )
-                    return
-
                 append_message: ChatMessage | None = None
                 if final_answer:
                     append_message = ChatMessage(
@@ -494,13 +463,21 @@ class TaskRunner:
             logger.warning("Long-term memory recall event payload failed", exc_info=True)
             return None
 
-    def _resource_manifest_context(self, task_id: str) -> str:
+    def _resource_manifest_context(
+        self,
+        task_id: str,
+        *,
+        include_artifact_tools: bool = True,
+    ) -> str:
         try:
             manifest = build_resource_manifest(task_id, self.settings.workspace_root)
         except Exception:
             logger.warning("Resource manifest provisioning failed; continuing without it", exc_info=True)
             return ""
-        return format_resource_manifest_message(manifest)
+        return format_resource_manifest_message(
+            manifest,
+            include_artifact_tools=include_artifact_tools,
+        )
 
     def _schedule_completed_run_memory_write(
         self,
@@ -566,68 +543,6 @@ class TaskRunner:
         active = self._active_runs.get(task_id)
         return active is not None and not active.done()
 
-    def _ensure_run_deliverables(
-        self,
-        *,
-        task_id: str,
-        run_id: str,
-        user_message: str,
-        final_answer: str | None,
-    ) -> dict[str, Any] | None:
-        storage = self.storage
-        if storage is None:
-            return None
-
-        expected_kinds = _requested_deliverable_kinds(user_message)
-        claimed_files = _claimed_output_filenames(final_answer)
-        if not expected_kinds and not claimed_files:
-            return None
-
-        promoted = _promote_claimed_files(
-            storage,
-            task_id=task_id,
-            run_id=run_id,
-            claimed_files=claimed_files,
-        )
-
-        state = storage.get_task(task_id, include_events=False)
-        run = next((item for item in state.runs if item.id == run_id), None)
-        artifact_names = {name.casefold() for name in (run.artifact_names if run is not None else [])}
-        artifact_suffixes = {
-            Path(name).suffix.lower() for name in (run.artifact_names if run is not None else [])
-        }
-
-        missing_kinds = [
-            kind for kind in sorted(expected_kinds) if _kind_to_suffixes(kind).isdisjoint(artifact_suffixes)
-        ]
-        if expected_kinds and not missing_kinds:
-            return None
-
-        missing_files = [
-            name for name in sorted(claimed_files) if name.casefold() not in artifact_names
-        ]
-
-        if not missing_kinds and not missing_files:
-            return None
-
-        if missing_kinds or missing_files:
-            logger.warning(
-                "Run deliverable validation failed",
-                extra={
-                    "task_id": task_id,
-                    "run_id": run_id,
-                    "missing_deliverable_kinds": sorted(missing_kinds),
-                    "missing_artifact_names": sorted(missing_files),
-                    "promoted_artifacts": promoted,
-                },
-            )
-
-        message = "文件未成功生成或未能登记为下载文件。请重新生成交付文件后再试。"
-        return {
-            "message": message,
-            "action_label": "重新生成文件",
-        }
-
     def _missing_source_input_clarification(
         self,
         *,
@@ -687,6 +602,31 @@ def _make_runner_event(
         run_id=run_id,
         level=level,
     )
+
+
+def _is_web_research_message(message: str) -> bool:
+    return WEB_RESEARCH_SKILL_REF in message
+
+
+def _should_include_artifact_tools(message: str) -> bool:
+    if not _is_web_research_message(message):
+        return True
+    return bool(_requested_deliverable_kinds(message))
+
+
+def _runner_system_prompt(
+    *,
+    web_research_mode: bool,
+    include_artifact_tools: bool,
+) -> str:
+    resource_prompt = (
+        RESOURCE_TOOL_SYSTEM_PROMPT
+        if include_artifact_tools
+        else RESOURCE_TOOL_READ_ONLY_SYSTEM_PROMPT
+    )
+    if not web_research_mode:
+        return resource_prompt
+    return f"{WEB_RESEARCH_RUNTIME_SYSTEM_PROMPT}\n\n{resource_prompt}"
 
 
 def _bind_event_to_run(record: EventRecord, run_id: str) -> EventRecord:
@@ -809,43 +749,6 @@ def _has_context_summary(storage: RunnerStorage, task_id: str) -> bool:
     return bool(str(summary or "").strip())
 
 
-def _claimed_output_filenames(final_answer: str | None) -> set[str]:
-    if not final_answer:
-        return set()
-    if DELIVERABLE_CLAIM_PATTERN.search(final_answer) is None:
-        return set()
-    claimed: set[str] = set()
-    for match in CLAIMED_FILE_PATTERN.finditer(final_answer):
-        name = _canonical_claimed_filename(match.group("path"))
-        if name is None:
-            continue
-        claimed.add(name)
-    return claimed
-
-
-def _canonical_claimed_filename(raw_path: str) -> str | None:
-    token = raw_path.strip().rstrip(".,;:，。；：、")
-    token = re.sub(r"^[*_`\[\(（【]+", "", token)
-    token = re.sub(r"[*_`\]\)）】]+$", "", token)
-    name = unquote(Path(token.replace("\\", "/")).name)
-    suffix = Path(name).suffix.lower()
-    if not name or suffix not in DELIVERABLE_SUFFIX_TO_KIND:
-        return None
-    return name
-
-
-def _kind_to_suffixes(kind: str) -> set[str]:
-    if kind == "word":
-        return {".docx"}
-    if kind == "powerpoint":
-        return {".pptx"}
-    if kind == "excel":
-        return {".xlsx", ".xlsm"}
-    if kind == "report":
-        return {".html", ".md", ".pdf"}
-    return set()
-
-
 def _humanize_deliverable_kind(kind: str) -> str:
     if kind == "word":
         return "Word"
@@ -856,35 +759,6 @@ def _humanize_deliverable_kind(kind: str) -> str:
     if kind == "report":
         return "报告"
     return kind
-
-
-def _promote_claimed_files(
-    storage: RunnerStorage,
-    *,
-    task_id: str,
-    run_id: str,
-    claimed_files: set[str],
-) -> list[str]:
-    if not claimed_files:
-        return []
-    task_dir = storage.task_dir(task_id)
-    promoted: list[str] = []
-    wanted = {name.casefold(): name for name in claimed_files}
-    for path in task_dir.rglob("*"):
-        if not path.is_file():
-            continue
-        if any(part in DELIVERABLE_SEARCH_EXCLUDED_DIRS for part in path.relative_to(task_dir).parts):
-            continue
-        candidate = wanted.get(path.name.casefold())
-        if candidate is None:
-            continue
-        relative_path = path.relative_to(task_dir).as_posix()
-        try:
-            storage.promote_run_artifact_file(task_id, run_id, relative_path, artifact_name=path.name)
-        except (FileNotFoundError, ValueError):
-            continue
-        promoted.append(path.name)
-    return sorted(set(promoted), key=str.casefold)
 
 
 def _call_memory_recall(memory_service: Any, message: str, user_id: str) -> str | None:

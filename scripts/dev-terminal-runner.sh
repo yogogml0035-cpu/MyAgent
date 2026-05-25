@@ -42,8 +42,10 @@ case "$SERVICE" in
     cd "$ROOT_DIR/backend"
     printf '[dev] starting backend on http://localhost:%s (bind %s)\n\n' "$BACKEND_PORT" "$BACKEND_HOST"
     enable_polling_watchers
+    export UV_PROJECT_ENVIRONMENT="${UV_PROJECT_ENVIRONMENT:-.venv-wsl}"
     printf '[dev] backend reload polling: WATCHFILES_FORCE_POLLING=%s WATCHFILES_POLL_DELAY_MS=%s\n\n' \
       "${WATCHFILES_FORCE_POLLING:-false}" "${WATCHFILES_POLL_DELAY_MS:-default}"
+    printf '[dev] backend uv environment: UV_PROJECT_ENVIRONMENT=%s\n\n' "$UV_PROJECT_ENVIRONMENT"
     uv run uvicorn app.main:app --reload --reload-delay 0.25 --host "$BACKEND_HOST" --port "$BACKEND_PORT"
     ;;
   frontend)

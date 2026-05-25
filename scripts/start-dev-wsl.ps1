@@ -9,6 +9,8 @@ param(
   [ValidateRange(1, 65535)]
   [int]$FrontendPort = 3001,
   [switch]$NoStop,
+  [switch]$Install,
+  [switch]$CleanInstall,
   [switch]$NoProxyRepair,
   [switch]$DryRun,
   [switch]$Help
@@ -30,6 +32,8 @@ Options:
   -FrontendHost HOST    Next.js bind host. Default: 127.0.0.1
   -FrontendPort PORT    Frontend port. Default: 3001
   -NoStop               Do not stop existing WSL listeners before starting.
+  -Install              Run scripts\setup-dev-wsl.ps1 before starting.
+  -CleanInstall         Remove WSL dependency/build caches before installing.
   -NoProxyRepair        Do not update .wslconfig for Windows localhost proxy issues.
   -DryRun               Print the actions without stopping or starting services.
   -Help                 Show this help.
@@ -261,6 +265,39 @@ Ensure-WslProxyCompatibility
 
 $preflight = "command -v uv >/dev/null && command -v npm >/dev/null"
 Invoke-WslBash $preflight
+
+if ($CleanInstall) {
+  $Install = $true
+}
+
+if ($Install) {
+  $setupArgs = @("-ExecutionPolicy", "Bypass", "-File", (Join-Path $repoRootWindows "scripts\setup-dev-wsl.ps1"))
+  if ($Distribution) {
+    $setupArgs += @("-Distribution", $Distribution)
+  }
+  if ($CleanInstall) {
+    $setupArgs += "-Clean"
+  }
+  if ($DryRun) {
+    Write-Host "[dry-run] powershell.exe $($setupArgs -join ' ')"
+  }
+  else {
+    & powershell.exe @setupArgs
+    if ($LASTEXITCODE -ne 0) {
+      throw "setup-dev-wsl.ps1 exited with code $LASTEXITCODE"
+    }
+  }
+}
+
+if ($DryRun) {
+  Write-Host "[dry-run] powershell.exe -ExecutionPolicy Bypass -File $repoRootWindows\scripts\set-frontend-deps-link-win.ps1 -Target wsl -RepoRoot $repoRootWindows"
+}
+else {
+  & powershell.exe -ExecutionPolicy Bypass -File (Join-Path $repoRootWindows "scripts\set-frontend-deps-link-win.ps1") -Target wsl -RepoRoot $repoRootWindows
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to point frontend dependencies at node_modules-wsl."
+  }
+}
 
 if (-not $NoStop) {
   $stopCommand = "cd $(Quote-Bash $repoRootWsl) && ./scripts/stop-dev-ports.sh --backend-port $(Quote-Bash ([string]$BackendPort)) --frontend-port $(Quote-Bash ([string]$FrontendPort))"

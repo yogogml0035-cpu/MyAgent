@@ -59,6 +59,21 @@ class TestGetPlatformTools:
 
         assert "create_word_document" in names
 
+    def test_can_exclude_artifact_tools_for_read_only_runs(self, test_settings, tmp_path):
+        storage = InMemoryTaskStorage(tmp_path / "tasks")
+
+        tools = get_platform_tools(
+            test_settings,
+            task_id="task-1",
+            run_id="run-1",
+            storage=storage,
+            include_artifact_tools=False,
+        )
+        names = [t.name for t in tools]
+
+        assert "read_resource_text" in names
+        assert "create_word_document" not in names
+
     def test_searxng_tool_uses_settings_url_not_runtime_environment(self, tmp_path, monkeypatch):
         captured: dict[str, object] = {}
 
@@ -98,7 +113,7 @@ class TestGetPlatformTools:
         assert captured["params"] == {
             "q": "MyAgent",
             "format": "json",
-            "categories": "news",
+            "engines": "bing",
         }
         assert "https://example.test" in result
         assert "来源引擎：test" in result
@@ -116,9 +131,13 @@ class TestGetPlatformTools:
             topic: str,
             language: str,
             timeout_seconds: float,
+            engine: str,
+            trust_env: bool,
         ) -> str:
-            calls.append(f"{base_url}:{query}:{language}:{timeout_seconds}")
-            return f"fresh:{query}:{max_results}:{topic}:{language}"
+            calls.append(
+                f"{base_url}:{query}:{language}:{timeout_seconds}:{engine}:{trust_env}"
+            )
+            return f"fresh:{query}:{max_results}:{topic}:{language}:{engine}:{trust_env}"
 
         monkeypatch.setattr("app.tools.searxng_search._run_searxng_search", fake_run)
         storage = InMemoryTaskStorage(tmp_path / "tasks")
@@ -140,9 +159,43 @@ class TestGetPlatformTools:
         refreshed = tool.invoke({"query": "刷新上海天气"})
 
         assert calls == [
-            "http://127.0.0.1:8181/:上海天气:auto:15.0",
-            "http://127.0.0.1:8181/:刷新上海天气:auto:15.0",
+            "http://127.0.0.1:8181/:上海天气:auto:15.0:bing:False",
+            "http://127.0.0.1:8181/:刷新上海天气:auto:15.0:bing:False",
         ]
         assert "fresh:上海天气" in cached
         assert "[本会话缓存结果" in repeat
         assert "fresh:刷新上海天气" in refreshed
+
+    def test_searxng_tool_enforces_per_run_call_budget(self, tmp_path, monkeypatch):
+        calls: list[str] = []
+
+        def fake_run(
+            base_url: str,
+            query: str,
+            *,
+            max_results: int,
+            topic: str,
+            language: str,
+            timeout_seconds: float,
+            engine: str,
+            trust_env: bool,
+        ) -> str:
+            del base_url, max_results, topic, language, timeout_seconds, engine, trust_env
+            calls.append(query)
+            return f"fresh:{query}"
+
+        monkeypatch.setattr("app.tools.searxng_search._run_searxng_search", fake_run)
+        settings = Settings(
+            task_root=tmp_path / "tasks",
+            workspace_root=tmp_path / "tasks",
+            searxng_url="http://127.0.0.1:8181/",
+        )
+
+        [tool] = get_platform_tools(settings, searxng_max_calls_per_run=1)
+
+        first = tool.invoke({"query": "医用显示器 参数"})
+        second = tool.invoke({"query": "医用显示器 政府采购"})
+
+        assert first == "fresh:医用显示器 参数"
+        assert "已达到搜索调用上限" in second
+        assert calls == ["医用显示器 参数"]

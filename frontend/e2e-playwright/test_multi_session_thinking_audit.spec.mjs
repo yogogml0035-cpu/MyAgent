@@ -452,13 +452,16 @@ test("real services keep multi-session thinking audit isolated per run", async (
     await expect(page.getByRole("button", { name: "停止当前会话任务" })).toBeVisible();
     const logPanelB = page.getByRole("region", { name: /第 1 轮进度日志/ }).first();
     await expect(logPanelB).toBeVisible();
+    await expect(logPanelB.locator(".liveStatusRow summary, .liveToolCard summary")).toContainText(
+      "调用联网搜索",
+    );
     const bSummaryText = (
       await logPanelB.locator(".liveStatusRow summary, .liveToolCard summary").allTextContents()
     ).join("\n");
     expect(bSummaryText).toContain("AI正在思考");
     expect(bSummaryText).toContain("调用联网搜索");
     expect(bSummaryText).toContain("联网搜索已返回结果");
-    expect(bSummaryText).toContain("AI正在生成结果");
+    expect(bSummaryText).not.toContain("AI正在生成结果");
     await page.screenshot({
       fullPage: true,
       path: path.join(evidenceDir, "02-conversation-b-running-while-a-running.png"),

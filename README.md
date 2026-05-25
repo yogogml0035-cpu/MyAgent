@@ -46,14 +46,23 @@ cd /mnt/d/AgentProject/MyAgent
 
 前端依赖、Next 缓存和开发服务应在同一个环境内生成和运行。开发服务输出 `.next-dev`，生产构建输出 `.next`；两类产物都不要跨 Windows 的 `D:\AgentProject\MyAgent\frontend` 和 WSL 的 `/mnt/d/AgentProject/MyAgent/frontend` 混用。反向混用也一样会让 Next.js 的 React Client Manifest 同时出现 Windows 路径和 WSL 路径。
 
+本仓库支持两套本地依赖目录：
+
+- Windows 后端：`backend/.venv`
+- WSL 后端：`backend/.venv-wsl`
+- Windows 前端：`frontend/node_modules-win`
+- WSL 前端：`frontend/node_modules-wsl`
+
+由于 Next.js 和 Node 默认按项目根的 `node_modules` 解析依赖，`frontend/node_modules` 只是当前模式的 junction，启动脚本会把它指向 `node_modules-win` 或 `node_modules-wsl`。因此同一工作区不支持 Windows 前端和 WSL 前端并发运行；需要并发时请使用两个独立 git worktree。
+
 前端类型检查通过 `next typegen && tsc --noEmit` 生成 Next 路由类型；`frontend/next-env.d.ts` 属于生成文件，不再纳入版本控制。
 
-如果已经混用过 Windows 和 WSL，请在 WSL 中清理前端产物并重新安装依赖：
+如果已经混用过 Windows 和 WSL，请分别重建对应模式依赖：
 
-```bash
-cd /mnt/d/AgentProject/MyAgent/frontend
-rm -rf .next .next-dev node_modules
-npm ci
+```powershell
+cd D:\AgentProject\MyAgent
+.\scripts\setup-dev-win.ps1 -Clean
+.\scripts\setup-dev-wsl.ps1 -Clean
 ```
 
 ## 安装
@@ -158,6 +167,8 @@ NEXT_PUBLIC_MYAGENT_API_BASE_URL=auto
 
 ## 本地开发启动
 
+### WSL 模式
+
 从 Windows PowerShell 启动 WSL 开发环境，并打开两个新的 Windows Terminal 标签页分别运行前后端：
 
 ```powershell
@@ -165,9 +176,21 @@ cd D:\AgentProject\MyAgent
 .\scripts\start-dev-wsl.ps1
 ```
 
-脚本会先停止 WSL 内监听后端端口 `8001` 和前端端口 `3001` 的进程，然后通过 Windows Terminal 分别打开两个 WSL 窗口。Postgres、Qdrant 和 DashScope 配置由用户自管，脚本不会自动启动容器：
+首次使用或需要重建 WSL 依赖时：
 
-- 后端：`WATCHFILES_FORCE_POLLING=true uv run uvicorn app.main:app --reload --reload-delay 0.25 --host 127.0.0.1 --port 8001`
+```powershell
+.\scripts\setup-dev-wsl.ps1 -Clean
+```
+
+也可以让启动脚本先安装依赖：
+
+```powershell
+.\scripts\start-dev-wsl.ps1 -Install
+```
+
+脚本会先把 `frontend\node_modules` 指向 `frontend\node_modules-wsl`，再停止 WSL 内监听后端端口 `8001` 和前端端口 `3001` 的进程，然后通过 Windows Terminal 分别打开两个 WSL 窗口。Postgres、Qdrant 和 DashScope 配置由用户自管，脚本不会自动启动容器：
+
+- 后端：`UV_PROJECT_ENVIRONMENT=.venv-wsl WATCHFILES_FORCE_POLLING=true uv run uvicorn app.main:app --reload --reload-delay 0.25 --host 127.0.0.1 --port 8001`
 - 前端：`WATCHPACK_POLLING=true CHOKIDAR_USEPOLLING=true CHOKIDAR_INTERVAL=300 next dev -p 3001 -H 127.0.0.1`
 
 启动后可以在各自终端中用 `Ctrl+C` 停止单个服务，也可以回到 WSL 仓库路径运行 `./scripts/stop-dev-ports.sh` 统一释放端口。启动脚本依赖 Windows 侧可调用的 `wt.exe` 和 `wsl.exe`。前端开发服务写入 `.next-dev`，`npm run build` 写入 `.next`，所以可在复用 `3001` dev server 的同时运行构建或 E2E 验证而不污染同一份 Next manifest。
@@ -202,6 +225,71 @@ cd /mnt/d/AgentProject/MyAgent
 如果修改后端端口，请将 `frontend/.env.local` 中的 `NEXT_PUBLIC_MYAGENT_API_BASE_URL` 改成显式后端 URL，或同步调整前端解析逻辑的默认端口。
 
 停止脚本面向 WSL 进程，使用 `lsof`、`fuser` 或 `ss` 查找监听进程；如果端口由 Windows 侧进程占用，需要在 Windows 侧关闭对应应用。
+
+### Windows 原生模式
+
+Windows 原生模式是第二套本地运行入口，适合希望完全在 Windows PowerShell、Windows Python/uv 和 Windows Node/npm 中运行服务的场景。不要把它和 WSL 模式的依赖、缓存、运行进程混用；切换到 Windows 模式前建议清理并重装 Windows 原生依赖：
+
+```powershell
+cd D:\AgentProject\MyAgent
+.\scripts\setup-dev-win.ps1 -Clean
+```
+
+该脚本会重建：
+
+- `backend\.venv`：Windows 原生 Python 虚拟环境，由 `uv sync` 创建。
+- `frontend\node_modules-win`：Windows 原生 npm 依赖，由 `npm ci` 创建；`frontend\node_modules` 会指向它。
+- `frontend\.next` 和 `frontend\.next-dev`：切换运行环境时一并清理，避免 Next manifest 混入 WSL 路径。
+
+安装完成后启动 Windows 原生开发服务：
+
+```powershell
+.\scripts\start-dev-win.ps1
+```
+
+也可以让启动脚本先安装依赖：
+
+```powershell
+.\scripts\start-dev-win.ps1 -Install
+```
+
+如果要强制从干净 Windows 依赖启动：
+
+```powershell
+.\scripts\start-dev-win.ps1 -CleanInstall
+```
+
+Windows 启动脚本会先把 `frontend\node_modules` 指向 `frontend\node_modules-win`，再打开两个 Windows Terminal 标签页：
+
+- 后端：`uv run uvicorn app.main:app --reload --reload-delay 0.25 --host 127.0.0.1 --port 8001`
+- 前端：直接调用 `frontend\node_modules\.bin\next.cmd dev -p 3001 -H 127.0.0.1`
+
+前端不复用 `npm run dev`，因为 `package.json` 里的 dev 命令使用 POSIX 环境变量写法，面向 WSL/Linux shell。Windows runner 会在 PowerShell 中直接设置需要的环境变量并调用 `next.cmd`。Windows 本地 NTFS 文件监听通常不需要轮询；如果热更新不稳定，可加 `-ForcePolling`：
+
+```powershell
+.\scripts\start-dev-win.ps1 -ForcePolling
+```
+
+停止 Windows 侧监听端口：
+
+```powershell
+.\scripts\stop-dev-ports-win.ps1
+```
+
+可用参数覆盖端口：
+
+```powershell
+.\scripts\start-dev-win.ps1 -BackendPort 8002 -FrontendPort 3002
+.\scripts\stop-dev-ports-win.ps1 -BackendPort 8002 -FrontendPort 3002
+```
+
+Windows 模式仍然继承本地安全边界：默认只绑定 `127.0.0.1`。如果显式绑定 `0.0.0.0` 给局域网访问，必须同步配置 `MYAGENT_ACCESS_TOKEN`、`NEXT_PUBLIC_MYAGENT_TOKEN` 和受控的 `MYAGENT_CORS_ORIGINS`。
+
+如果默认端口显示被 `wslrelay.exe` 占用，说明 WSL 模式的服务仍在监听同一端口。推荐先在 WSL 中运行 `./scripts/stop-dev-ports.sh` 停止 WSL 服务，再启动 Windows 模式。确实要从 Windows 侧释放 WSL relay 时，可以显式传入：
+
+```powershell
+.\scripts\start-dev-win.ps1 -StopWslRelay
+```
 
 启动后端：
 

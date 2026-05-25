@@ -28,4 +28,7 @@ def test_builtin_skill_bodies_are_localized():
     assert "# 代码审查技能" in code_review
     assert "使用文件系统工具读取相关代码文件" in code_review
     assert "# 联网研究技能" in web_research
-    assert "使用 `searxng_search` 工具搜索相关信息" in web_research
+    assert "使用 `searxng_search` 工具做针对性搜索" in web_research
+    assert "总搜索调用不超过 5 次" in web_research
+    assert "不要使用 `task`/sub-agent 委派" in web_research
+    assert "不要生成 Word、PPT、Excel、PDF、HTML 或其他报告产物" in web_research

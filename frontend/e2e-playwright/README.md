@@ -40,7 +40,7 @@ npx playwright test e2e-playwright/test_progress_log_disclosure.spec.mjs --repor
 
 progress-log spec 会通过同一套 Postgres-backed task/runs/messages/events 契约播种一个临时运行中任务，在浏览器中验证折叠行布局，展开 status/tool/generation 行，检查 trace 级一键折叠控件，捕获桌面和窄屏截图，把临时任务标记完成，并通过公开 API 删除。
 
-修改长运行日志投影、run 级完整日志下载、最终回复产物卡片或交付文件完成保护时，从 `frontend/` 运行 task-log artifact delivery 验收：
+修改长运行日志投影、run 级完整日志下载、最终回复产物卡片或历史交付失败提示展示时，从 `frontend/` 运行 task-log artifact delivery 验收：
 
 ```bash
 MYAGENT_E2E_BASE_URL=http://127.0.0.1:3001 \
@@ -54,7 +54,7 @@ MYAGENT_E2E_POSTGRES_DB=myagent \
 npx playwright test e2e-playwright/test_task_log_artifact_delivery.spec.mjs --reporter=line
 ```
 
-task-log artifact delivery spec 使用 `3001` 的真实前端和 `8001` 的真实后端；它会播种一个包含 2000+ 事件且带超大 tool-call partial delta 的运行中任务、一个已完成的 `.docx` 产物 run，以及一个要求交付文件但在没有产物时保持 `needs_input` 的任务。浏览器流程会确认主工作区不会渲染 2000+ 个展开的实时行，超大 partial payload 尾部不会渲染到页面中，日志可见时页面仍保持可交互，最终回复区域展示 run 级下载卡片，`.docx` 下载以产物文件名开始，缺失交付文件的 run 显示 `文件未生成或未登记为产物` 或等价提示。截图和下载样本保存到 `e2e-YYYYMMDDHHMMSS/task-log-artifact-delivery/`，不要提交该证据目录。
+task-log artifact delivery spec 使用 `3001` 的真实前端和 `8001` 的真实后端；它会播种一个包含 2000+ 事件且带超大 tool-call partial delta 的运行中任务、一个已完成的 `.docx` 产物 run，以及一个历史 `needs_input` 交付失败任务。浏览器流程会确认主工作区不会渲染 2000+ 个展开的实时行，超大 partial payload 尾部不会渲染到页面中，日志可见时页面仍保持可交互，最终回复区域展示 run 级下载卡片，`.docx` 下载以产物文件名开始，历史交付失败 run 显示 `文件未生成或未登记为产物` 或等价提示。截图和下载样本保存到 `e2e-YYYYMMDDHHMMSS/task-log-artifact-delivery/`，不要提交该证据目录。
 
 修改跨会话 busy 范围、同会话发送保护、run 级诊断、thinking/tool 事件渲染或 run 级 JSONL 下载边界时，从 `frontend/` 运行 multi-session thinking audit 验收：
 

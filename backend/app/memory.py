@@ -123,6 +123,7 @@ class QdrantMemoryIndex:
             response = httpx.get(
                 f"{self.url}/collections/{self.collection}",
                 timeout=self.timeout_seconds,
+                trust_env=False,
             )
             if response.status_code == 404:
                 self._create_collection()
@@ -139,6 +140,7 @@ class QdrantMemoryIndex:
             response = httpx.delete(
                 f"{self.url}/collections/{self.collection}",
                 timeout=self.timeout_seconds,
+                trust_env=False,
             )
             if response.status_code not in {200, 202, 404}:
                 response.raise_for_status()
@@ -152,6 +154,7 @@ class QdrantMemoryIndex:
             f"{self.url}/collections/{self.collection}",
             json=payload,
             timeout=self.timeout_seconds,
+            trust_env=False,
         )
         response.raise_for_status()
 
@@ -173,6 +176,7 @@ class QdrantMemoryIndex:
                 params={"wait": "true"},
                 json={"points": [{"id": point_id, "vector": vector, "payload": payload}]},
                 timeout=self.timeout_seconds,
+                trust_env=False,
             )
             response.raise_for_status()
         except Exception as exc:
@@ -189,6 +193,7 @@ class QdrantMemoryIndex:
                     "filter": {"must": [{"key": "user_id", "match": {"value": user_id}}]},
                 },
                 timeout=self.timeout_seconds,
+                trust_env=False,
             )
             response.raise_for_status()
             items = response.json().get("result", [])

@@ -23,7 +23,10 @@
 - 用途：`searxng_search` LangChain 工具。
 - 调用方式：`backend/app/tools/searxng_search.py` 用 `httpx.get` 调 `/search`。
 - 默认 URL：`http://127.0.0.1:8181/`。
+- 引擎边界：工具层暴露 `engine` 参数，只允许 `bing` 或 `baidu`，由 agent 每次调用时选择。
+- 代理边界：工具层暴露 `trust_env` 参数，默认 `false`；遇到网络错误、502 或 timeout 时可设为 `true` 让 httpx 信任系统代理环境重试。
 - 注册条件：`Settings.searxng_url` 存在时由 `backend/app/tools/registry.py` 注册。
+- 运行预算：runner 可通过 registry 为单次 run 传入搜索调用上限；`[$web-research]` 默认使用 5 次总搜索预算，超过后工具返回可读错误并要求基于已有证据收束。
 - 缓存：成功结果可以写入 Postgres tool cache，TTL 由 `MYAGENT_FRESH_TOOL_CACHE_SECONDS` 控制。
 
 ### DeepAgents / LangGraph 运行时
@@ -57,7 +60,7 @@
 - 上传：task 下的 `uploads/`。
 - 产物：task 下的 `artifacts/runs/{run_id}/` 和 legacy latest mirror。
 - 支持上传格式：Markdown、JSON、TXT、DOCX、XLSX、XLSM。
-- 资源工具：`backend/app/execution/resources.py` 提供 list/inspect/read。
+- 资源工具：`backend/app/execution/resources.py` 提供 list/inspect/read；当 run context、storage 和 runner 策略允许时才额外暴露 `create_word_document`。
 
 ### 缓存
 

@@ -15,6 +15,8 @@ def get_platform_tools(
     task_id: str | None = None,
     run_id: str | None = None,
     storage=None,
+    include_artifact_tools: bool = True,
+    searxng_max_calls_per_run: int | None = None,
 ) -> list[BaseTool]:
     """Return platform-specific tools beyond the deepagents built-in suite.
 
@@ -36,6 +38,7 @@ def get_platform_tools(
                 workspace_root=settings.workspace_root,
                 run_id=run_id,
                 storage=storage,
+                include_artifact_tools=include_artifact_tools,
             )
         )
 
@@ -46,6 +49,7 @@ def get_platform_tools(
                 cache=storage,
                 task_id=task_id,
                 ttl_seconds=settings.fresh_tool_cache_seconds,
+                max_calls_per_run=searxng_max_calls_per_run,
             )
         )
 

@@ -130,7 +130,7 @@ npm run e2e:runtime-contracts
 git diff --check
 ```
 
-本地开发默认端口：后端 `8001`，前端 `3001`。脚本入口见 `scripts/start-dev-wsl.ps1`、`scripts/dev-terminal-runner.sh`、`scripts/stop-dev-ports.sh`。
+本地开发默认端口：后端 `8001`，前端 `3001`。WSL 模式脚本入口见 `scripts/setup-dev-wsl.ps1`、`scripts/start-dev-wsl.ps1`、`scripts/dev-terminal-runner.sh`、`scripts/stop-dev-ports.sh`，使用 `backend/.venv-wsl` 和 `frontend/node_modules-wsl`。Windows 原生模式脚本入口见 `scripts/setup-dev-win.ps1`、`scripts/start-dev-win.ps1`、`scripts/dev-terminal-runner-win.ps1`、`scripts/stop-dev-ports-win.ps1`，使用 `backend/.venv` 和 `frontend/node_modules-win`。`frontend/node_modules` 是当前模式 junction；同一工作区不要并发运行 Windows 前端和 WSL 前端。
 
 ## 知识回写
 

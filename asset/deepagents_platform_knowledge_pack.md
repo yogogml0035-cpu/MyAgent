@@ -41,13 +41,13 @@
 ## 工具、资源和上传
 
 - 工具是 LangChain `@tool` 函数，包括 DeepAgents filesystem tools、task-scoped resource tools 和可选 SearXNG 搜索。
-- SearXNG 通过 `settings.searxng_url` 注册和调用，默认本地 `http://127.0.0.1:8181/`。
+- SearXNG 通过 `settings.searxng_url` 注册和调用，默认本地 `http://127.0.0.1:8181/`；`searxng_search` 工具层暴露 `engine` 参数且只允许 `bing` 或 `baidu`，让 agent 每次调用自行选择可用上游引擎，避免不可达的默认上游引擎导致空结果。工具还暴露 `trust_env`，默认 `false` 以避免 localhost 请求被系统代理污染；遇到网络错误、502 或 timeout 时可显式设为 `true` 重试。Runner 可为特定技能传入 per-run 搜索调用预算，超过预算时工具返回可读错误并要求基于已有证据直接收束。
 - 上传文件是 task Resource，不是自动上下文。
 - 支持上传格式：`.md`, `.json`, `.txt`, `.docx`, `.xlsx`, `.xlsm`。
 - v1 不接受 `.doc`, `.xls`, `.csv` 或任意本地路径。
 - 上传事件类型为 `file_uploaded`，包含稳定 `resource_ref` 和 media type：`markdown`, `json`, `text`, `word`, `excel`。
 - 资源执行入口是 `backend/app/execution/resources.py` 的 `LocalResourceExecutionAdapter`。
-- 资源工具包括 `list_uploaded_resources`、`inspect_resource`、`read_resource_text`、`read_resource_table`；当 run context 和 storage 可用时，还会提供 `create_word_document` 用于把 Markdown/纯文本转换为 Word 原生标题、列表和表格，并生成登记当前 run 的 `.docx` 产物。
+- 资源工具包括 `list_uploaded_resources`、`inspect_resource`、`read_resource_text`、`read_resource_table`；当 run context 和 storage 可用且 runner 允许产物工具时，还会提供 `create_word_document` 用于把 Markdown/纯文本转换为 Word 原生标题、列表和表格，并生成登记当前 run 的 `.docx` 产物。
 - 工具失败返回 `{ok:false,error:{code,message,retryable}}` JSON，不让 runner 崩溃。
 - 用户输入错误（例如无效 Excel range）应是 `retryable:false`。
 - Word/docx 读取必须走资源工具；Word/docx 交付生成必须走 `create_word_document`，模型只选择文件名和 Markdown/纯文本参数，标题、列表、表格等 Word 结构由工具环境转换。当前 DeepAgents backend 不提供 shell/python/execute 命令执行能力，prompt 必须明确禁止模型为 Word 生成调用 `bash`、`execute` 或把简单文档生成委派给 `task` 子代理。
@@ -64,6 +64,7 @@
 - 浏览器项目技能发现是独立安全边界：`GET /api/skills` 只读取仓库 `backend/skills`，只返回 name/description。
 - `/api/skills` 不得读取 `settings.skills_dirs`、`MYAGENT_SKILLS_DIRS`、`.agents/skills`、Codex 全局技能、用户 home、技能正文或额外 frontmatter。
 - message submission 可带 `skills` 数组；后端先校验项目技能名，再把可见 `[$skill]` 引用加入传给 storage、标题生成和 runner 的有效消息。
+- `[$web-research]` 进入 runner 后使用快速联网核查策略：系统提示限制总搜索调用不超过 5 次、单次 `max_results` 不超过 5、禁止 task/sub-agent 委派、没有明确可下载文件要求时关闭 `create_word_document`，并要求搜索失败或证据不足时直接说明不确定性后结束。
 - Composer 的 skill picker/chips 是浏览器交互，不应在普通 UI marker 前显示 `$`；`$` 只保留给持久化 message reference 合同。
 - SubAgents 是包含 `name`、`description`、`system_prompt` 和可选 model/tools/skills 的定义；当前内置 researcher、coder、file-analyst。
 
@@ -168,10 +169,8 @@
 - 不要新增 `logs/`、`subagents/` 或 root-level manifest 等顶层 task 文件夹，除非先设计稳定文件合同。
 - 删除非 running task 必须同时删除 Postgres task row 和 matching local task workspace。
 - task workspace 内真实生成的 `.docx`、`.pptx`、`.xlsx`、`.xlsm`、`.pdf`、`.html`、`.md` 文件需要先通过 run-scoped artifact 登记或安全复制到 `artifacts/runs/{run_id}/`，再暴露给前端下载。
-- 用户明确要求的交付文件，或 final answer 明确声称“已生成/已保存”的文件，必须存在且已登记为当前 run artifact；否则 task/run 不能标记为成功完成。
-- 交付成功优先按当前 run 已登记 artifact 类型判定：Word 看任意 `.docx`，PPT 看任意 `.pptx`，Excel 看任意 `.xlsx`/`.xlsm`，报告看任意 `.html`/`.md`/`.pdf`；只要类型满足请求，就不要因为 final answer 推断出的文件名和 artifact 文件名不同而误报失败。
-- 缺失交付文件时应给出可见的 `文件未生成或未登记为产物` 修正提示，并保持 artifact API 不暴露不可下载的本地路径或伪链接。
-- 真实缺失交付文件时，后台交付保护仍应把 task/run 留在失败修正路径，但前端用户可见 payload 只应暴露简短说明和安全重试入口，不能泄露 `reason`、`repair_hint`、`missing_artifact_names`、`missing_deliverables`、`requested_deliverable_types`、`promoted_artifacts` 等内部字段名。
+- runner 不再在最终回答后校验“是否生成了交付文件”，也不再因为缺少 artifact 或 final answer 文件名推断失败而把 task/run 改成 `needs_input`；即使 AI 未生成文件，任务仍可按模型最终回答完成。
+- 已登记的 run artifact 只作为下载卡片和 artifact API 的数据来源；artifact API 仍只能暴露已登记的 run-scoped 或 legacy artifact，不能暴露不可下载的本地路径或伪链接。
 - Artifact routes：
   - latest/legacy：`GET /api/tasks/{id}/artifacts/{name}`
   - run-scoped：`GET /api/tasks/{id}/runs/{run_id}/artifacts/{name}`
@@ -202,6 +201,7 @@
 - 前端 dev server 使用 `.next-dev`，production build 使用 `.next`；这是 `frontend/next.config.mjs` 的当前权威事实。
 - 复用中的 `3001` dev server 旁边运行 build/typegen/E2E 时，依赖 `.next-dev` 和 `.next` 分仓，避免 dev/build manifest 互相污染。
 - WSL mounted Windows path 文件通知可能不稳定，保留 polling watchers：frontend 使用 `watchOptions.pollIntervalMs`、`WATCHPACK_POLLING=true`、`CHOKIDAR_USEPOLLING=true`；backend reload 可用 `WATCHFILES_FORCE_POLLING=true`。
+- Windows 原生模式是 WSL 模式之外的第二运行入口：`scripts/setup-dev-win.ps1 -Clean` 重建 Windows 版 `backend/.venv` 和 `frontend/node_modules-win`，`scripts/setup-dev-wsl.ps1 -Clean` 重建 WSL 版 `backend/.venv-wsl` 和 `frontend/node_modules-wsl`。`frontend/node_modules` 是当前模式 junction，启动脚本会切到 `node_modules-win` 或 `node_modules-wsl`；同一工作区不要并发运行 Windows 前端和 WSL 前端。Windows 模式直接调用 `frontend/node_modules/.bin/next.cmd`，不要复用 POSIX 风格的 `npm run dev` 环境变量写法。
 - `next typegen && tsc --noEmit` 是前端 typecheck 入口；`next-env.d.ts` 是生成文件且 ignored。
 - `npm run lint` 使用 `eslint . --max-warnings=0`，warning 也是阻塞项。
 

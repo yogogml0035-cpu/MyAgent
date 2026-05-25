@@ -254,12 +254,14 @@ def test_qdrant_reset_recreates_only_configured_collection(monkeypatch):
         def raise_for_status(self):
             return None
 
-    def fake_delete(url: str, timeout: float):
+    def fake_delete(url: str, timeout: float, trust_env: bool = True):
         calls.append(("DELETE", url, None))
+        assert trust_env is False
         return Response()
 
-    def fake_put(url: str, json: dict[str, Any], timeout: float):
+    def fake_put(url: str, json: dict[str, Any], timeout: float, trust_env: bool = True):
         calls.append(("PUT", url, json))
+        assert trust_env is False
         return Response()
 
     monkeypatch.setattr("app.memory.httpx.delete", fake_delete)

@@ -212,8 +212,6 @@ export function buildLiveLogItems(
   let activeCreatedAt: string | undefined;
   let activeDetails: LiveLogDiagnostics | undefined;
   let hasCancelEvent = false;
-  let hasAnswerStream = false;
-  let lastAnswerCreatedAt: string | undefined;
   let lastAnswerDetails: LiveLogDiagnostics | undefined;
   let answerStreamItem: LiveStatusLogItem | undefined;
   let answerStreamBaseDetails: LiveLogDiagnostics | undefined;
@@ -351,17 +349,18 @@ export function buildLiveLogItems(
     if (!answerContent) {
       return;
     }
-    hasAnswerStream = true;
     answerStreamChunkCount += 1;
     answerStreamCharacterCount += answerContent.length;
     answerStreamLastLog = log;
     answerStreamLogs.push(log);
-    lastAnswerCreatedAt = log.createdAt;
     lastAnswerDetails = buildAnswerStreamDiagnostics({
       characterCount: answerStreamCharacterCount,
       chunkCount: answerStreamChunkCount,
       lastLog: answerStreamLastLog,
     });
+    if (isTaskActive(status)) {
+      return;
+    }
     if (!answerStreamItem) {
       const previous = items.at(-1);
       if (previous?.kind === "status" && previous.text === "AI正在生成结果" && !previous.active) {
@@ -385,6 +384,9 @@ export function buildLiveLogItems(
     answerStreamItem.details = answerStreamBaseDetails
       ? mergeLiveLogDiagnostics(answerStreamBaseDetails, lastAnswerDetails)
       : lastAnswerDetails;
+    activeText = "AI正在生成结果";
+    activeCreatedAt = log.createdAt || activeCreatedAt;
+    activeDetails = answerStreamItem.details;
   }
 
   function upsertToolCallItem(log: ExecutionLog, live: NonNullable<ExecutionLog["live"]>) {
@@ -455,6 +457,10 @@ export function buildLiveLogItems(
 
     const live = log.live;
     if (!live) {
+      if (isTaskActive(status) && log.type === "answer_generation_started") {
+        hiddenDiagnosticLogs.push(log);
+        return;
+      }
       const text = formatLegacyLiveSummary(log);
       if (text) {
         items.push({
@@ -469,8 +475,21 @@ export function buildLiveLogItems(
       return;
     }
 
+    if (
+      isTaskActive(status) &&
+      live.kind === "answer_status" &&
+      live.stage === "generating_answer"
+    ) {
+      hiddenDiagnosticLogs.push(log);
+      return;
+    }
+
     if (live.kind === "tool_call") {
       upsertToolCallItem(log, live);
+      const toolItem = findToolCallStageItem(toolCallItemsByStageKey, live);
+      activeText = formatLiveToolCallTitle(live);
+      activeCreatedAt = log.createdAt || activeCreatedAt;
+      activeDetails = toolItem?.details ?? activeDetails;
       return;
     }
 
@@ -491,6 +510,9 @@ export function buildLiveLogItems(
       };
       refreshToolEventDisplayJson(toolItem);
       items.push(toolItem);
+      activeText = formatLiveToolResultTitle(live);
+      activeCreatedAt = log.createdAt || activeCreatedAt;
+      activeDetails = toolItem.details;
       return;
     }
 
@@ -570,20 +592,21 @@ export function buildLiveLogItems(
         });
       }
     } else {
-      const displayText = hasAnswerStream ? "AI正在生成结果" : activeText || "AI正在思考";
+      const displayText = activeText || "AI正在思考";
       const trailingHiddenDetails = consumeHiddenDiagnostics();
       const mergedActiveDetails = trailingHiddenDetails
         ? activeDetails
           ? mergeLiveLogDiagnostics(activeDetails, trailingHiddenDetails)
           : trailingHiddenDetails
         : activeDetails;
-      const mergedAnswerDetails = trailingHiddenDetails && lastAnswerDetails
-        ? mergeLiveLogDiagnostics(lastAnswerDetails, trailingHiddenDetails)
-        : lastAnswerDetails;
+      const activeAnswerDetails = displayText === "AI正在生成结果" ? lastAnswerDetails : undefined;
+      const mergedAnswerDetails = trailingHiddenDetails && activeAnswerDetails
+        ? mergeLiveLogDiagnostics(activeAnswerDetails, trailingHiddenDetails)
+        : activeAnswerDetails;
       const lastItem = items.at(-1);
       if (lastItem?.kind === "status" && lastItem.text === displayText) {
         lastItem.active = true;
-        lastItem.createdAt = lastAnswerCreatedAt || activeCreatedAt || lastItem.createdAt;
+        lastItem.createdAt = activeCreatedAt || lastItem.createdAt;
         lastItem.level = "info";
         if (mergedAnswerDetails && lastItem !== answerStreamItem) {
           lastItem.details = mergeLiveLogDiagnostics(lastItem.details, mergedAnswerDetails);
@@ -594,7 +617,7 @@ export function buildLiveLogItems(
         items.push({
           id: "status:active",
           kind: "status",
-          createdAt: lastAnswerCreatedAt || activeCreatedAt,
+          createdAt: activeCreatedAt,
           level: "info",
           text: displayText,
           active: true,
